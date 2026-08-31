@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      body {
+        font-family: var(--vscode-font-family);
+        color: var(--vscode-foreground);
+        background-color: var(--vscode-editor-background);
+        padding: 16px;
+        margin: 0;
+      }
+      .nav-bar {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 16px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        padding-bottom: 12px;
+      }
+      .nav-btn {
+        padding: 6px 14px;
+        border: 1px solid var(--vscode-button-background);
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-foreground);
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .nav-btn.active {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+      }
+      .tool-view {
+        display: none;
+      }
+      .tool-view.show {
+        display: block;
+      }
+      .form-item {
+        margin: 10px 0;
+      }
+      label {
+        display: block;
+        margin-bottom: 4px;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 6px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+      }
+      button {
+        padding: 6px 12px;
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      #logArea {
+        margin-top: 16px;
+        white-space: pre-wrap;
+        font-family: monospace;
+        font-size: 12px;
+        min-height: 180px;
+        padding: 8px;
+        border: 1px solid var(--vscode-panel-border);
+        overflow: auto;
+      }
+      #fragmentContainer {
+        margin-bottom: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="nav-bar" id="navBar"></div>
+
+    <!--固定首页DOM，永远不会被innerHTML覆盖-->
+    <div id="view-home" class="tool-view show">
+      <h3>Cherysis-tools 工具集</h3>
+      <p>上方导航栏选择要运行的工具</p>
+    </div>
+
+    <!--动态fragment容器，仅加载imageBatchTool片段-->
+    <div id="fragmentContainer"></div>
+
+    <div id="logArea"></div>
+
+    <script>
+      const vscode = acquireVsCodeApi();
+      let currentActiveToolName = "";
+
+      //渲染导航栏，后端下发toolList之后执行
+      function renderNav(list) {
+        const navDom = document.getElementById("navBar");
+        navDom.innerHTML = "";
+        list.forEach((item) => {
+          const btn = document.createElement("button");
+          btn.className = "nav-btn";
+          btn.innerText = item.title;
+          btn.dataset.tool = item.toolName;
+          btn.onclick = () => {
+            currentActiveToolName = item.toolName;
+            document
+              .querySelectorAll(".nav-btn")
+              .forEach((b) => b.classList.remove("active"));
+            btn.classList.add("active");
+
+            //切回首页，清空fragment
+            if (item.toolName === "home") {
+              document.getElementById("fragmentContainer").innerHTML = "";
+              document
+                .querySelectorAll(".tool-view")
+                .forEach((v) => v.classList.remove("show"));
+              document.getElementById("view-home").classList.add("show");
+            } else {
+              //其他工具通知后端拉取fragment
+              vscode.postMessage({
+                type: "switchTool",
+                toolName: item.toolName,
+              });
+              document
+                .querySelectorAll(".tool-view")
+                .forEach((v) => v.classList.remove("show"));
+            }
+          };
+          navDom.appendChild(btn);
+        });
+      }
+
+      //fragment加载完成之后绑定所有动态DOM里面的事件
+      function bindFragmentEvents() {
+        //子tab切换
+        document.querySelectorAll(".sub-tab").forEach((tab) => {
+          tab.onclick = () => {
+            const sub = tab.dataset.sub;
+            document
+              .querySelectorAll(".sub-tab")
+              .forEach((t) => t.classList.remove("active"));
+            document
+              .querySelectorAll(".sub-panel")
+              .forEach((p) => p.classList.remove("show"));
+            tab.classList.add("active");
+            document.getElementById(sub).classList.add("show");
+          };
+        });
+
+        //选择文件夹按钮
+        document
+          .querySelectorAll('[data-action="selectFolder"]')
+          .forEach((btn) => {
+            btn.onclick = () => {
+              const tid = btn.dataset.targetId;
+              vscode.postMessage({ type: "selectFolder", targetId: tid });
+            };
+          });
+
+        //打开目标文件夹
+        document
+          .querySelectorAll('[data-action="openTargetFolder"]')
+          .forEach((btn) => {
+            btn.onclick = () => {
+              const tid = btn.dataset.targetId;
+              const input = document.getElementById(tid);
+              const pathVal = input ? input.value.trim() : "";
+              if (!pathVal) {
+                vscode.postMessage({
+                  type: "log",
+                  text: "⚠️请先选择目标文件夹",
+                });
+                return;
+              }
+              vscode.postMessage({
+                type: "openTargetFolder",
+                targetPath: pathVal,
+              });
+            };
+          });
+
+        //执行工具，收集当前激活sub-panel表单
+        document.querySelectorAll('[data-action="runTool"]').forEach((btn) => {
+          btn.onclick = () => {
+            const tn = btn.dataset.toolName;
+            const subMode = btn.dataset.subMode;
+            const params = { subMode };
+            vscode.postMessage({ type: "log", text: "" });
+
+            const activePanel = document.querySelector(".sub-panel.show");
+            if (activePanel) {
+              activePanel.querySelectorAll("input").forEach((inp) => {
+                if (inp.type === "radio") {
+                  if (inp.checked) params[inp.name] = inp.value;
+                } else if (inp.type === "checkbox") {
+                  params[inp.id] = inp.checked;
+                } else if (inp.id) {
+                  params[inp.id] =
+                    inp.type === "number" ? Number(inp.value) : inp.value;
+                }
+              });
+            }
+            vscode.postMessage({
+              type: "runTool",
+              toolName: tn,
+              params: params,
+            });
+          };
+        });
+      }
+
+      window.addEventListener("message", (ev) => {
+        const msg = ev.data;
+        if (msg.type === "initToolList") {
+          renderNav(msg.toolList);
+        } else if (msg.type === "switchFragment") {
+          document.getElementById("fragmentContainer").innerHTML = msg.html;
+          bindFragmentEvents();
+        } else if (msg.type === "folderSelected") {
+          const el = document.getElementById(msg.targetId);
+          if (el) el.value = msg.path;
+        } else if (msg.type === "log") {
+          const logDom = document.getElementById("logArea");
+          logDom.innerText += msg.text + "\n";
+          logDom.scrollTop = logDom.scrollHeight;
+        }
+      });
+
+      window.onload = () => {
+        vscode.postMessage({ type: "init" });
+      };
+    </script>
+  </body>
+</html>

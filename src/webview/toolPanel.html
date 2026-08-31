@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      body {
+        font-family: var(--vscode-font-family);
+        color: var(--vscode-foreground);
+        background-color: var(--vscode-editor-background);
+        padding: 16px;
+        margin: 0;
+      }
+      .nav-bar {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 16px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        padding-bottom: 12px;
+      }
+      .nav-btn {
+        padding: 6px 14px;
+        border: 1px solid var(--vscode-button-background);
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-foreground);
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .nav-btn.active {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+      }
+      .tool-view {
+        display: none;
+      }
+      .tool-view.show {
+        display: block;
+      }
+      .form-item {
+        margin: 10px 0;
+      }
+      label {
+        display: block;
+        margin-bottom: 4px;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 6px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+      }
+      button {
+        padding: 6px 12px;
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      #logArea {
+        margin-top: 16px;
+        white-space: pre-wrap;
+        font-family: monospace;
+        font-size: 12px;
+        min-height: 180px;
+        padding: 8px;
+        border: 1px solid var(--vscode-panel-border);
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="nav-bar">
+      <button class="nav-btn active" data-view="home">🏠首页</button>
+    </div>
+    <!-- 首页入口 -->
+    <div id="view-home" class="tool-view show">
+      <h3>Cherysis‑tools 工具集</h3>
+      <p>上方导航栏选择要运行的工具</p>
+    </div>
+    <div id="logArea"></div>
+    <script>
+      const vscode = acquireVsCodeApi();
+      let currentView = "home";
+      // 视图切换
+      const navBtns = document.querySelectorAll(".nav-btn");
+      navBtns.forEach((btn) => {
+        btn.onclick = () => {
+          const target = btn.dataset.view;
+          //导航高亮
+          navBtns.forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+          //隐藏全部
+          document
+            .querySelectorAll(".tool-view")
+            .forEach((v) => v.classList.remove("show"));
+          document.getElementById(`view-${target}`).classList.add("show");
+          currentView = target;
+        };
+      });
+      // --------批量建文件夹逻辑--------
+      document.getElementById("mkSelectBtn").onclick = () => {
+        vscode.postMessage({ type: "selectFolder", targetId: "mkFolderPath" });
+      };
+      document.getElementById("runMkdir").onclick = () => {
+        const folder = document.getElementById("mkFolderPath").value;
+        const prefix = document.getElementById("mkPrefix").value;
+        const count = Number(document.getElementById("mkCount").value);
+        vscode.postMessage({
+          type: "runTool",
+          toolName: "batchMkdir",
+          params: { folder, prefix, count },
+        });
+      };
+      // --------批量重命名逻辑--------
+      document.getElementById("rnSelectBtn").onclick = () => {
+        vscode.postMessage({ type: "selectFolder", targetId: "rnFolderPath" });
+      };
+      document.getElementById("runRename").onclick = () => {
+        const folder = document.getElementById("rnFolderPath").value;
+        const prefix = document.getElementById("rnPrefix").value;
+        vscode.postMessage({
+          type: "runTool",
+          toolName: "batchRename",
+          params: { folder, prefix },
+        });
+      };
+      //打开文件夹按钮
+      document.addEventListener("click", function (e) {
+        const btn = e.target.closest("[data-action='openFolderBtn']");
+        if (!btn) return;
+        const targetId = btn.dataset.targetId;
+        const inputEl = document.getElementById(targetId);
+        if (!inputEl || !inputEl.value) {
+          alert("请先选择目标文件夹");
+          return;
+        }
+        vscode.postMessage({
+          type: "openTargetFolder",
+          targetPath: inputEl.value,
+        });
+      });
+      // 接收后端消息
+      window.addEventListener("message", (ev) => {
+        const msg = ev.data;
+        if (msg.type === "folderSelected") {
+          document.getElementById(msg.targetId).value = msg.path;
+        } else if (msg.type === "log") {
+          const logDom = document.getElementById("logArea");
+          logDom.innerText += msg.text + "\n";
+          logDom.scrollTop = logDom.scrollHeight;
+        }
+      });
+    </script>
+  </body>
+</html>
