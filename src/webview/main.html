@@ -185,8 +185,9 @@
             const tn = btn.dataset.toolName;
             const subMode = btn.dataset.subMode;
             const params = { subMode };
-            vscode.postMessage({ type: "log", text: "" });
-
+            // 直接前端清空日志
+            const logDom = document.getElementById("logArea");
+            if (logDom) logDom.innerText = "";
             const activePanel = document.querySelector(".sub-panel.show");
             if (activePanel) {
               activePanel.querySelectorAll("input").forEach((inp) => {

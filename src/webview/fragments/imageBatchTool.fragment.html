@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      .sub-tab-bar {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 14px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        padding-bottom: 8px;
+      }
+      .sub-tab {
+        padding: 5px 12px;
+        border: 1px solid var(--vscode-button-secondaryBackground);
+        cursor: pointer;
+        border-radius: 3px;
+      }
+      .sub-tab.active {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+      }
+      .sub-panel {
+        display: none;
+      }
+      .sub-panel.show {
+        display: block;
+      }
+      .form-item {
+        margin: 12px 0;
+      }
+      .form-label {
+        display: block;
+        margin-bottom: 6px;
+      }
+      input:not([type="radio"]):not([type="checkbox"]) {
+        padding: 5px 6px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+      }
+      .prefix-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .radio-horizontal-group {
+        display: flex;
+        gap: 20px;
+        align-items: center;
+      }
+      .radio-h-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 1px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .text-danger {
+        color: var(--vscode-errorForeground);
+      }
+      .check-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      input[type="radio"]:focus:not(:focus-visible),
+      input[type="checkbox"]:focus:not(:focus-visible) {
+        outline: none;
+      }
+      .module-title {
+        margin: 0 0 16px 0;
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--vscode-foreground);
+      }
+      .card-panel {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 6px;
+        padding: 16px;
+        margin-bottom: 16px;
+        background: var(--vscode-editor-background);
+      }
+      .form-group {
+        margin-bottom: 16px;
+      }
+      .form-row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .form-actions {
+        margin-top: 16px;
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+      }
+      .risk-note {
+        color: var(--vscode-errorForeground);
+        font-size: 12px;
+        margin-top: 8px;
+        line-height: 1.5;
+      }
+      .tip-text {
+        color: var(--vscode-descriptionForeground);
+        font-size: 12px;
+        margin-top: 6px;
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <h1 class="module-title">图片批量工具箱</h1>
+    <div class="sub-tab-bar">
+      <div class="sub-tab active" data-sub="tabMkdir">批量建文件夹</div>
+      <div class="sub-tab" data-sub="tabRename">图片序列重命名</div>
+      <div class="sub-tab" data-sub="tabDist">图片按编号分发</div>
+      <div class="sub-tab" data-sub="tabAppend">图片追加标识导出</div>
+    </div>
+    <div id="tabMkdir" class="sub-panel show">
+      <div class="card-panel">
+        <div class="form-group">
+          <label class="form-label">目标父目录 </label>
+          <div class="form-row">
+            <input id="ib_mk_target" readonly style="flex: 1; margin: 0" />
+            <button data-action="selectFolder" data-target-id="ib_mk_target">
+              选择文件夹
+            </button>
+            <button
+              data-action="openTargetFolder"
+              data-target-id="ib_mk_target"
+            >
+              打开目标文件夹
+            </button>
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="form-label">文件夹前缀 / 起始数字 / 结束数字</div>
+          <div class="form-row">
+            <div style="flex: 1">
+              <label style="font-size: 12px; opacity: 0.8">前缀</label>
+              <input id="ib_mk_prefix" placeholder="例:L" />
+            </div>
+            <div style="flex: 1">
+              <label style="font-size: 12px; opacity: 0.8">起始数字</label>
+              <input id="ib_mk_start" type="number" value="1" />
+            </div>
+            <div style="flex: 1">
+              <label style="font-size: 12px; opacity: 0.8">结束数字</label>
+              <input id="ib_mk_end" type="number" value="100" />
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="form-label">编号位数</div>
+          <div class="radio-horizontal-group">
+            <label class="radio-h-item">
+              <input type="radio" name="ib_mk_digit" value="3" checked />
+              <span>3位(001)</span>
+            </label>
+            <label class="radio-h-item">
+              <input type="radio" name="ib_mk_digit" value="4" />
+              <span>4位(0001)</span>
+            </label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="check-label">
+            <input type="checkbox" id="ib_mk_clear_before" checked />
+            <span> 执行前清空目标文件夹内全部内容</span>
+          </label>
+          <div class="risk-note">⚠勾选将清空目录原有全部文件，请谨慎操作</div>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button
+          data-action="runTool"
+          data-tool-name="imageBatchTool"
+          data-sub-mode="tabMkdir"
+        >
+          ▶执行批量建文件夹
+        </button>
+      </div>
+    </div>
+    <div id="tabRename" class="sub-panel">
+      <div class="card-panel">
+        <div class="form-group">
+          <label class="form-label">源文件夹 </label>
+          <div class="form-row">
+            <input id="ib_re_src" readonly style="flex: 1; margin: 0" />
+            <button data-action="selectFolder" data-target-id="ib_re_src">
+              选择文件夹
+            </button>
+            <button data-action="openTargetFolder" data-target-id="ib_re_src">
+              打开目标文件夹
+            </button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">输出目录 </label>
+          <div class="form-row">
+            <input id="ib_re_out" readonly style="flex: 1; margin: 0" />
+            <button data-action="selectFolder" data-target-id="ib_re_out">
+              选择文件夹
+            </button>
+            <button data-action="openTargetFolder" data-target-id="ib_re_out">
+              打开目标文件夹
+            </button>
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="form-label">工作模式</div>
+          <div class="radio-horizontal-group">
+            <label class="radio-h-item">
+              <input type="radio" name="ib_re_mode" value="0" checked />
+              <span>复制导出（源文件保留，推荐安全）</span>
+            </label>
+            <label class="radio-h-item">
+              <input type="radio" name="ib_re_mode" value="1" />
+              <span class="text-danger"
+                >原地重命名（直接修改源文件，谨慎！）</span
+              >
+            </label>
+          </div>
+          <div class="tip-text">
+            提示：原地重命名模式输出目录无效；复制模式执行前会清空输出目录
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="form-label">命名规则</div>
+          <div class="prefix-row">
+            <label> 基础前缀:</label>
+            <input id="ib_re_prefix" value="L001" style="width: 120px" />
+            <span class="tip-text">示例:L001 → L001_1.jpg、L001_2.jpg</span>
+          </div>
+          <label class="check-label">
+            <input type="checkbox" id="ib_re_imgonly" checked />
+            <span>仅处理图片文件(jpg/jpeg/png/gif/bmp/webp)</span>
+          </label>
+        </div>
+        <div class="form-group">
+          <div class="form-label">重命名冲突</div>
+          <div class="radio-horizontal-group">
+            <label class="radio-h-item">
+              <input type="radio" name="ib_re_ov" value="0" checked />
+              <span>跳过文件（安全推荐）</span>
+            </label>
+            <label class="radio-h-item">
+              <input type="radio" name="ib_re_ov" value="1" />
+              <span>直接覆盖</span>
+            </label>
+          </div>
+          <div class="tip-text">
+            提示：复制模式输出目录预先清空；此选项用于文件残留/原地重命名冲突场景
+          </div>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button
+          data-action="runTool"
+          data-tool-name="imageBatchTool"
+          data-sub-mode="tabRename"
+        >
+          ▶执行图片序列重命名
+        </button>
+      </div>
+    </div>
+    <div id="tabDist" class="sub-panel">
+      <div class="card-panel">
+        <div class="form-group">
+          <label class="form-label">图片源目录</label>
+          <div class="form-row">
+            <input id="ib_dis_src" readonly style="flex: 1; margin: 0" />
+            <button data-action="selectFolder" data-target-id="ib_dis_src">
+              选择文件夹
+            </button>
+            <button data-action="openTargetFolder" data-target-id="ib_dis_src">
+              打开目标文件夹
+            </button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">目标根目录 </label>
+          <div class="form-row">
+            <input id="ib_dis_target" readonly style="flex: 1; margin: 0" />
+            <button data-action="selectFolder" data-target-id="ib_dis_target">
+              选择文件夹
+            </button>
+            <button
+              data-action="openTargetFolder"
+              data-target-id="ib_dis_target"
+            >
+              打开目标文件夹
+            </button>
+          </div>
+          <div class="risk-note">
+            ⚠需要预先建好L001/L002子文件夹等，程序不会自动创建子文件夹。
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="form-label">重名冲突</div>
+          <div class="radio-horizontal-group">
+            <label class="radio-h-item">
+              <input type="radio" name="ib_dis_ov" value="0" checked />
+              <span>跳过</span>
+            </label>
+            <label class="radio-h-item">
+              <input type="radio" name="ib_dis_ov" value="1" />
+              <span>直接覆盖</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button
+          data-action="runTool"
+          data-tool-name="imageBatchTool"
+          data-sub-mode="tabDist"
+        >
+          ▶执行图片分发复制
+        </button>
+      </div>
+    </div>
+    <div id="tabAppend" class="sub-panel">
+      <div class="card-panel">
+        <div class="form-group">
+          <label class="form-label">源文件夹 </label>
+          <div class="form-row">
+            <input id="ib_ap_src" readonly style="flex: 1; margin: 0" />
+            <button data-action="selectFolder" data-target-id="ib_ap_src">
+              选择文件夹
+            </button>
+            <button data-action="openTargetFolder" data-target-id="ib_ap_src">
+              打开目标文件夹
+            </button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">输出目录 </label>
+          <div class="form-row">
+            <input id="ib_ap_out" readonly style="flex: 1; margin: 0" />
+            <button data-action="selectFolder" data-target-id="ib_ap_out">
+              选择文件夹
+            </button>
+            <button data-action="openTargetFolder" data-target-id="ib_ap_out">
+              打开目标文件夹
+            </button>
+          </div>
+          <div class="risk-note">⚠执行前清空，不要选择存放重要资料的目录！</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">追加标识 </label>
+          <input id="ib_ap_text" value="cover" />
+          <div class="tip-text">demo.jpg → demo_cover.jpg，下划线自动补</div>
+        </div>
+        <div class="form-group">
+          <label class="check-label">
+            <input type="checkbox" id="ib_ap_imgonly" checked />
+            <span>仅处理图片文件</span>
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="check-label">
+            <input type="checkbox" id="ib_ap_rmdir" />
+            <span>清空输出目录时一并删除子文件夹</span>
+          </label>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button
+          data-action="runTool"
+          data-tool-name="imageBatchTool"
+          data-sub-mode="tabAppend"
+        >
+          ▶执行追加标识导出
+        </button>
+      </div>
+    </div>
+  </body>
+</html>

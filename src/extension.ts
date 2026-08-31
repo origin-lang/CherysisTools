@@ -25,7 +25,7 @@ export function activate(context: vscode.ExtensionContext) {
     },
     {
       toolName: "imageBatchTool",
-      title: "🖼图片批量工具箱",
+      title: "🗂️图片批量工具箱",
       fragmentUri: vscode.Uri.joinPath(
         context.extensionUri,
         "src",
