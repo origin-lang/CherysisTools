@@ -1,0 +1,26 @@
+# .vscode/**
+# .vscode-test/**
+# src/**
+# .gitignore
+# .yarnrc
+# vsc-extension-quickstart.md
+# **/tsconfig.json
+# **/eslint.config.mjs
+# **/*.map
+# **/*.ts
+# **/.vscode-test.*
+.vscode/**
+.vscode-test/**
+.gitignore
+.yarnrc
+vsc-extension-quickstart.md
+**/tsconfig.json
+**/eslint.config.mjs
+**/*.map
+**/.vscode-test.*
+
+# 排除ts源码，但保留webview静态html资源
+src/**/*.ts
+src/test/**
+!src/webview/**/*
+

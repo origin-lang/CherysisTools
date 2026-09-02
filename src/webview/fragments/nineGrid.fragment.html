@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <style>
+      body {
+        box-sizing: border-box;
+        padding: 12px;
+        margin: 0;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      }
+      .module-title {
+        margin: 0 0 12px 0;
+        font-size: 18px;
+        font-weight: 700;
+      }
+      .sub-tab-bar {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 14px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        padding-bottom: 8px;
+      }
+      .sub-tab {
+        padding: 5px 12px;
+        border: 1px solid var(--vscode-button-secondaryBackground);
+        cursor: pointer;
+        border-radius: 3px;
+        font-size: 14px;
+      }
+      .sub-tab.active {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+      }
+      .sub-panel {
+        display: none;
+      }
+      .sub-panel.show {
+        display: block;
+      }
+      .card-panel {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 6px;
+        padding: 16px;
+        margin-bottom: 16px;
+        background: var(--vscode-editor-background);
+      }
+      .form-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+      }
+      .form-group {
+        margin-bottom: 16px;
+      }
+      .form-label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+      }
+      input:not([type="radio"]):not([type="checkbox"]) {
+        padding: 5px 6px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+        font-size: 14px;
+      }
+      .tip-text {
+        color: var(--vscode-descriptionForeground);
+        font-size: 12px;
+        margin-top: 6px;
+        line-height: 1.5;
+      }
+      .risk-note {
+        color: var(--vscode-errorForeground);
+        font-size: 12px;
+        margin-top: 8px;
+        line-height: 1.5;
+      }
+      .form-actions {
+        display: flex;
+        justify-content: center;
+        margin-top: 12px;
+        gap: 10px;
+      }
+      button {
+        padding: 6px 12px;
+        border: 1px solid var(--vscode-button-border, transparent);
+        border-radius: 4px;
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+        cursor: pointer;
+        font-size: 14px;
+      }
+      button:hover {
+        background: var(--vscode-button-hoverBackground);
+      }
+      .grid-outer {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        margin: 16px 0;
+      }
+      .grid-container {
+        display: grid;
+        grid-template-columns: repeat(3, 142px);
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+      .grid-cell {
+        width: 142px;
+        height: 160px;
+        border: 2px solid #cccccc;
+        border-radius: 3px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        cursor: pointer;
+        background: #f7f7f7;
+      }
+      .grid-cell.normal {
+        background: #f7f7f7;
+        border-color: #cccccc;
+      }
+      .grid-cell.selected {
+        background: #cce5ff;
+        border-color: #4080c0;
+      }
+      .grid-cell.err {
+        background: #ffeeee;
+        border-color: #dd7777;
+      }
+      .grid-img-wrap {
+        flex-grow: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .grid-img-wrap img {
+        max-width: 130px;
+        max-height: 130px;
+        object-fit: contain;
+      }
+      .grid-text {
+        font-size: 11px;
+        text-align: center;
+        padding: 2px 4px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .context-menu {
+        position: absolute;
+        z-index: 999;
+        background: var(--vscode-menu-background);
+        color: var(--vscode-menu-foreground);
+        border: 1px solid var(--vscode-menu-border);
+        padding: 4px 0;
+        min-width: 160px;
+      }
+      .context-menu div {
+        padding: 4px 12px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      .context-menu div:hover {
+        background: var(--vscode-list-hoverBackground);
+      }
+      .preview-box {
+        width: 100px;
+        height: 100px;
+        border: 1px solid var(--vscode-panel-border);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-top: 8px;
+        background: var(--vscode-input-background);
+      }
+      .preview-box img {
+        max-width: 90px;
+        max-height: 90px;
+        object-fit: contain;
+      }
+    </style>
+  </head>
+  <body>
+    <h1 class="module-title">🧩九宫格工具箱</h1>
+    <div class="sub-tab-bar">
+      <div class="sub-tab active" data-sub="tabMerge">九宫格拼图</div>
+      <div class="sub-tab" data-sub="tabLabel">九宫格添加序号</div>
+    </div>
+    <!-- tabMerge 拼图 -->
+    <div id="tabMerge" class="sub-panel show">
+      <div class="card-panel">
+        <div class="form-group">
+          <label class="form-label">输出配置</label>
+          <div class="form-row">
+            <input
+              id="outDirInput"
+              readonly
+              style="flex: 1; margin: 0"
+              placeholder="请选择输出文件夹"
+            />
+            <button id="btnSelectOut" data-action="selectOutputFolder">
+              选择输出文件夹
+            </button>
+            <button data-action="openMergeOutputFolder">打开文件夹</button>
+          </div>
+        </div>
+      </div>
+      <div class="card-panel">
+        <div class="form-group">
+          <label class="form-label">九宫格｜缩略预览 + 底部文件名</label>
+          <div class="form-row">
+            <button id="btnAddImg" data-action="openSelectImages">
+              ➕选择多张图片
+            </button>
+            <button id="btnLoadFolder" data-action="openLoadImageFolder">
+              📂读取文件夹内图片
+            </button>
+            <button id="btnClear" data-action="btnClear">🧹清空全部网格</button>
+          </div>
+          <div class="tip-text">
+            提示：点击格子选中，再点击另一个格子完成交换；右键弹出菜单可旋转 /
+            删除
+          </div>
+        </div>
+        <div class="grid-outer">
+          <div class="grid-container" id="gridContainer"></div>
+          <!-- ✅拼图按钮移到九宫格预览下方 -->
+          <button id="btnRunMerge" data-action="runMerge">
+            ✅ 执行九宫格拼图
+          </button>
+        </div>
+        <div class="tip-text" id="statusText">已填充：0 / 9</div>
+      </div>
+    </div>
+    <!-- tabLabel 给大图打序号 -->
+    <div id="tabLabel" class="sub-panel">
+      <div class="card-panel">
+        <div class="form-group">
+          <label class="form-label">输入九宫格大图文件</label>
+          <div class="form-row">
+            <input
+              id="labelSrcInput"
+              readonly
+              style="flex: 1; margin: 0"
+              placeholder="请选择一张九宫格大图"
+            />
+            <button id="btnSelectLabelImg" data-action="selectLabelImage">
+              选择图片
+            </button>
+          </div>
+          <div class="preview-box" id="labelPreviewBox">
+            <span>暂无预览</span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">起始编号</label>
+          <input id="labelStartNum" type="number" value="1" min="1" />
+          <div class="tip-text">输入1生成1~9号；输入10生成10~18号</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">输出保存目录</label>
+          <div class="form-row">
+            <input
+              id="labelOutDirInput"
+              readonly
+              style="flex: 1; margin: 0"
+              placeholder="可选，默认保存到原图同一目录"
+            />
+            <button id="btnSelectLabelOut" data-action="selectLabelOutDir">
+              选择文件夹
+            </button>
+            <button data-action="openLabelOutputFolder">打开文件夹</button>
+          </div>
+          <div class="tip-text">💡不选择时，输出文件将保存至原图同一目录</div>
+        </div>
+        <div class="form-actions">
+          <button id="btnRunLabel" data-action="runLabel">
+            🔢 开始生成带编号图片
+          </button>
+        </div>
+      </div>
+    </div>
+    <!-- 右键菜单 -->
+    <div class="context-menu" id="ctxMenu" style="display: none">
+      <div data-action="rotate">🔄 顺时针旋转90°</div>
+      <div data-action="delete">🗑 删除当前图片</div>
+    </div>
+  </body>
+</html>

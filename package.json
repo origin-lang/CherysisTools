@@ -1,8 +1,8 @@
 {
-  "name": "cherysis-tools",
-  "displayName": "Cherysis-tools",
+  "name": "Cherysis",
+  "displayName": "Cherysis",
   "description": "small tools",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "engines": {
     "vscode": "^1.134.0"
   },
@@ -14,14 +14,14 @@
   "contributes": {
     "commands": [
       {
-        "command": "cherysis-tools.openToolPanel",
-        "title": "Cherysis-tools:打开小工具面板"
+        "command": "Cherysis.openToolPanel",
+        "title": "Cherysis:打开工具面板"
       }
     ],
     "menus": {
       "commandPalette": [
         {
-          "command": "cherysis-tools.openToolPanel"
+          "command": "Cherysis.openToolPanel"
         }
       ]
     }
@@ -35,18 +35,20 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.134.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "24.x",
-    "typescript-eslint": "^8.61.1",
+    "@types/vscode": "^1.134.0",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.0.0",
+    "@vscode/vsce": "^3.9.2",
     "eslint": "^10.5.0",
     "typescript": "^6.0.3",
-    "@vscode/test-cli": "^0.0.15",
-    "@vscode/test-electron": "^3.0.0"
+    "typescript-eslint": "^8.61.1",
+    "vsce-pnpm": "^0.1.0"
   },
   "dependencies": {
-    "sharp": "^0.34.0",
-    "globby": "^14.1.0"
+    "globby": "^14.1.0",
+    "sharp": "^0.33.5"
   },
   "overrides": {
     "diff": "^8.0.4",
