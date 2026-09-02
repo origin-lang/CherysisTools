@@ -20,7 +20,6 @@ export async function handleNineGridMergeFromList(
   const tileH = meta0.height ?? 300;
   const outW = tileW * 3;
   const outH = tileH * 3;
-
   const compositeList: Parameters<sharp.Sharp["composite"]>[0] = [];
   for (let idx = 0; idx < 9; idx++) {
     const fp = imgPaths[idx];
@@ -48,7 +47,6 @@ export async function handleNineGridMergeFromList(
     .composite(compositeList)
     .jpeg({ quality: 95 })
     .toFile(outFile);
-
   return outFile;
 }
 
@@ -68,7 +66,6 @@ export async function handleNineGridLabel(
   const h = meta.height!;
   const cellW = w / 3;
   const cellH = h / 3;
-  // const fontSize = Math.min(cellW, cellH) * 0.12;
   const fontSize = Math.min(cellW, cellH) * 0.22;
   const compositeList: Parameters<sharp.Sharp["composite"]>[0] = [];
   for (let row = 0; row < 3; row++) {
@@ -80,11 +77,8 @@ export async function handleNineGridLabel(
       const svgW = cellW;
       const svgH = cellH;
       const svgText = `<svg width="${svgW}" height="${svgH}" xmlns="http://www.w3.org/2000/svg">
-      <!--上层白色字，轻微缩小，留出黑边 -->
       <text x="50%" y="${svgH * 0.92}" font-family="Arial, 'Segoe UI', sans-serif" font-weight="900" font-size="${fontSize * 0.96}" fill="#ffffff" text-anchor="middle" dominant-baseline="bottom">${text}</text>
       </svg>`;
-
-      // const svgText = `<svg width="${svgW}" height="${svgH}" xmlns="http://www.w3.org/2000/svg"><text x="50%" y="${svgH * 0.93}" font-size="${fontSize}" fill="#000000" stroke="#000000" stroke-width="2" text-anchor="middle" dominant-baseline="bottom">${text}</text><text x="50%" y="${svgH * 0.93}" font-size="${fontSize}" fill="#ffffff" text-anchor="middle" dominant-baseline="bottom">${text}</text></svg>`;
       const svgBuf = Buffer.from(svgText, "utf-8");
       compositeList.push({
         input: svgBuf,
@@ -93,7 +87,6 @@ export async function handleNineGridLabel(
       });
     }
   }
-
   let outFile: string;
   if (outDir && fs.existsSync(outDir)) {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -102,12 +95,10 @@ export async function handleNineGridLabel(
     const base = path.basename(srcFile, path.extname(srcFile));
     outFile = path.join(path.dirname(srcFile), `${base}_labeled.jpg`);
   }
-
   await sharp(srcFile)
     .composite(compositeList)
     .jpeg({ quality: 95 })
     .toFile(outFile);
-
   return outFile;
 }
 
@@ -123,7 +114,8 @@ export async function createThumbnailBase64(
       .resize(size, size, { fit: "inside" })
       .jpeg({ quality: 70 })
       .toBuffer();
-    return buf.toString("base64");
+    // 修复：补上data uri前缀，浏览器img标签才能正常显示
+    return `data:image/jpeg;base64,${buf.toString("base64")}`;
   } catch {
     return null;
   }
@@ -135,22 +127,15 @@ export async function createThumbnailBase64(
  */
 export async function rotateImageInPlace(filePath: string): Promise<void> {
   const dir = path.dirname(filePath);
-  // 同目录生成临时文件
   const tempPath = path.join(
     dir,
     `.rotate_tmp_${Date.now()}${path.extname(filePath)}`,
   );
-
   try {
-    // sharp直接磁盘读取，输出到临时文件，不走node内存大buffer
     await sharp(filePath).rotate(90).toFile(tempPath);
-
-    // 旋转成功，删除原始文件
     await fs.promises.unlink(filePath);
-    // 将临时文件重命名为原始文件名
     await fs.promises.rename(tempPath, filePath);
   } catch (err) {
-    // 异常清理临时文件，保护原图
     try {
       if (
         await fs.promises

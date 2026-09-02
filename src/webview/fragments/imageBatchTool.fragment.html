@@ -112,10 +112,20 @@
         margin-top: 6px;
         line-height: 1.5;
       }
+      /* 蓝绿色主按钮，和九宫格工具保持统一 */
+      .btn-primary-teal {
+        background-color: #23a884;
+        color: #ffffff;
+        border-color: #1f9474;
+      }
+      .btn-primary-teal:hover {
+        background-color: #1f9474;
+        color: #ffffff;
+      }
     </style>
   </head>
   <body>
-    <h1 class="module-title">图片批量工具箱</h1>
+    <h1 class="module-title">🗂️图片批量工具箱</h1>
     <div class="sub-tab-bar">
       <div class="sub-tab active" data-sub="tabMkdir">批量建文件夹</div>
       <div class="sub-tab" data-sub="tabRename">图片序列重命名</div>
@@ -182,6 +192,7 @@
           data-action="runTool"
           data-tool-name="imageBatchTool"
           data-sub-mode="tabMkdir"
+          class="btn-primary-teal"
         >
           ▶执行批量建文件夹
         </button>
@@ -265,6 +276,7 @@
           data-action="runTool"
           data-tool-name="imageBatchTool"
           data-sub-mode="tabRename"
+          class="btn-primary-teal"
         >
           ▶执行图片序列重命名
         </button>
@@ -321,6 +333,7 @@
           data-action="runTool"
           data-tool-name="imageBatchTool"
           data-sub-mode="tabDist"
+          class="btn-primary-teal"
         >
           ▶执行图片分发复制
         </button>
@@ -376,6 +389,7 @@
           data-action="runTool"
           data-tool-name="imageBatchTool"
           data-sub-mode="tabAppend"
+          class="btn-primary-teal"
         >
           ▶执行追加标识导出
         </button>

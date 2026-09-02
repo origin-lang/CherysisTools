@@ -94,6 +94,16 @@
       button:hover {
         background: var(--vscode-button-hoverBackground);
       }
+      /* 蓝绿色主按钮，醒目执行按钮 */
+      .btn-primary-teal {
+        background-color: #23a884;
+        color: #ffffff;
+        border-color: #1f9474;
+      }
+      .btn-primary-teal:hover {
+        background-color: #1f9474;
+        color: #ffffff;
+      }
       .grid-outer {
         display: flex;
         flex-direction: column;
@@ -165,9 +175,10 @@
       .context-menu div:hover {
         background: var(--vscode-list-hoverBackground);
       }
+      /* 序号模块预览框放大 */
       .preview-box {
-        width: 100px;
-        height: 100px;
+        width: 180px;
+        height: 180px;
         border: 1px solid var(--vscode-panel-border);
         display: flex;
         align-items: center;
@@ -176,8 +187,8 @@
         background: var(--vscode-input-background);
       }
       .preview-box img {
-        max-width: 90px;
-        max-height: 90px;
+        max-width: 170px;
+        max-height: 170px;
         object-fit: contain;
       }
     </style>
@@ -190,23 +201,6 @@
     </div>
     <!-- tabMerge 拼图 -->
     <div id="tabMerge" class="sub-panel show">
-      <div class="card-panel">
-        <div class="form-group">
-          <label class="form-label">输出配置</label>
-          <div class="form-row">
-            <input
-              id="outDirInput"
-              readonly
-              style="flex: 1; margin: 0"
-              placeholder="请选择输出文件夹"
-            />
-            <button id="btnSelectOut" data-action="selectOutputFolder">
-              选择输出文件夹
-            </button>
-            <button data-action="openMergeOutputFolder">打开文件夹</button>
-          </div>
-        </div>
-      </div>
       <div class="card-panel">
         <div class="form-group">
           <label class="form-label">九宫格｜缩略预览 + 底部文件名</label>
@@ -226,12 +220,36 @@
         </div>
         <div class="grid-outer">
           <div class="grid-container" id="gridContainer"></div>
-          <!-- ✅拼图按钮移到九宫格预览下方 -->
-          <button id="btnRunMerge" data-action="runMerge">
+        </div>
+        <div class="tip-text" id="statusText">已填充：0 / 9</div>
+      </div>
+
+      <!-- ✅输出配置移动到网格预览下方，执行按钮放到这个卡片内部 -->
+      <div class="card-panel">
+        <div class="form-group">
+          <label class="form-label">输出配置</label>
+          <div class="form-row">
+            <input
+              id="outDirInput"
+              readonly
+              style="flex: 1; margin: 0"
+              placeholder="请选择输出文件夹"
+            />
+            <button id="btnSelectOut" data-action="selectOutputFolder">
+              选择输出文件夹
+            </button>
+            <button data-action="openMergeOutputFolder">打开文件夹</button>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button
+            id="btnRunMerge"
+            data-action="runMerge"
+            class="btn-primary-teal"
+          >
             ✅ 执行九宫格拼图
           </button>
         </div>
-        <div class="tip-text" id="statusText">已填充：0 / 9</div>
       </div>
     </div>
     <!-- tabLabel 给大图打序号 -->
@@ -276,7 +294,11 @@
           <div class="tip-text">💡不选择时，输出文件将保存至原图同一目录</div>
         </div>
         <div class="form-actions">
-          <button id="btnRunLabel" data-action="runLabel">
+          <button
+            id="btnRunLabel"
+            data-action="runLabel"
+            class="btn-primary-teal"
+          >
             🔢 开始生成带编号图片
           </button>
         </div>
