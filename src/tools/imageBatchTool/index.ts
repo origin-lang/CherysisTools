@@ -1,18 +1,16 @@
-import fs from "fs";
-import fsp from "fs/promises";
-import path from "path";
-// import { exec } from "child_process";
-type LogCallback = (msg: string) => void;
-
+import * as fs from "fs";
+import * as fsp from "fs/promises";
+import * as path from "path";
+import { ToolDefinition } from "../../core/toolRegistry.js";
+import { LogCallback } from "../../core/toolContext.js";
 import { exec, ExecException } from "child_process";
-export function openFolderInExplorer(
-  folderPath: string | undefined,
-): Promise<void> {
-  // 先判断 undefined / null /空字符串
+
+const IMG_SUFFIX = new Set([".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]);
+
+function openFolderInExplorer(folderPath: string | undefined): Promise<void> {
   if (!folderPath || folderPath.trim?.() === "") {
     return Promise.reject(new Error("目标路径为空，请先选择文件夹"));
   }
-
   return new Promise((resolve, reject) => {
     exec(
       `explorer "${folderPath}"`,
@@ -27,30 +25,8 @@ export function openFolderInExplorer(
     );
   });
 }
-export async function runImageBatchTool(
-  params: Record<string, any>,
-  log: LogCallback,
-) {
-  const subMode = params.subMode;
-  switch (subMode) {
-    case "tabMkdir":
-      await handleBatchMkdir(params, log);
-      break;
-    case "tabRename":
-      await handleImageRename(params, log);
-      break;
-    case "tabDist":
-      await handleImageDistribute(params, log);
-      break;
-    case "tabAppend":
-      await handleAppendSuffixExport(params, log);
-      break;
-    default:
-      throw new Error(`未知子模式:${subMode}`);
-  }
-}
 
-/** 1.批量建文件夹 */
+/** 批量建文件夹 */
 async function handleBatchMkdir(p: Record<string, any>, log: LogCallback) {
   const target = p.ib_mk_target?.trim();
   const prefix = p.ib_mk_prefix?.trim() ?? "";
@@ -110,12 +86,8 @@ async function handleBatchMkdir(p: Record<string, any>, log: LogCallback) {
   log(`\n完成! 新建:${created}个，跳过已存在:${skip}个`);
 }
 
-const IMG_SUFFIX = new Set([".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]);
-/** 2.图片序列重命名 */
-export async function handleImageRename(
-  p: Record<string, any>,
-  log: LogCallback,
-) {
+/** 图片序列重命名 */
+async function handleImageRename(p: Record<string, any>, log: LogCallback) {
   const srcDir = (p.ib_re_src ?? "").trim();
   const outDir = (p.ib_re_out ?? "").trim();
   const basePrefix = (p.ib_re_prefix ?? "").trim();
@@ -221,7 +193,7 @@ export async function handleImageRename(
   );
 }
 
-/**3.图片按编号分发 */
+/** 图片按编号分发 */
 async function handleImageDistribute(p: Record<string, any>, log: LogCallback) {
   const srcDir: string = p.ib_dis_src?.trim() ?? "";
   const targetRootDir: string = p.ib_dis_target?.trim() ?? "";
@@ -304,7 +276,7 @@ async function handleImageDistribute(p: Record<string, any>, log: LogCallback) {
   );
 }
 
-/**4.图片追加标识导出 */
+/** 图片追加标识导出 */
 async function handleAppendSuffixExport(
   p: Record<string, any>,
   log: LogCallback,
@@ -314,7 +286,6 @@ async function handleAppendSuffixExport(
   const appendText: string = p.ib_ap_text?.trim() ?? "";
   const filterImgOnly: boolean = !!p.ib_ap_imgonly;
   const rmSubDirWhenClean: boolean = !!p.ib_ap_rmdir;
-  const imageExts = new Set([".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]);
 
   if (!srcDir || !fs.existsSync(srcDir) || !fs.statSync(srcDir).isDirectory()) {
     log("[错误] 请选择有效的源文件夹");
@@ -371,7 +342,7 @@ async function handleAppendSuffixExport(
     const srcFull = path.join(srcDir, fileName);
     const ext = path.extname(fileName).toLowerCase();
     if (filterImgOnly) {
-      if (!imageExts.has(ext)) {
+      if (!IMG_SUFFIX.has(ext)) {
         skip += 1;
         continue;
       }
@@ -391,3 +362,59 @@ async function handleAppendSuffixExport(
   log("\n========================================");
   log(`✅执行完成 | 成功:${success}  跳过:${skip}  失败:${fail}`);
 }
+
+export const imageBatchTool: ToolDefinition = {
+  toolName: "imageBatchTool",
+  title: "🗂️图片批量工具箱",
+  fragmentPath: "tools/imageBatchTool/fragment.html",
+  async handleMessage(msg, ctx) {
+    switch (msg.type) {
+      case "selectFolder": {
+        const folder = await ctx.selectFolder();
+        if (folder) {
+          ctx.postToWebview({
+            type: "folderSelected",
+            path: folder,
+            targetId: msg.targetId,
+          });
+        }
+        break;
+      }
+      case "openTargetFolder": {
+        const p = msg.targetPath;
+        try {
+          await openFolderInExplorer(p);
+        } catch (e: any) {
+          ctx.log(`[错误]打开文件夹失败：${e.message}`);
+        }
+        break;
+      }
+      case "runTool": {
+        const subMode = msg.params?.subMode;
+        ctx.postToWebview({ type: "clearLog" });
+        try {
+          switch (subMode) {
+            case "tabMkdir":
+              await handleBatchMkdir(msg.params, ctx.log);
+              break;
+            case "tabRename":
+              await handleImageRename(msg.params, ctx.log);
+              break;
+            case "tabDist":
+              await handleImageDistribute(msg.params, ctx.log);
+              break;
+            case "tabAppend":
+              await handleAppendSuffixExport(msg.params, ctx.log);
+              break;
+            default:
+              throw new Error(`未知子模式:${subMode}`);
+          }
+          ctx.postToWebview({ type: "log", text: "✅工具执行完成" });
+        } catch (err: any) {
+          ctx.postToWebview({ type: "log", text: `❌异常:${err.message}` });
+        }
+        break;
+      }
+    }
+  },
+};

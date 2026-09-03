@@ -112,7 +112,19 @@
         margin-top: 6px;
         line-height: 1.5;
       }
-      /* 蓝绿色主按钮，和九宫格工具保持统一 */
+      /* 普通按钮：次要样式，与九宫格工具一致 */
+      button {
+        padding: 6px 14px;
+        border: 1px solid var(--vscode-button-secondaryBorder, transparent);
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-foreground);
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-secondaryBackground));
+      }
+      /* 蓝绿色主按钮，醒目执行按钮 */
       .btn-primary-teal {
         background-color: #23a884;
         color: #ffffff;
@@ -137,7 +149,7 @@
         <div class="form-group">
           <label class="form-label">目标父目录 </label>
           <div class="form-row">
-            <input id="ib_mk_target" readonly style="flex: 1; margin: 0" />
+            <input id="ib_mk_target" style="flex: 1; margin: 0" />
             <button data-action="selectFolder" data-target-id="ib_mk_target">
               选择文件夹
             </button>
@@ -148,6 +160,7 @@
               打开目标文件夹
             </button>
           </div>
+          <div class="tip-text">可手动粘贴/输入路径，也可点击按钮选择</div>
         </div>
         <div class="form-group">
           <div class="form-label">文件夹前缀 / 起始数字 / 结束数字</div>
@@ -203,7 +216,7 @@
         <div class="form-group">
           <label class="form-label">源文件夹 </label>
           <div class="form-row">
-            <input id="ib_re_src" readonly style="flex: 1; margin: 0" />
+            <input id="ib_re_src" style="flex: 1; margin: 0" />
             <button data-action="selectFolder" data-target-id="ib_re_src">
               选择文件夹
             </button>
@@ -211,11 +224,12 @@
               打开目标文件夹
             </button>
           </div>
+          <div class="tip-text">可手动粘贴/输入路径，也可点击按钮选择</div>
         </div>
         <div class="form-group">
           <label class="form-label">输出目录 </label>
           <div class="form-row">
-            <input id="ib_re_out" readonly style="flex: 1; margin: 0" />
+            <input id="ib_re_out" style="flex: 1; margin: 0" />
             <button data-action="selectFolder" data-target-id="ib_re_out">
               选择文件夹
             </button>
@@ -223,6 +237,7 @@
               打开目标文件夹
             </button>
           </div>
+          <div class="tip-text">可手动粘贴/输入路径，也可点击按钮选择</div>
         </div>
         <div class="form-group">
           <div class="form-label">工作模式</div>
@@ -287,7 +302,7 @@
         <div class="form-group">
           <label class="form-label">图片源目录</label>
           <div class="form-row">
-            <input id="ib_dis_src" readonly style="flex: 1; margin: 0" />
+            <input id="ib_dis_src" style="flex: 1; margin: 0" />
             <button data-action="selectFolder" data-target-id="ib_dis_src">
               选择文件夹
             </button>
@@ -295,11 +310,12 @@
               打开目标文件夹
             </button>
           </div>
+          <div class="tip-text">可手动粘贴/输入路径，也可点击按钮选择</div>
         </div>
         <div class="form-group">
           <label class="form-label">目标根目录 </label>
           <div class="form-row">
-            <input id="ib_dis_target" readonly style="flex: 1; margin: 0" />
+            <input id="ib_dis_target" style="flex: 1; margin: 0" />
             <button data-action="selectFolder" data-target-id="ib_dis_target">
               选择文件夹
             </button>
@@ -310,6 +326,7 @@
               打开目标文件夹
             </button>
           </div>
+          <div class="tip-text">可手动粘贴/输入路径，也可点击按钮选择</div>
           <div class="risk-note">
             ⚠需要预先建好L001/L002子文件夹等，程序不会自动创建子文件夹。
           </div>
@@ -344,7 +361,7 @@
         <div class="form-group">
           <label class="form-label">源文件夹 </label>
           <div class="form-row">
-            <input id="ib_ap_src" readonly style="flex: 1; margin: 0" />
+            <input id="ib_ap_src" style="flex: 1; margin: 0" />
             <button data-action="selectFolder" data-target-id="ib_ap_src">
               选择文件夹
             </button>
@@ -352,11 +369,12 @@
               打开目标文件夹
             </button>
           </div>
+          <div class="tip-text">可手动粘贴/输入路径，也可点击按钮选择</div>
         </div>
         <div class="form-group">
           <label class="form-label">输出目录 </label>
           <div class="form-row">
-            <input id="ib_ap_out" readonly style="flex: 1; margin: 0" />
+            <input id="ib_ap_out" style="flex: 1; margin: 0" />
             <button data-action="selectFolder" data-target-id="ib_ap_out">
               选择文件夹
             </button>
@@ -364,6 +382,7 @@
               打开目标文件夹
             </button>
           </div>
+          <div class="tip-text">可手动粘贴/输入路径，也可点击按钮选择</div>
           <div class="risk-note">⚠执行前清空，不要选择存放重要资料的目录！</div>
         </div>
         <div class="form-group">
