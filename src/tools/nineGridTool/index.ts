@@ -59,7 +59,7 @@ export async function handleNineGridLabel(
   const h = meta.height!;
   const cellW = w / 3;
   const cellH = h / 3;
-  const fontSize = Math.min(cellW, cellH) * 0.22;
+  const fontSize = Math.min(cellW, cellH) * 0.15;
   const compositeList: Parameters<sharp.Sharp["composite"]>[0] = [];
   for (let row = 0; row < 3; row++) {
     for (let col = 0; col < 3; col++) {
@@ -70,7 +70,7 @@ export async function handleNineGridLabel(
       const svgW = cellW;
       const svgH = cellH;
       const svgText = `<svg width="${svgW}" height="${svgH}" xmlns="http://www.w3.org/2000/svg">
-      <text x="50%" y="${svgH * 0.92}" font-family="Arial, 'Segoe UI', sans-serif" font-weight="900" font-size="${fontSize * 0.96}" fill="#ffffff" text-anchor="middle" dominant-baseline="bottom">${text}</text>
+      <text x="50%" y="${svgH * 0.92}" font-family="'Consolas','Segoe UI',monospace" font-weight="900" font-size="${fontSize * 0.96}" fill="#ffffff" stroke="#000000" stroke-width="35" stroke-linejoin="round" paint-order="stroke fill" text-anchor="middle" dominant-baseline="bottom">${text}</text>
       </svg>`;
       const svgBuf = Buffer.from(svgText, "utf-8");
       compositeList.push({
@@ -148,7 +148,9 @@ export const nineGridTool: ToolDefinition = {
     switch (msg.type) {
       case "openLoadImageFolder": {
         const dir = await ctx.selectFolder();
-        if (!dir) {break;}
+        if (!dir) {
+          break;
+        }
         const imgPaths = await scanImageFiles(dir);
         const uriMap: Record<string, string> = {};
         for (const fp of imgPaths) {
@@ -161,7 +163,9 @@ export const nineGridTool: ToolDefinition = {
         const paths = await ctx.selectFiles({
           图片: ["jpg", "jpeg", "png", "bmp", "webp"],
         });
-        if (!paths.length) {break;}
+        if (!paths.length) {
+          break;
+        }
         const uriMap: Record<string, string> = {};
         for (const fp of paths) {
           uriMap[fp] = await readImageToBase64(fp);
@@ -171,7 +175,9 @@ export const nineGridTool: ToolDefinition = {
       }
       case "selectOutputFolder": {
         const dir = await ctx.selectFolder();
-        if (dir) {ctx.postToWebview({ type: "setOutputDir", path: dir });}
+        if (dir) {
+          ctx.postToWebview({ type: "setOutputDir", path: dir });
+        }
         break;
       }
       case "openMergeOutputFolder": {
@@ -189,7 +195,9 @@ export const nineGridTool: ToolDefinition = {
       }
       case "selectLabelOutDir": {
         const dir = await ctx.selectFolder();
-        if (dir) {ctx.postToWebview({ type: "setLabelOutDir", path: dir });}
+        if (dir) {
+          ctx.postToWebview({ type: "setLabelOutDir", path: dir });
+        }
         break;
       }
       case "openLabelOutputFolder": {
@@ -209,7 +217,9 @@ export const nineGridTool: ToolDefinition = {
         const filePath = await ctx.selectFile({
           图片: ["jpg", "jpeg", "png", "bmp", "webp"],
         });
-        if (!filePath) {break;}
+        if (!filePath) {
+          break;
+        }
         const base64Url = await readImageToBase64(filePath);
         ctx.postToWebview({
           type: "setLabelImage",

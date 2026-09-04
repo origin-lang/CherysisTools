@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      .sub-tab-bar {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 14px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        padding-bottom: 8px;
+      }
+      .sub-tab {
+        padding: 5px 12px;
+        border: 1px solid var(--vscode-button-secondaryBackground);
+        cursor: pointer;
+        border-radius: 3px;
+      }
+      .sub-tab.active {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+      }
+      .sub-panel {
+        display: none;
+      }
+      .sub-panel.show {
+        display: block;
+      }
+      .module-title {
+        margin: 0 0 16px 0;
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--vscode-foreground);
+      }
+      .card-panel {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 6px;
+        padding: 16px;
+        margin-bottom: 16px;
+        background: var(--vscode-editor-background);
+      }
+      .form-group {
+        margin-bottom: 16px;
+      }
+      .form-row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .form-label {
+        display: block;
+        margin-bottom: 6px;
+      }
+      select,
+      input:not([type="radio"]):not([type="checkbox"]) {
+        padding: 5px 6px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+      }
+      .tip-text {
+        color: var(--vscode-descriptionForeground);
+        font-size: 12px;
+        margin-top: 6px;
+        line-height: 1.5;
+      }
+      .radio-horizontal-group {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .radio-h-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .rule-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      .rule-row .rule-idx {
+        flex: none;
+        width: 40px;
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .rule-row input[type="text"] {
+        flex: 1;
+        margin: 0;
+      }
+      .rule-row .btn-del {
+        flex: none;
+        padding: 4px 10px;
+      }
+      .form-actions {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        margin-top: 8px;
+        flex-wrap: wrap;
+      }
+      button {
+        padding: 6px 14px;
+        border: 1px solid var(--vscode-button-secondaryBorder, transparent);
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-foreground);
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-secondaryBackground));
+      }
+      .btn-primary-teal {
+        background-color: #23a884;
+        color: #ffffff;
+        border-color: #1f9474;
+      }
+      .btn-primary-teal:hover {
+        background-color: #1f9474;
+        color: #ffffff;
+      }
+      .file-status {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .grid-2col {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      @media (max-width: 900px) {
+        .grid-2col {
+          grid-template-columns: 1fr;
+        }
+      }
+      .result-table-wrap {
+        max-height: 360px;
+        overflow: auto;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 4px;
+      }
+      .result-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      .result-table th,
+      .result-table td {
+        border-bottom: 1px solid var(--vscode-panel-border);
+        padding: 5px 10px;
+        text-align: left;
+      }
+      .result-table th {
+        position: sticky;
+        top: 0;
+        background: var(--vscode-editor-background);
+        background-color: var(--vscode-editor-background);
+        z-index: 1;
+      }
+      .result-table th.sortable {
+        cursor: pointer;
+        user-select: none;
+        white-space: nowrap;
+      }
+      .result-table th.sortable:hover {
+        background: var(--vscode-list-hoverBackground);
+      }
+      .sort-indicator {
+        font-size: 10px;
+        margin-left: 3px;
+        opacity: 0.5;
+      }
+      .sort-indicator.active {
+        opacity: 1;
+      }
+      .filter-row td {
+        padding: 3px 6px;
+        background: var(--vscode-editor-background);
+        border-bottom: 2px solid var(--vscode-panel-border);
+      }
+      .filter-row input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 3px 5px;
+        font-size: 11px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 3px;
+      }
+      .filter-row input::placeholder {
+        opacity: 0.5;
+      }
+      .result-table td.idx {
+        color: var(--vscode-descriptionForeground);
+      }
+      .result-table tr:hover td {
+        background: var(--vscode-list-hoverBackground);
+      }
+      .chart-box {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 4px;
+        padding: 8px;
+        background: var(--vscode-editor-background);
+      }
+      .chart-scroll {
+        max-height: 460px;
+        overflow: auto;
+      }
+      .chart-box canvas {
+        width: 100%;
+        height: auto;
+        display: block;
+      }
+      .empty-hint {
+        color: var(--vscode-descriptionForeground);
+        text-align: center;
+        padding: 24px;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1 class="module-title">📊通用Excel清洗统计绘图工具</h1>
+
+    <!-- 文件选择 -->
+    <div class="card-panel">
+      <div class="form-group">
+        <label class="form-label">Excel/CSV 数据文件</label>
+        <div class="form-row">
+          <input
+            id="ea_fileInput"
+            style="flex: 1; margin: 0"
+            placeholder="请选择 .xlsx / .xls / .csv 文件"
+            readonly
+          />
+          <button id="ea_btnSelectFile">📂选择文件</button>
+        </div>
+        <div class="tip-text" id="ea_fileStatus">尚未选择文件</div>
+      </div>
+    </div>
+
+    <!-- 参数配置 -->
+    <div class="card-panel">
+      <div class="form-label" style="font-weight: 700; margin-bottom: 12px">
+        分析配置
+      </div>
+      <div class="grid-2col">
+        <div class="form-group">
+          <label class="form-label">X轴原始列 *</label>
+          <select id="ea_xCol" style="width: 100%">
+            <option value="">— 请选择列 —</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Y轴数值列 *</label>
+          <select id="ea_yCol" style="width: 100%">
+            <option value="">— 请选择列 —</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <div class="form-label">分组规则（多组，按优先级匹配；可选）</div>
+          <div id="ea_ruleList"></div>
+          <div class="form-row" style="margin-top: 4px">
+            <button id="ea_btnAddRule">➕ 添加分组规则</button>
+          </div>
+          <div class="tip-text">
+            从上到下依次匹配，<b>先命中的规则优先</b>并使用该规则提取的第一个分组作为分组标签，命中即不再参与后续规则；<b>任何规则都不匹配</b>的行，走原始文本逻辑（并按下方「匹配结果处理策略」处理）。
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="form-label">聚合方式</div>
+          <div class="radio-horizontal-group">
+            <label class="radio-h-item">
+              <input type="radio" name="ea_agg" value="sum" checked />
+              <span>求和</span>
+            </label>
+            <label class="radio-h-item">
+              <input type="radio" name="ea_agg" value="count" />
+              <span>计数</span>
+            </label>
+            <label class="radio-h-item">
+              <input type="radio" name="ea_agg" value="mean" />
+              <span>平均值</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
+        <div class="form-label">图表类型</div>
+        <div class="radio-horizontal-group">
+          <label class="radio-h-item">
+            <input type="radio" name="ea_chart" value="bar" checked />
+            <span>📊 柱状图</span>
+          </label>
+          <label class="radio-h-item">
+            <input type="radio" name="ea_chart" value="line" />
+            <span>📈 折线图</span>
+          </label>
+          <label class="radio-h-item">
+            <input type="radio" name="ea_chart" value="pie" />
+            <span>🥧 饼图</span>
+          </label>
+        </div>
+      </div>
+      <div class="form-group">
+        <div class="form-label">正则匹配结果处理策略（填写了任何规则才生效）</div>
+        <div class="radio-horizontal-group">
+          <label class="radio-h-item">
+            <input type="radio" name="ea_invalidMode" value="success_only" checked />
+            <span>只看匹配成功</span>
+          </label>
+          <label class="radio-h-item">
+            <input type="radio" name="ea_invalidMode" value="fail_only" />
+            <span>只看匹配失败</span>
+          </label>
+          <label class="radio-h-item">
+            <input type="radio" name="ea_invalidMode" value="separate" />
+            <span>两者都看，失败单独成组</span>
+          </label>
+          <label class="radio-h-item">
+            <input type="radio" name="ea_invalidMode" value="merge_other" />
+            <span>两者都看，失败归为「其他」</span>
+          </label>
+        </div>
+      </div>
+      <div class="form-actions" style="justify-content: flex-start">
+        <button id="ea_btnRun" class="btn-primary-teal">▶ 执行分析并绘图</button>
+      </div>
+    </div>
+
+    <!-- 结果区 -->
+    <div class="grid-2col">
+      <div class="card-panel">
+        <div class="form-label" style="font-weight: 700; margin-bottom: 12px">
+          统计结果表
+        </div>
+        <div class="result-table-wrap">
+          <table class="result-table" id="ea_table">
+            <thead>
+              <tr>
+                <th style="width: 60px">序号</th>
+                <th id="ea_thX" class="sortable" data-col="x">X标签 <span class="sort-indicator" id="ea_sortX"></span></th>
+                <th id="ea_thValue" class="sortable" data-col="value" style="width: 160px">聚合数值 <span class="sort-indicator" id="ea_sortValue"></span></th>
+              </tr>
+              <tr class="filter-row">
+                <td></td>
+                <td><input id="ea_filterX" type="text" placeholder="筛选 X 标签..." /></td>
+                <td><input id="ea_filterValue" type="text" placeholder="如 >100 或 10-50" /></td>
+              </tr>
+            </thead>
+            <tbody id="ea_tbody"></tbody>
+          </table>
+        </div>
+        <div class="tip-text" id="ea_tableHint">执行分析后显示结果</div>
+      </div>
+
+      <div class="card-panel">
+        <div class="form-label" style="font-weight: 700; margin-bottom: 12px">
+          可视化图表（悬浮可查看数值；柱状/折线的长标签可滚动查看全文）
+        </div>
+        <div class="chart-box" id="ea_chartBox">
+          <div class="chart-scroll" id="ea_chartScroll">
+            <canvas id="ea_canvas" width="560" height="320"></canvas>
+          </div>
+          <div class="empty-hint" id="ea_chartHint">执行分析后生成图表</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 导出区 -->
+    <div class="card-panel">
+      <div class="form-group">
+        <label class="form-label">导出保存目录</label>
+        <div class="form-row">
+          <input
+            id="ea_outDirInput"
+            style="flex: 1; margin: 0"
+            placeholder="请选择输出文件夹（导出表格与图表共用）"
+          />
+          <button id="ea_btnSelectOut">选择文件夹</button>
+          <button id="ea_btnOpenOut">打开文件夹</button>
+        </div>
+        <div class="tip-text" id="ea_outStatus">选择后用于保存统计表格Excel与图表PNG</div>
+      </div>
+      <div class="form-actions">
+        <button id="ea_btnExportExcel">💾 导出统计表格Excel</button>
+        <button id="ea_btnSaveChart">🖼️ 保存图表PNG</button>
+      </div>
+    </div>
+  </body>
+</html>
