@@ -36,15 +36,47 @@
       .tool-view.show {
         display: block;
       }
-      #logArea {
+      #logPanel {
         margin-top: 16px;
+      }
+      .log-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 4px 8px;
+        border: 1px solid var(--vscode-panel-border);
+        border-bottom: none;
+        background: var(--vscode-sideBar-background);
+      }
+      .log-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--vscode-descriptionForeground);
+      }
+      .log-clear {
+        padding: 2px 12px;
+        font-size: 12px;
+        cursor: pointer;
+        border: 1px solid var(--vscode-button-border, transparent);
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-button-secondaryForeground);
+        border-radius: 3px;
+      }
+      .log-clear:hover {
+        background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-secondaryBackground));
+      }
+      #logArea {
         white-space: pre-wrap;
         font-family: monospace;
         font-size: 12px;
-        min-height: 180px;
+        height: 260px;
+        min-height: 100px;
         padding: 8px;
         border: 1px solid var(--vscode-panel-border);
-        overflow: auto;
+        overflow-y: auto;
+        background: var(--vscode-editor-background);
+        resize: vertical;
+        box-sizing: border-box;
       }
       #fragmentContainer {
         margin-bottom: 16px;
@@ -58,7 +90,13 @@
       <p>上方导航栏选择要运行的工具</p>
     </div>
     <div id="fragmentContainer"></div>
-    <div id="logArea"></div>
+    <div id="logPanel">
+      <div class="log-header">
+        <span class="log-title">运行日志</span>
+        <button class="log-clear" id="clearLogBtn" title="清空日志">清空</button>
+      </div>
+      <div id="logArea"></div>
+    </div>
     <script>
       const vscode = acquireVsCodeApi();
       window.__vscode = vscode;
@@ -219,6 +257,10 @@
       window.addEventListener("message", (ev) => {
         handleMessage(ev.data);
       });
+      document.getElementById("clearLogBtn").onclick = () => {
+        const logDom = document.getElementById("logArea");
+        if (logDom) logDom.innerText = "";
+      };
       window.onload = () => {
         vscode.postMessage({ type: "init" });
       };

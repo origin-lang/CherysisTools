@@ -7,21 +7,27 @@ export type LogCallback = (msg: string) => void;
 export interface ToolContext {
   panel: vscode.WebviewPanel;
   extensionUri: vscode.Uri;
+  /** 扩展全局存储目录，用于存放跨工作区共享的数据(如SQLite) */
+  storageDir: string;
   postToWebview(msg: any): void;
   log(text: string): void;
   selectFolder(title?: string): Promise<string | undefined>;
   selectFile(filters?: Record<string, string[]>): Promise<string | undefined>;
   selectFiles(filters?: Record<string, string[]>): Promise<string[]>;
+  /** 弹出模态确认对话框，返回用户是否确认 */
+  confirm(message: string, detail?: string): Promise<boolean>;
 }
 
 /** 创建工具上下文 */
 export function createToolContext(
   panel: vscode.WebviewPanel,
   extensionUri: vscode.Uri,
+  storageDir: string,
 ): ToolContext {
   return {
     panel,
     extensionUri,
+    storageDir,
     postToWebview(msg: any) {
       panel.webview.postMessage(msg);
     },
@@ -54,6 +60,14 @@ export function createToolContext(
         filters,
       });
       return res ? res.map((u) => u.fsPath) : [];
+    },
+    async confirm(message, detail) {
+      const pick = await vscode.window.showWarningMessage(
+        message,
+        { modal: true, detail },
+        "确定",
+      );
+      return pick === "确定";
     },
   };
 }

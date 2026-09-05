@@ -75,10 +75,19 @@ class ToolRegistry {
     panel.webview.html = fs.readFileSync(mainHtmlPath.fsPath, "utf-8");
 
     panel.webview.onDidReceiveMessage(async (msg) => {
-      const ctx = createToolContext(panel, context.extensionUri);
+      // 数据存储目录：优先用用户配置的 cherysis.storageDir，留空则退回 VS Code 全局存储目录
+      const configured = vscode.workspace.getConfiguration("cherysis").get<string>("storageDir", "");
+      const storageDir = configured.trim() || context.globalStorageUri.fsPath;
+      fs.mkdirSync(storageDir, { recursive: true });
+      const ctx = createToolContext(
+        panel,
+        context.extensionUri,
+        storageDir,
+      );
 
       switch (msg.type) {
         case "init": {
+          panel.webview.postMessage({ type: "log", text: `🗂数据存储目录：${storageDir}` });
           panel.webview.postMessage({
             type: "initToolList",
             toolList: toolList.map((t) => {

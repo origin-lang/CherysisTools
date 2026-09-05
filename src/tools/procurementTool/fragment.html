@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      .module-title {
+        margin: 0 0 16px 0;
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--vscode-foreground);
+      }
+      .sub-tab-bar {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 14px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        padding-bottom: 8px;
+      }
+      .sub-tab {
+        padding: 5px 12px;
+        border: 1px solid var(--vscode-button-secondaryBackground);
+        cursor: pointer;
+        border-radius: 3px;
+      }
+      .sub-tab.active {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+      }
+      .sub-panel {
+        display: none;
+      }
+      .sub-panel.show {
+        display: block;
+      }
+      .toolbar {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+      button {
+        padding: 6px 14px;
+        border: 1px solid var(--vscode-button-secondaryBorder, transparent);
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-foreground);
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      button:hover {
+        background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-secondaryBackground));
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      button:disabled:hover {
+        background: var(--vscode-button-secondaryBackground);
+      }
+      .btn-primary-teal {
+        background-color: #23a884;
+        color: #ffffff;
+        border-color: #1f9474;
+      }
+      .btn-primary-teal:hover {
+        background-color: #1f9474;
+        color: #ffffff;
+      }
+      .btn-danger {
+        color: var(--vscode-errorForeground);
+      }
+      select,
+      input:not([type="radio"]):not([type="checkbox"]) {
+        padding: 5px 6px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+      }
+      .table-wrap {
+        max-height: 480px;
+        overflow: auto;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 4px;
+      }
+      .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      .data-table th,
+      .data-table td {
+        border-bottom: 1px solid var(--vscode-panel-border);
+        padding: 6px 10px;
+        text-align: left;
+        white-space: nowrap;
+        user-select: text;
+      }
+      .data-table td.description {
+        max-width: 320px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .data-table td.num {
+        text-align: right;
+      }
+      .data-table th {
+        position: sticky;
+        top: 0;
+        background: var(--vscode-editor-background);
+        background-color: var(--vscode-editor-background);
+        z-index: 1;
+        cursor: pointer;
+        user-select: none;
+      }
+      .data-table th:hover {
+        background: var(--vscode-list-hoverBackground);
+      }
+      .sort-indicator {
+        font-size: 10px;
+        margin-left: 3px;
+        opacity: 0.5;
+      }
+      .sort-indicator.active {
+        opacity: 1;
+      }
+      .data-table td.actions button {
+        padding: 2px 8px;
+        font-size: 11px;
+        margin-right: 4px;
+      }
+      .data-table tr:hover td {
+        background: var(--vscode-list-hoverBackground);
+      }
+      .empty-hint {
+        color: var(--vscode-descriptionForeground);
+        text-align: center;
+        padding: 24px;
+        font-size: 13px;
+      }
+      .status {
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        display: inline-block;
+      }
+      .status-已下单 { background: #e6a23c33; color: #b88230; }
+      .status-已签收 { background: #23a88433; color: #1f9474; }
+      .status-待退款 { background: #f56c6c33; color: #d14b4b; }
+      .status-待退货 { background: #e6a23c33; color: #b88230; }
+      .status-已结束 { background: #90939933; color: #72767b; }
+      .tip-text {
+        color: var(--vscode-descriptionForeground);
+        font-size: 12px;
+        margin-top: 6px;
+        line-height: 1.5;
+      }
+      .filter-bar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+      }
+      /* 模态框 */
+      .modal-mask {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+        display: none;
+        align-items: flex-start;
+        justify-content: center;
+        z-index: 1000;
+        padding-top: 60px;
+      }
+      .modal-mask.show {
+        display: flex;
+      }
+      .modal {
+        background: var(--vscode-editor-background);
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 8px;
+        padding: 20px;
+        width: 480px;
+        max-width: 90vw;
+        max-height: 80vh;
+        overflow: auto;
+      }
+      .modal h3 {
+        margin: 0 0 16px 0;
+        font-size: 16px;
+        color: var(--vscode-foreground);
+      }
+      .modal .form-group {
+        margin-bottom: 14px;
+      }
+      .modal .form-label {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--vscode-foreground);
+      }
+      .modal input,
+      .modal select,
+      .modal textarea {
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .modal textarea {
+        min-height: 60px;
+        resize: vertical;
+      }
+      .modal .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 16px;
+      }
+      .modal .form-row-inline {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .modal .form-row-inline label {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .modal .form-row-inline input[type="radio"] {
+        margin: 0;
+        width: auto;
+      }
+      /* 内联编辑 */
+      .data-table td.editable {
+        cursor: text;
+      }
+      .data-table td.editable:hover {
+        outline: 1px dashed var(--vscode-input-border);
+        outline-offset: -1px;
+      }
+      .data-table td .cell-input,
+      .data-table td .cell-select {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 2px 4px;
+        font-size: 12px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-focusBorder, var(--vscode-input-border));
+        border-radius: 3px;
+      }
+      .data-table td .cell-check {
+        width: auto;
+        transform: scale(1.1);
+        cursor: pointer;
+      }
+      /* 厂商组合框（可输入 + 下拉候选） */
+      .pm-sup-combo {
+        position: relative;
+        display: block;
+      }
+      .pm-sup-combo .pm-sup-list {
+        position: absolute;
+        top: calc(100% + 2px);
+        left: 0;
+        right: 0;
+        z-index: 80;
+        max-height: 180px;
+        overflow-y: auto;
+        background: var(--vscode-dropdown-background, var(--vscode-editor-background));
+        border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
+        border-radius: 3px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+        box-sizing: border-box;
+      }
+      .pm-sup-combo .pm-sup-opt {
+        padding: 4px 8px;
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        cursor: pointer;
+      }
+      .pm-sup-combo .pm-sup-opt.active,
+      .pm-sup-combo .pm-sup-opt:hover {
+        background: var(--vscode-list-hoverBackground);
+        color: var(--vscode-list-hoverForeground);
+      }
+      /* 底部新增行 */
+      .add-row-trigger {
+        width: 100%;
+        padding: 8px;
+        border: 1px dashed var(--vscode-panel-border);
+        background: transparent;
+        color: var(--vscode-descriptionForeground);
+        font-size: 12px;
+        cursor: pointer;
+        border-radius: 4px;
+        text-align: center;
+      }
+      .add-row-trigger:hover {
+        border-color: var(--vscode-focusBorder);
+        color: var(--vscode-foreground);
+      }
+      .data-table tr.new-row td {
+        background: var(--vscode-input-background, var(--vscode-editor-background));
+      }
+      .data-table td .cell-input.cell-textarea {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      /* 筛选行 */
+      .filter-row td {
+        background: var(--vscode-editor-background);
+        padding: 4px 6px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+      }
+      .filter-row .f-control {
+        width: 100%;
+        box-sizing: border-box;
+        font-size: 11px;
+        padding: 2px 4px;
+      }
+      .filter-row .f-range {
+        display: flex;
+        gap: 2px;
+        align-items: center;
+        white-space: nowrap;
+      }
+      .filter-row .f-range input {
+        width: 52px;
+        font-size: 11px;
+        padding: 2px 2px;
+      }
+      .filter-row .f-help {
+        color: transparent;
+      }
+      /* 排序列头默认手型 */
+      .data-table th.sortable { cursor: pointer; }
+      /* 已选计数 */
+      .sel-count {
+        color: var(--vscode-descriptionForeground);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      /* 复选框列 */
+      td.sel-col {
+        width: 26px;
+        text-align: center;
+        padding: 6px 4px;
+      }
+      td.sel-col input[type="checkbox"] {
+        width: auto;
+        margin: 0;
+        cursor: pointer;
+      }
+      /* 分析面板 */
+      .ana-bar {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+      .ana-bar label {
+        font-size: 12px;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        color: var(--vscode-foreground);
+      }
+      .chart-wrap {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 6px;
+        padding: 10px;
+        overflow: auto;
+        max-height: 60vh;
+      }
+      .chart-title {
+        margin: 0 0 8px 0;
+        font-size: 13px;
+        color: var(--vscode-foreground);
+      }
+      .chart-note {
+        color: var(--vscode-descriptionForeground);
+        font-size: 12px;
+        margin-top: 8px;
+        line-height: 1.5;
+      }
+      /* 右键复制菜单 */
+      .ctx-menu {
+        position: fixed;
+        z-index: 2000;
+        display: none;
+        min-width: 150px;
+        background: var(--vscode-menu-background, var(--vscode-editor-background));
+        color: var(--vscode-menu-foreground, var(--vscode-foreground));
+        border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border));
+        border-radius: 6px;
+        padding: 4px;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+      }
+      .ctx-menu button {
+        display: block;
+        width: 100%;
+        text-align: left;
+        border: none;
+        background: transparent;
+        color: inherit;
+        padding: 6px 10px;
+        font-size: 12px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .ctx-menu button:hover {
+        background: var(--vscode-list-hoverBackground);
+      }
+      /* 复制成功提示 */
+      .toast {
+        position: fixed;
+        left: 50%;
+        bottom: 28px;
+        transform: translateX(-50%);
+        z-index: 3000;
+        padding: 6px 16px;
+        background: var(--vscode-editor-background);
+        border: 1px solid var(--vscode-focusBorder, var(--vscode-panel-border));
+        border-radius: 20px;
+        color: var(--vscode-foreground);
+        font-size: 12px;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.18s ease;
+        max-width: 80vw;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .toast.show {
+        opacity: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <h1 class="module-title">📦供应商采购管理</h1>
+
+    <div class="sub-tab-bar">
+      <div class="sub-tab active" data-sub="tabSupplier">🏢 供应商档案</div>
+      <div class="sub-tab" data-sub="tabOrder">📋 采购订单</div>
+      <div class="sub-tab" data-sub="tabAnalysis">📊 分析</div>
+    </div>
+
+    <!-- 供应商 -->
+    <div id="tabSupplier" class="sub-panel show">
+      <div class="toolbar">
+        <button id="pm_btnAddSupplier" class="btn-primary-teal">➕ 新增一行</button>
+        <button id="pm_btnImportSuppliers">📥 导入Excel</button>
+        <button id="pm_btnExportSuppliers">📤 导出Excel</button>
+        <span id="pm_sSelCount" class="sel-count"></span>
+        <button id="pm_btnSupplierDelSel" class="btn-danger" style="display:none">🗑 删除选中</button>
+        <button id="pm_btnClearSupplierFilter">✖ 清除筛选</button>
+        <button id="pm_btnUndo" disabled title="撤销上一步表格操作">↩ 撤销</button>
+        <button id="pm_btnRedo" disabled title="重做上一步被撤销的操作">↪ 重做</button>
+        <span style="flex:1"></span>
+        <button id="pm_btnExportDB">💾 导出数据库(.db)</button>
+        <button id="pm_btnImportDB">📂 导入数据库(.db)</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table" id="pm_supplierTable">
+          <thead>
+            <tr id="pm_supplierHead"></tr>
+            <tr id="pm_supplierFilter"></tr>
+          </thead>
+          <tbody id="pm_supplierBody"></tbody>
+        </table>
+        <div class="empty-hint" id="pm_supplierEmpty">暂无供应商，点击「新增一行」添加</div>
+      </div>
+      <div class="tip-text">💡 提示：点击表头可排序；「导入/导出数据库」用于在多个电脑之间同步你的采购数据</div>
+    </div>
+
+    <!-- 订单 -->
+    <div id="tabOrder" class="sub-panel">
+      <div class="toolbar">
+        <button id="pm_btnAddOrder" class="btn-primary-teal">➕ 新增一行</button>
+        <button id="pm_btnImportOrders">📥 导入Excel</button>
+        <button id="pm_btnExportOrders">📤 导出Excel</button>
+        <span id="pm_oSelCount" class="sel-count"></span>
+        <button id="pm_btnOrderDelSel" class="btn-danger" style="display:none">🗑 删除选中</button>
+        <button id="pm_btnClearOrderFilter">✖ 清除筛选</button>
+        <button id="pm_btnUndoOrders" disabled title="撤销上一步表格操作">↩ 撤销</button>
+        <button id="pm_btnRedoOrders" disabled title="重做上一步被撤销的操作">↪ 重做</button>
+        <span style="flex:1"></span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table" id="pm_orderTable">
+          <thead>
+            <tr id="pm_orderHead"></tr>
+            <tr id="pm_orderFilter"></tr>
+          </thead>
+          <tbody id="pm_orderBody"></tbody>
+        </table>
+        <div class="empty-hint" id="pm_orderEmpty">暂无订单，点击「新增订单」添加</div>
+      </div>
+      <div class="tip-text">💡「自动签收」会一键填入签收时间(今天)与截止时间(7天后)，并将状态改为已签收</div>
+    </div>
+
+    <!-- 分析 -->
+    <div id="tabAnalysis" class="sub-panel">
+      <div class="ana-bar">
+        <label>数据来源
+          <select id="pm_anaSource">
+            <option value="order">采购订单</option>
+            <option value="supplier">供应商档案</option>
+          </select>
+        </label>
+        <label>X轴（分组）
+          <select id="pm_anaX">
+            <option value="supplier">供应商</option>
+            <option value="status">订单状态</option>
+            <option value="month">订单(签收)月份</option>
+            <option value="deadline_month">截止月份</option>
+          </select>
+        </label>
+        <label>Y轴（统计）
+          <select id="pm_anaY">
+            <option value="count">订单数量</option>
+            <option value="pay_sum">付款总额</option>
+            <option value="paid_sum">实付总额</option>
+            <option value="pay_avg">平均付款</option>
+          </select>
+        </label>
+        <button id="pm_anaRender">📊 生成图表</button>
+      </div>
+      <div class="chart-wrap" id="pm_chartWrap"></div>
+      <div class="chart-note" id="pm_chartNote"></div>
+    </div>
+
+    <!-- 右键复制菜单 / 提示 -->
+    <div class="ctx-menu" id="pm_ctxMenu"></div>
+    <div class="toast" id="pm_toast"></div>
+  </body>
+</html>
