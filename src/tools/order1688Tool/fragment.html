@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      .module-title {
+        margin: 0 0 16px 0;
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--vscode-foreground);
+      }
+      .sub-tab-bar {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 14px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        padding-bottom: 8px;
+      }
+      .sub-tab {
+        padding: 5px 12px;
+        border: 1px solid var(--vscode-button-secondaryBackground);
+        cursor: pointer;
+        border-radius: 3px;
+      }
+      .sub-tab.active {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+      }
+      .sub-panel {
+        display: none;
+      }
+      .sub-panel.show {
+        display: block;
+      }
+      .toolbar {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+      button {
+        padding: 6px 14px;
+        border: 1px solid var(--vscode-button-secondaryBorder, transparent);
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-foreground);
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      button:hover {
+        background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-secondaryBackground));
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      button:disabled:hover {
+        background: var(--vscode-button-secondaryBackground);
+      }
+      .btn-primary-teal {
+        background-color: #23a884;
+        color: #ffffff;
+        border-color: #1f9474;
+      }
+      .btn-primary-teal:hover {
+        background-color: #1f9474;
+        color: #ffffff;
+      }
+      .btn-danger {
+        color: var(--vscode-errorForeground);
+      }
+      select,
+      input:not([type="radio"]):not([type="checkbox"]) {
+        padding: 5px 6px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+      }
+      .tip-text {
+        color: var(--vscode-descriptionForeground);
+        font-size: 12px;
+        margin-top: 6px;
+        line-height: 1.5;
+      }
+      #o8_text {
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 120px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+        padding: 8px;
+        font-family: "Microsoft YaHei", sans-serif;
+        font-size: 12px;
+        resize: vertical;
+      }
+      .table-wrap {
+        max-height: 420px;
+        overflow: auto;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 4px;
+        margin-top: 10px;
+      }
+      .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      .data-table th,
+      .data-table td {
+        border-bottom: 1px solid var(--vscode-panel-border);
+        padding: 5px 8px;
+        text-align: left;
+        white-space: nowrap;
+        user-select: text;
+      }
+      .data-table th {
+        position: sticky;
+        top: 0;
+        background: var(--vscode-editor-background);
+        background-color: var(--vscode-editor-background);
+        z-index: 1;
+        user-select: none;
+      }
+      .data-table td.editable {
+        cursor: text;
+      }
+      .data-table td.editable:hover {
+        outline: 1px dashed var(--vscode-input-border);
+        outline-offset: -1px;
+      }
+      .data-table td.num {
+        text-align: right;
+      }
+      .data-table tr:hover td {
+        background: var(--vscode-list-hoverBackground);
+      }
+      .data-table td.actions button {
+        padding: 2px 8px;
+        font-size: 11px;
+        margin-right: 4px;
+      }
+      .empty-hint {
+        color: var(--vscode-descriptionForeground);
+        text-align: center;
+        padding: 20px;
+        font-size: 13px;
+      }
+      .sel-col {
+        width: 26px;
+        text-align: center;
+        padding: 5px 4px;
+      }
+      .sel-col input[type="checkbox"] {
+        width: auto;
+        margin: 0;
+        cursor: pointer;
+      }
+      .sel-count {
+        color: var(--vscode-descriptionForeground);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .detail-row td {
+        background: var(--vscode-sideBar-background, transparent);
+        padding: 0;
+      }
+      .detail-wrap {
+        padding: 6px 12px 10px 40px;
+      }
+      .detail-wrap table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      .detail-wrap th,
+      .detail-wrap td {
+        border: 1px solid var(--vscode-panel-border);
+        padding: 4px 8px;
+        white-space: nowrap;
+      }
+      .filter-inp {
+        width: 220px;
+      }
+      .ctx-menu {
+        position: fixed;
+        z-index: 2000;
+        display: none;
+        min-width: 150px;
+        background: var(--vscode-menu-background, var(--vscode-editor-background));
+        color: var(--vscode-menu-foreground, var(--vscode-foreground));
+        border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border));
+        border-radius: 6px;
+        padding: 4px;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+      }
+      .ctx-menu button {
+        display: block;
+        width: 100%;
+        text-align: left;
+        border: none;
+        background: transparent;
+        color: inherit;
+        padding: 6px 10px;
+        font-size: 12px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .ctx-menu button:hover {
+        background: var(--vscode-list-hoverBackground);
+      }
+      .toast {
+        position: fixed;
+        left: 50%;
+        bottom: 28px;
+        transform: translateX(-50%);
+        z-index: 3000;
+        padding: 6px 16px;
+        background: var(--vscode-editor-background);
+        border: 1px solid var(--vscode-focusBorder, var(--vscode-panel-border));
+        border-radius: 20px;
+        color: var(--vscode-foreground);
+        font-size: 12px;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.18s ease;
+        max-width: 80vw;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .toast.show {
+        opacity: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <h1 class="module-title">📥1688订单提取</h1>
+
+    <div class="sub-tab-bar">
+      <div class="sub-tab active" data-sub="tabGrab">📌 抓取入库</div>
+      <div class="sub-tab" data-sub="tabRecords">🗂 订单记录</div>
+    </div>
+
+    <div id="tabGrab" class="sub-panel show">
+      <div class="tip-text">
+        ① 在1688订单详情页框选订单表格 Ctrl+C ② 回到本窗口粘贴（<b>Ctrl+V</b>，或在输入框<b>右键 → 粘贴</b>，文本保留在输入框）③ 按<b>回车</b>或点<b>🔍 解析文本</b>，下方预览表自动生成，可改格 / 🗑删行 / 全选删除 ④ 点「入库」写入。多个订单用一行 --- 分隔。
+      </div>
+      <textarea id="o8_text" placeholder="在这里粘贴 1688 订单文本（多个订单用一行 --- 或 === 分隔）"></textarea>
+      <div class="toolbar">
+        <button id="o8_btnParse">🔍 解析文本</button>
+        <button id="o8_btnClearText">🧹 清空文本</button>
+      </div>
+      <div class="toolbar" id="o8_previewBar" style="margin-top:14px">
+        <span class="tip-text" style="font-weight:700">▼ 解析预览</span>
+        <span id="o8_previewStats" class="sel-count">尚未粘贴</span>
+        <span style="flex:1"></span>
+        <span id="o8_previewCount" class="sel-count"></span>
+        <button id="o8_btnDelSel" class="btn-danger" style="display: none">🗑 删除选中</button>
+        <button id="o8_btnImport" class="btn-primary-teal">✅ 入库</button>
+      </div>
+      <div class="table-wrap" id="o8_previewWrap">
+        <div class="empty-hint">在这里放最低限度的说明：粘贴 1688 订单文本后，解析结果表格会出现在这里。</div>
+      </div>
+    </div>
+
+    <div id="tabRecords" class="sub-panel">
+      <div class="toolbar">
+        <input id="o8_fText" class="filter-inp" placeholder="筛选：订单号 / 供应商 / 采集日期" />
+        <button id="o8_btnClearFilter">✖ 清除筛选</button>
+        <span id="o8_recCount" class="sel-count"></span>
+        <button id="o8_btnRecDelSel" class="btn-danger" style="display: none">🗑 删除选中</button>
+        <span style="flex: 1"></span>
+        <button id="o8_btnExport" class="btn-primary-teal">📤 导出采集表</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table" id="o8_recTable">
+          <thead id="o8_recHead"></thead>
+          <tbody id="o8_recBody"></tbody>
+        </table>
+        <div class="empty-hint" id="o8_recEmpty">暂无订单记录。到「抓取入库」粘贴 1688 订单文本。</div>
+      </div>
+      <div class="tip-text">📤 导出：选择文件夹后生成 <b>1688采集信息表&lt;时间点&gt;.xlsx</b>（同订单「本订单实付款」合并单元格，与现有采集表格式一致）。</div>
+    </div>
+
+    <div class="ctx-menu" id="o8_ctxMenu"></div>
+    <div class="toast" id="o8_toast"></div>
+  </body>
+</html>
