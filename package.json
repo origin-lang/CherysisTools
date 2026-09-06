@@ -1,9 +1,10 @@
 {
   "name": "Cherysis",
   "displayName": "Cherysis",
-  "publisher": "tool",
+  "publisher": "Faye",
   "description": "small tools",
   "version": "0.0.5",
+  "icon": "images/logo.png",
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -19,6 +20,16 @@
         "title": "Cherysis:打开工具面板"
       }
     ],
+    "configuration": {
+      "title": "Cherysis",
+      "properties": {
+        "cherysis.storageDir": {
+          "type": "string",
+          "default": "",
+          "description": "数据存储目录（订单/厂商等库文件存放位置）。留空则使用 VS Code 全局存储目录（%APPDATA%\\Code\\User\\globalStorage\\Faye.Cherysis）。建议填一个绝对路径，设置后不会自动改。"
+        }
+      }
+    },
     "menus": {
       "commandPalette": [
         {
@@ -36,6 +47,7 @@
     "test": "vscode-test"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "24.x",
     "@types/vscode": "^1.80.0",
@@ -48,6 +60,7 @@
     "vsce-pnpm": "^0.1.0"
   },
   "dependencies": {
+    "better-sqlite3": "^13.0.3",
     "globby": "^14.1.0",
     "sharp": "^0.33.5",
     "xlsx": "^0.18.5"
