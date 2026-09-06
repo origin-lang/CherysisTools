@@ -403,6 +403,10 @@
 
   let toastTimer = null;
   function showToast(text) {
+    if (window.showGlobalToast) {
+      window.showGlobalToast(text);
+      return;
+    }
     const t = document.getElementById("pm_toast");
     if (!t) {return;}
     t.textContent = text;
