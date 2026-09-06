@@ -12,6 +12,8 @@ export interface ToolDefinition {
   clientScriptPath?: string;
   /** 处理来自 webview 的消息 */
   handleMessage(msg: any, ctx: ToolContext): Promise<void> | void;
+  /** 额外允许 webview 加载资源的本地目录（如商品图片目录），面板创建时收集 */
+  resourceRoots?(storageDir: string): string[];
 }
 
 export interface ToolMeta {
@@ -20,6 +22,7 @@ export interface ToolMeta {
   /** 相对 src 根目录的路径字符串，运行期再解析为 Uri */
   fragmentPath?: string;
   clientScriptPath?: string;
+  resourceRoots?: (storageDir: string) => string[];
 }
 
 class ToolRegistry {
@@ -27,16 +30,18 @@ class ToolRegistry {
   private handlerMap = new Map<string, (msg: any, ctx: ToolContext) => void | Promise<void>>();
   private toolPanel: vscode.WebviewPanel | undefined;
   private currentToolName = "home";
+  private lastToolName = "home";
   private extensionUri: vscode.Uri | undefined;
 
   register(tool: ToolDefinition) {
+    this.handlerMap.set(tool.toolName, tool.handleMessage);
     this.tools.push({
       toolName: tool.toolName,
       title: tool.title,
       fragmentPath: tool.fragmentPath,
       clientScriptPath: tool.clientScriptPath,
+      resourceRoots: tool.resourceRoots,
     });
-    this.handlerMap.set(tool.toolName, tool.handleMessage);
   }
 
   private resolveSrc(rel?: string): vscode.Uri | undefined {
@@ -53,16 +58,34 @@ class ToolRegistry {
       return;
     }
     const toolList = this.tools;
+    const storageDir =
+      vscode.workspace.getConfiguration("cherysis").get<string>("storageDir", "").trim() ||
+      context.globalStorageUri.fsPath;
+    const resourceRoots = [
+      vscode.Uri.joinPath(context.extensionUri, "src", "webview"),
+      vscode.Uri.joinPath(context.extensionUri, "src", "tools"),
+      vscode.Uri.file(storageDir),
+    ];
+    for (const t of toolList) {
+      if (t.resourceRoots) {
+        try {
+          for (const p of t.resourceRoots(storageDir)) {
+            if (p && p.trim()) {
+              resourceRoots.push(vscode.Uri.file(p.trim()));
+            }
+          }
+        } catch {
+          /* 忽略单工具的根目录收集失败 */
+        }
+      }
+    }
     const panel = (this.toolPanel = vscode.window.createWebviewPanel(
       "cherysisToolPanel",
       "Cherysis‑tools 小工具集",
       vscode.ViewColumn.One,
       {
         enableScripts: true,
-        localResourceRoots: [
-          vscode.Uri.joinPath(context.extensionUri, "src", "webview"),
-          vscode.Uri.joinPath(context.extensionUri, "src", "tools"),
-        ],
+        localResourceRoots: resourceRoots,
       },
     ));
 
@@ -95,6 +118,10 @@ class ToolRegistry {
               return { toolName: t.toolName, title: t.title };
             }),
           });
+          // webview 重载（关闭面板再开 / 后台回收）后自动回到上次用的工具，数据自动重新读取
+          if (this.lastToolName && this.lastToolName !== "home") {
+            panel.webview.postMessage({ type: "autoOpenTool", toolName: this.lastToolName });
+          }
           break;
         }
         case "switchTool": {
@@ -104,6 +131,7 @@ class ToolRegistry {
             break;
           }
           this.currentToolName = meta.toolName;
+          this.lastToolName = meta.toolName;
           const fragHtml = fs.readFileSync(fragmentUri.fsPath, "utf-8");
           const clientScriptUri = this.resolveSrc(meta.clientScriptPath);
           panel.webview.postMessage({

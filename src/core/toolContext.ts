@@ -3,6 +3,12 @@ import * as vscode from "vscode";
 /** 工具执行时的日志回调 */
 export type LogCallback = (msg: string) => void;
 
+/** 以这些符号开头的日志视为操作结果，会额外弹 Toast */
+const RESULT_MARKERS = new Set([
+  "✅", "❌", "✏️", "🗑", "🔻", "🔺", "📐", "📦", "📝", "📥", "🖊", "⭐", "☆",
+  "🖼", "🔒", "🔓", "⚙", "📁", "⚠", "ℹ", "⏭", "↩", "↪", "➕",
+]);
+
 /** 注入给每个工具的通用上下文，封装 webview 交互与通用对话框 */
 export interface ToolContext {
   panel: vscode.WebviewPanel;
@@ -33,6 +39,10 @@ export function createToolContext(
     },
     log(text: string) {
       panel.webview.postMessage({ type: "log", text });
+      const head = Array.from(text)[0];
+      if (head && RESULT_MARKERS.has(head)) {
+        panel.webview.postMessage({ type: "toast", text: text.split("\n")[0] });
+      }
     },
     async selectFolder(title) {
       const res = await vscode.window.showOpenDialog({
