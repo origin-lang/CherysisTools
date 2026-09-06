@@ -1,0 +1,775 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      .module-title {
+        margin: 0 0 16px 0;
+        font-size: 18px;
+        font-weight: 700;
+      }
+      .sub-tab-bar {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 14px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        padding-bottom: 8px;
+        flex-wrap: wrap;
+      }
+      .sub-tab {
+        padding: 5px 12px;
+        border: 1px solid var(--vscode-button-secondaryBackground);
+        cursor: pointer;
+        border-radius: 3px;
+      }
+      .sub-tab.active {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+      }
+      .sub-panel {
+        display: none;
+      }
+      .sub-panel.show {
+        display: block;
+      }
+      .toolbar {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+      button {
+        padding: 5px 12px;
+        border: 1px solid var(--vscode-button-secondaryBorder, transparent);
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-foreground);
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      button:hover {
+        background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-secondaryBackground));
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .btn-teal {
+        background-color: #23a884;
+        color: #ffffff;
+        border-color: #1f9474;
+      }
+      .btn-teal:hover {
+        background-color: #1f9474;
+        color: #ffffff;
+      }
+      .btn-danger {
+        color: var(--vscode-errorForeground);
+      }
+      select,
+      input,
+      textarea {
+        padding: 5px 6px;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border);
+        border-radius: 4px;
+        font-size: 12px;
+      }
+      input[type="checkbox"] {
+        accent-color: #23a884;
+      }
+      .table-wrap {
+        max-height: 480px;
+        overflow: auto;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 4px;
+      }
+      .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      .data-table th,
+      .data-table td {
+        border-bottom: 1px solid var(--vscode-panel-border);
+        border-right: 1px solid var(--vscode-panel-border);
+        padding: 5px 8px;
+        text-align: left;
+        white-space: nowrap;
+        user-select: text;
+      }
+      .data-table th:last-child,
+      .data-table td:last-child {
+        border-right: none;
+      }
+      .data-table tbody tr {
+        transition: none;
+      }
+      .data-table tbody tr.sel td {
+        background: rgba(35, 168, 132, 0.16);
+      }
+      .data-table th {
+        position: sticky;
+        top: 0;
+        background-color: var(--vscode-editor-background);
+        z-index: 1;
+        cursor: pointer;
+        user-select: none;
+      }
+      .data-table th:hover {
+        background: var(--vscode-list-hoverBackground);
+      }
+      .data-table td.num {
+        text-align: right;
+      }
+      .data-table tr.off {
+        opacity: 0.45;
+        background: var(--vscode-list-inactiveSelectionBackground, transparent);
+      }
+      .data-table tr.lowstock td.cell-stock {
+        color: var(--vscode-errorForeground);
+        font-weight: 700;
+      }
+      .data-table tr.lowstock td.cell-stock::after {
+        content: " 该补货";
+        font-weight: 400;
+        font-size: 11px;
+      }
+      .badge {
+        display: inline-block;
+        padding: 1px 7px;
+        border-radius: 3px;
+        font-size: 11px;
+      }
+      .badge-on {
+        background: #23a88433;
+        color: #23a884;
+      }
+      .badge-off {
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-descriptionForeground);
+      }
+      .thumb {
+        width: 34px;
+        height: 34px;
+        object-fit: cover;
+        border-radius: 3px;
+        cursor: pointer;
+        border: 1px solid var(--vscode-panel-border);
+      }
+      .thumb.placeholder {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .cell-link a {
+        color: var(--vscode-textLink-foreground);
+        text-decoration: none;
+      }
+      .mini-btn {
+        padding: 2px 7px;
+        font-size: 11px;
+        margin-right: 3px;
+      }
+      .mini-btn:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      #productPager {
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .card-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+        gap: 12px;
+      }
+      .card {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 6px;
+        overflow: hidden;
+        background: var(--vscode-sideBar-background);
+        cursor: pointer;
+        position: relative;
+      }
+      .card.off {
+        opacity: 0.5;
+      }
+      .card img {
+        width: 100%;
+        height: 150px;
+        object-fit: cover;
+        display: block;
+        background: var(--vscode-editor-background);
+      }
+      .card .ph {
+        width: 100%;
+        height: 150px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--vscode-descriptionForeground);
+        font-size: 12px;
+        background: var(--vscode-input-background);
+      }
+      .card-body {
+        padding: 6px 8px;
+        font-size: 12px;
+        line-height: 1.6;
+      }
+      .card-body .code {
+        font-weight: 700;
+      }
+      .card-badge {
+        position: absolute;
+        top: 6px;
+        right: 6px;
+        padding: 1px 7px;
+        border-radius: 3px;
+        font-size: 11px;
+        background: rgba(0, 0, 0, 0.6);
+        color: #fff;
+      }
+      .card-badge.off {
+        background: #b93e3e;
+      }
+      .low-stock-tag {
+        color: var(--vscode-errorForeground);
+        font-weight: 700;
+      }
+      .lightbox {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.82);
+        z-index: 50;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      .lightbox .lb-head {
+        width: 100%;
+        max-width: 900px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        justify-content: space-between;
+        margin-bottom: 12px;
+        color: #fff;
+        font-size: 13px;
+      }
+      .lightbox .big {
+        max-width: 860px;
+        max-height: 62vh;
+        object-fit: contain;
+        border-radius: 4px;
+        background: #fff;
+      }
+      .lightbox .thumbs {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+        max-width: 900px;
+        overflow-x: auto;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      .lightbox .thumbs img {
+        width: 64px;
+        height: 64px;
+        object-fit: cover;
+        border-radius: 3px;
+        cursor: pointer;
+        border: 2px solid transparent;
+      }
+      .lightbox .thumbs img.active {
+        border-color: #23a884;
+      }
+      .lb-cls {
+        background: transparent;
+        border: 1px solid #888;
+        color: #fff;
+        border-radius: 50%;
+        width: 30px;
+        height: 30px;
+        line-height: 30px;
+        padding: 0;
+        font-size: 16px;
+        cursor: pointer;
+      }
+      .modal-mask {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 40;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .modal {
+        background: var(--vscode-editor-background);
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 8px;
+        min-width: 420px;
+        max-width: 640px;
+        max-height: 86vh;
+        overflow: auto;
+        padding: 18px 20px;
+      }
+      .modal h3 {
+        margin: 0 0 14px 0;
+        font-size: 15px;
+      }
+      .form-grid {
+        display: grid;
+        grid-template-columns: 96px 1fr;
+        gap: 10px 12px;
+        align-items: center;
+      }
+      .form-grid label {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .computed {
+        color: #23a884;
+        font-size: 13px;
+      }
+      .muted {
+        color: var(--vscode-descriptionForeground);
+        font-size: 12px;
+      }
+      .panel {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 6px;
+        padding: 12px 14px;
+        margin-bottom: 14px;
+      }
+      .rows {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: flex-end;
+      }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .field label {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+      }
+      textarea {
+        min-height: 120px;
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .stat-line {
+        margin: 4px 0;
+        font-size: 13px;
+      }
+      .num-big {
+        font-size: 15px;
+        font-weight: 700;
+      }
+      .profit-pos {
+        color: #23a884;
+      }
+      .profit-neg {
+        color: var(--vscode-errorForeground);
+      }
+      .rules-editor input {
+        width: 90px;
+      }
+      .rules-editor input[name="expr"] {
+        width: 130px;
+      }
+      .rules-editor input[name="label"] {
+        width: 80px;
+      }
+      .ctx-item {
+        padding: 6px 14px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .ctx-item:hover {
+        background: var(--vscode-list-hoverBackground);
+      }
+      .filter-row input[data-fkey] {
+        width: 100%;
+        min-width: 52px;
+        padding: 2px 4px;
+        font-size: 11px;
+      }
+      .toast {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: var(--vscode-input-background);
+        border: 1px solid var(--vscode-panel-border);
+        color: var(--vscode-foreground);
+        padding: 6px 16px;
+        border-radius: 4px;
+        z-index: 60;
+        font-size: 12px;
+      }
+      .card .star {
+        position: absolute;
+        top: 6px;
+        left: 6px;
+        width: 22px;
+        height: 22px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: none;
+        border-radius: 50%;
+        background: rgba(0, 0, 0, 0.5);
+        color: #fff;
+        font-size: 14px;
+        cursor: pointer;
+        padding: 0;
+        line-height: 1;
+      }
+      .card .star.on {
+        color: #ffd34d;
+        background: rgba(0, 0, 0, 0.65);
+      }
+      .live-star-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 4px;
+        padding: 3px 8px;
+        margin: 3px;
+        font-size: 12px;
+        background: var(--vscode-sideBar-background);
+        cursor: pointer;
+      }
+      .live-star-chip:hover {
+        border-color: #23a884;
+      }
+      .live-star-chip [data-ls-act='rm'] {
+        cursor: pointer;
+      }
+      .live-star-chip .code {
+        font-weight: 700;
+      }
+      .live-group {
+        margin-bottom: 16px;
+      }
+      .live-group .g-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .live-group .g-head .muted {
+        margin-right: auto;
+      }
+      .g-gen {
+        color: #fff;
+        background: #23a884;
+        border: none;
+        border-radius: 3px;
+        padding: 3px 8px;
+        cursor: pointer;
+      }
+      .g-gen:hover {
+        background: #1d9170;
+      }
+      .live-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        max-width: 540px;
+      }
+      .live-cell {
+        position: relative;
+      }
+      .live-cell .cell-num {
+        position: absolute;
+        top: 4px;
+        left: 4px;
+        z-index: 2;
+        background: rgba(0, 0, 0, 0.6);
+        color: #fff;
+        border-radius: 3px;
+        padding: 0 5px;
+        font-size: 11px;
+      }
+      .live-cell input {
+        width: 100%;
+        box-sizing: border-box;
+        text-align: center;
+        padding: 8px 4px;
+        font-size: 14px;
+        font-weight: 700;
+      }
+      .live-cell input.empty {
+        color: var(--vscode-descriptionForeground);
+        font-weight: 400;
+      }
+      .live-cell input.err {
+        border-color: #e0404b;
+        background: rgba(224, 64, 75, 0.08);
+      }
+      .live-cell input.ok {
+        border-color: #23a884;
+      }
+      .live-cell input.dup {
+        border-color: #e6a23c;
+        background: rgba(230, 162, 60, 0.1);
+      }
+      .live-cell .cell-code {
+        margin-top: 4px;
+        text-align: center;
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .g-del {
+        margin-left: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <datalist id="shopCatList"></datalist>
+    <h2 class="module-title">🏪 商品店铺管理</h2>
+    <div class="sub-tab-bar">
+      <div class="sub-tab active" data-sub="tabProducts">商品管理</div>
+      <div class="sub-tab" data-sub="tabSales">每日销售</div>
+      <div class="sub-tab" data-sub="tabMonthly">分析·月报</div>
+      <div class="sub-tab" data-sub="tabLive">⭐直播排品</div>
+      <div class="sub-tab" data-sub="tabSettings">规则与设置</div>
+    </div>
+
+    <div id="tabProducts" class="sub-panel show">
+      <div class="toolbar">
+        <button id="viewListBtn" class="btn-teal">列表</button>
+        <button id="viewGalleryBtn">画册</button>
+        <select id="filterStatus">
+          <option value="all">全部状态</option>
+          <option value="on">在售</option>
+          <option value="off">已下架</option>
+        </select>
+        <select id="filterSeries"><option value="">全部系列</option></select>
+        <select id="filterCategory"><option value="">全部品类</option></select>
+        <button id="newProductBtn" class="btn-teal">＋ 新建商品</button>
+        <button id="colSetBtn">字段显示</button>
+        <button id="importProductBtn" title="粘贴商品表格批量导入">导入商品</button>
+        <button id="clearFilterBtn" class="btn-danger" style="visibility: hidden">清除筛选</button>
+      </div>
+      <div id="productPager" class="toolbar"></div>
+      <div id="productListView" style="display: block"></div>
+      <div id="productGalleryView" style="display: none"></div>
+    </div>
+
+    <div id="tabSales" class="sub-panel">
+      <div class="toolbar">
+        <span class="muted">日期</span>
+        <input type="date" id="salesDate" />
+        <span class="muted">当天已有记录时</span>
+        <select id="dupMode">
+          <option value="accumulate" selected>累加</option>
+          <option value="overwrite">覆盖</option>
+          <option value="skip">跳过</option>
+        </select>
+      </div>
+      <div class="panel">
+        <div class="rows">
+          <div class="field">
+            <label>编号</label>
+            <input id="quickCode" placeholder="L001 或 L076" style="width: 110px" />
+          </div>
+          <div class="field">
+            <label>卖出件数</label>
+            <input id="quickSold" type="number" min="0" value="0" style="width: 80px" />
+          </div>
+          <div class="field">
+            <label>退款件数</label>
+            <input id="quickRefund" type="number" min="0" value="0" style="width: 80px" />
+          </div>
+          <div class="field">
+            <label>备注</label>
+            <input id="quickNote" style="width: 160px" />
+          </div>
+          <button id="quickSaveBtn" class="btn-teal">录入/更新</button>
+            <span id="quickLog" class="muted"></span>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="rows">
+          <div class="field" style="flex: 1">
+            <label>批量粘贴（每行：编号 卖出 退款，可用 Tab / 空格 / 逗号分隔）</label>
+            <textarea id="pasteArea" placeholder="粘贴示例：
+L076&#9;3&#9;1
+L1044 2
+L032,1"></textarea>
+          </div>
+        </div>
+        <div style="margin-top: 8px">
+          <button id="pasteBtn" class="btn-teal">解析粘贴入库</button>
+          <span class="muted" id="pasteHint"></span>
+        </div>
+      </div>
+      <div class="panel">
+        <h4 style="margin: 0 0 8px 0">当日销售 <span class="muted" id="salesDateLabel"></span>
+          <span style="margin-left: 10px">
+            <button id="salesRefreshBtn" class="mini-btn" title="重新从数据库加载当日销售">🔄 刷新</button>
+            <button id="delSelBtn" class="mini-btn btn-danger" disabled title="删除勾选的行">删除选中</button>
+          </span>
+        </h4>
+        <div class="table-wrap" style="max-height: 260px" id="salesTableWrap"></div>
+      </div>
+      <div class="panel">
+        <h4 style="margin: 0 0 8px 0">销售趋势</h4>
+        <div class="muted" style="margin-bottom: 6px">
+          👉 用法：选「全部商品 / 某个商品」＋「按天 / 按月」，柱子为净售数量；悬停柱子可看该时段的净售与退款。
+        </div>
+        <div class="rows">
+          <div class="field">
+            <label>范围</label>
+            <select id="trendProduct"></select>
+          </div>
+          <div class="field">
+            <label>分组</label>
+            <select id="trendGroup">
+              <option value="month">按月累计</option>
+              <option value="day">按日（选月）</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>月份（按日时用）</label>
+            <input type="month" id="trendMonth" />
+          </div>
+          <button id="trendBtn">刷新</button>
+        </div>
+        <div id="trendChart" style="margin-top: 10px"></div>
+      </div>
+    </div>
+
+    <div id="tabMonthly" class="sub-panel">
+      <div class="muted" style="margin-bottom: 6px">
+        👉 流程：选月份 →「生成/刷新月报」（按每天成交时的进价快照算货成本）→ 填「到账收入 / 其他支出」→「保存月报」→ 核对无误后「锁定」（锁定后当月销售将不能再改，防止对账后反悔）。
+      </div>
+      <div class="toolbar">
+        <span class="muted">月份</span>
+        <input type="month" id="settleMonth" />
+        <button id="settleBuildBtn" class="btn-teal">生成 / 刷新月报</button>
+      </div>
+      <div class="panel" id="settlePanel">
+        <div class="stat-line" id="settleStats"></div>
+        <div class="rows" style="margin-top: 10px">
+          <div class="field">
+            <label>本月到账收入 ¥（结算到账/微信到账，口径你定）</label>
+            <input id="settleIncome" type="number" min="0" step="0.01" style="width: 170px" />
+          </div>
+          <div class="field">
+            <label>本月其他支出 ¥（运费/佣金/杂支）</label>
+            <input id="settleExpense" type="number" min="0" step="0.01" style="width: 170px" />
+          </div>
+          <button id="settleSaveBtn" class="btn-teal">保存月报</button>
+          <button id="settleLockBtn">锁定 🔒</button>
+          <button id="settleUnlockBtn">解锁 🔓</button>
+          <button id="settleDeleteBtn" class="btn-danger">删除该月报</button>
+        </div>
+        <div class="stat-line" style="margin-top: 10px" id="settleProfit"></div>
+      </div>
+      <div class="panel">
+        <h4 style="margin: 0 0 8px 0">月报列表（多年可对比）</h4>
+        <div class="table-wrap" style="max-height: 300px" id="settlesTableWrap"></div>
+      </div>
+      <div class="panel">
+        <h4 style="margin: 0 0 8px 0">净利润</h4>
+        <div id="profitChart"></div>
+      </div>
+    </div>
+
+    <div id="tabLive" class="sub-panel">
+      <div class="panel">
+        <h4 style="margin: 0 0 8px 0">画册星标选品</h4>
+        <p class="muted" style="margin: 0 0 10px 0">
+          在下方「商品管理 → 画册」点卡片右上 ⭐ 把商品加入备选；<b>点一个商品会按全局编号填进下一个空格</b>（点「🗑」移除）；也可在格子里直接手填编号（自动补零、可校验）。
+        </p>
+        <div id="liveStarWrap"></div>
+      </div>
+      <div class="panel">
+        <h4 style="margin: 0 0 8px 0">九宫格排品</h4>
+        <div class="toolbar">
+          <button id="liveAddGroupBtn" class="btn-teal">＋ 加一组</button>
+          <button id="liveClearBtn" class="btn-danger">清空格子</button>
+          <span class="muted" id="liveOutLabel"></span>
+          <button id="livePickOutBtn" title="选择九宫格输出目录">输出目录</button>
+          <button id="liveCopyListBtn">复制清单</button>
+          <button id="liveGenerateBtn" class="btn-teal">生成全部九宫格</button>
+        </div>
+        <p class="muted" style="margin: 0 0 8px 0">🟩绿=有效编号 · 🟥红=编号不存在 · 🟧橙=同编号出现≥2次（排品重复）。每组右上角「生成这组」只重出这一张图并复制这组清单。</p>
+        <div id="liveGridArea"></div>
+      </div>
+    </div>
+
+    <div id="tabSettings" class="sub-panel">
+      <div class="panel">
+        <h4 style="margin: 0 0 8px 0">售价规则（按等级自动算售价；公式里用 cost 表示进价）</h4>
+        <div class="table-wrap rules-editor" style="max-height: 300px">
+          <table class="data-table" id="rulesTable">
+            <thead>
+              <tr>
+                <th>等级</th>
+                <th>等级名</th>
+                <th>公式（cost=进价）</th>
+                <th>尾数策略</th>
+                <th>自定义尾数</th>
+                <th>示例(进价10)</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div style="margin-top: 8px" class="rows">
+          <button id="addRuleBtn">＋ 新增等级</button>
+          <button id="saveRulesBtn" class="btn-teal">保存规则并重算售价</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h4 style="margin: 0 0 8px 0">店铺设置</h4>
+        <div class="form-grid">
+          <label>图片根目录</label>
+          <div class="rows" style="width: 100%">
+            <input id="setImageDir" style="flex: 1; min-width: 260px" readonly />
+            <button id="pickImageDirBtn">选择文件夹</button>
+          </div>
+          <label>完整名称模板</label>
+          <div class="rows" style="width: 100%">
+            <input id="setNameTemplate" style="flex: 1" />
+            <button id="saveNameTemplateBtn">保存</button>
+          </div>
+          <label>可用变量</label>
+          <span class="muted">{name} 名称 · {category} 品类 · {series} 系列 · {grade} 等级名 · {code} 编号</span>
+          <label>库存预警阈值</label>
+          <div class="rows" style="width: 100%">
+            <input id="setStockAlert" type="number" min="0" style="width: 120px" />
+            <span class="muted">库存 ≤ 该值 且在售 → 标红提示补货（0 关闭）</span>
+            <button id="saveStockAlertBtn">保存</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <h4 style="margin: 0 0 8px 0">录入与命名规范</h4>
+        <ul class="muted" style="padding-left: 18px; line-height: 1.8">
+          <li>编号统一 <b>L+数字（3 位补零，最多 4 位、≤9999）</b>：L7→L007、L76→L076、L1044 不变</li>
+          <li>图片放 {图片根目录}/{编号} 文件夹；上传会自动按 {编号}_时间戳.jpg 改名（如 L76_20260905103015.jpg），文件夹里最早一张当封面</li>
+          <li>历史遗留的 X / R / 裸号不新建，粘贴解析遇不到编号就进「未匹配」列表</li>
+        </ul>
+      </div>
+    </div>
+  </body>
+</html>
