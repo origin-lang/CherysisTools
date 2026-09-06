@@ -9,6 +9,9 @@
 # **/*.map
 # **/*.ts
 # **/.vscode-test.*
+
+
+
 .vscode/**
 .vscode-test/**
 .gitignore
@@ -23,4 +26,19 @@ vsc-extension-quickstart.md
 src/**/*.ts
 src/test/**
 !src/webview/**/*
+!src/tools/**/fragment.html
+!src/tools/**/client.js
 
+# pnpm环境：排除全部node_modules，但是保留生产依赖(xlsx/sharp/better-sqlite3)以及它们在.pnpm内的包
+node_modules/**
+!node_modules/sharp/**
+!node_modules/xlsx/**
+!node_modules/better-sqlite3/**
+!node_modules/.pnpm/@img+*/**
+!node_modules/.pnpm/sharp+*/**
+!node_modules/.pnpm/xlsx+*/**
+!node_modules/.pnpm/better-sqlite3+*/**
+!node_modules/.pnpm/bindings+*/
+!node_modules/.pnpm/file-uri-to-path+*/
+!node_modules/bindings/**
+!node_modules/file-uri-to-path/**
