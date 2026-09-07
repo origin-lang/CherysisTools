@@ -13,7 +13,7 @@ VSCode Webview 面板小工具集。每个工具 = `fragment.html`(UI) + `client
 | shopTool | 🏪商品店铺管理 | 商品档案(L编号/售价规则/库存/图片) + 每日销售 + 月结盈亏（SQLite） | [shopTool.md](shopTool.md) |
 | order1688Tool | 📥1688订单提取 | 粘贴1688订单文本自动解析 → 核对入库SQLite + 导出采集Excel（按订单号去重） | [order1688Tool.md](order1688Tool.md) |
 
-> 单次迭代的功能/技术变更归档（含本期复制/删除规则/撤销重做/组合框等）：[procurementTool-archive.md](procurementTool-archive.md)；shopTool 迭代归档（base64 封面 / 编号 3 位补零迁移 / 每日销售自动刷新与批量删除 / 趋势修复 / ⭐直播排品 / 800 压测种子 / 九宫格合成与焦点保护 / **直播排品收尾（删组·每组生成·星标点选填格·橙色图例）** / 全局 Toast / 800 封面补图脚本）：[shopTool-archive.md](shopTool-archive.md)；order1688Tool 迭代归档（预览空白根因=JS 同名函数覆盖 / 回车触发解析 / 右栏日志折叠）：[order1688Tool-archive.md](order1688Tool-archive.md)
+> 单次迭代的功能/技术变更归档（含本期复制/删除规则/撤销重做/组合框等）：[procurementTool-archive.md](procurementTool-archive.md)；shopTool 迭代归档（base64 封面 / 编号 3 位补零迁移 / 每日销售自动刷新与批量删除 / 趋势修复 / ⭐直播排品 / 800 压测种子 / 九宫格合成与焦点保护 / **直播排品收尾（删组·每组生成·星标点选填格·橙色图例）** / 全局 Toast / 800 封面补图脚本 / **性能与加载优化（封面缩略图·聚合缓存增量维护·封面请求限流·渲染减负）**）：[shopTool-archive.md](shopTool-archive.md)；order1688Tool 迭代归档（预览空白根因=JS 同名函数覆盖 / 回车触发解析 / 右栏日志折叠）：[order1688Tool-archive.md](order1688Tool-archive.md)
 
 ## 通用架构速记（每个工具一样，不重复写进各工具文档）
 

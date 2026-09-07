@@ -164,3 +164,60 @@
 - `pnpm run compile`：通过（`toolContext.ts` 变更走核心编译链）。
 - `eslint` 核心 + 三个客户端：通过（无新警告）。
 - 人工验收点：删组立即消失且不再冒出来；「生成这组」只出一张图 + 只复制该组清单；点备选商品立刻填格 + 气泡提示；重复编号橙色 + 图例可见；所有带 ✅❌🗑 等符号的操作底部弹气泡、2 秒自动消失；800 封面画册滚动流畅。
+
+---
+
+## 六、性能与加载优化（2026-09-08 第三波迭代）
+
+> 主题：商品店铺管理在**性能 / 加载**上的整轮优化。核心策略一句话：**图片全链路小图化 + IPC 限流，聚合改成缓存增量维护，前端只渲染当前视图**。这套打法同样适用于 procurement / order1688 等其它 SQLite 工具。
+
+### 本期功能清单
+
+1. **封面缩略图（重构加载成本的根本）**
+   - 背景：封面/缩略图之前把**原图整张 base64** 过 IPC——目录里一张 5MB 照片 ≈ 6.7MB dataURL，一页 200 商品就是上百 MB；34px 缩略图根本用不到原图。
+   - 做法：所有封面/图条统一 `sharp` 缩到 **160px（`fit:"cover"`）→ `webp q80`** 再过 IPC（每张几十 KB）。`thumbToBase64()` 是通用工具，失败回退原图 base64 保底。
+   - **封面磁盘缓存**：`{storageDir}/shop_thumbs/{code}.webp` + 同名 `.json`（含来源文件名 + 指纹 `mtimeMs|size`），命中直接读盘、不跑 sharp；`invalidateCover(code)` 同步删内存 + 磁盘缓存。
+
+2. **lightbox 图片按需加载**
+   - `getImages` 只回「首图原图（`big0`）+ 其余**缩略图**」；点缩略图时前端才发 `getFullImage {code,index}` 拉那一张原图；`lbFullCache` 按 `code:index` 记住已拉过的原图，同图不重复请求。
+
+3. **封面请求限流（客户端队列）**
+   - `ensureCovers` 不再把一页 200 个 `getCover` 一次性全发；`coverQueue` + 常驻 **6 并发**，每个 `coverLoaded` 回来才放行下一个，避免积压风暴与瞬时内存峰值。
+
+4. **库存 / 销量聚合缓存（db 层）**
+   - 之前每次任意改动（改个名称也）都触发全表 `GROUP BY stock_in` / `GROUP BY sales_record` 现算，历史记录越滚越慢。
+   - 现在 `getStockTotals() / getSaleTotals()` **首次懒加载**全量聚合进 `aggCache`，之后在 `addStockIn / deleteStockIn / upsertSale / deleteSales / deleteProduct` **各写入路径增量维护**；`loadAll` 不再全表聚合。
+
+5. **单商品查询与语句优化**
+   - 新增 `getProductById(id)`，`index.ts` 里 6 处 `db.getProducts().find(...)` 全替换（少整表扫描）。
+   - `updateProductField` 改用 11 个字段的**预编译 UPDATE Map**，去掉每次调用都 `c.prepare`。
+
+6. **前端渲染减负**
+   - `renderProducts` **只渲染当前视图**（列表或画册二选一），不再两套 HTML 一起重建。
+   - `loadAll` 回包三连（productsLoaded / rulesLoaded / settingsLoaded）里，只保留最后到达的 `settingsLoaded` 触发渲染，去掉两次重复整表渲染。
+   - 批量勾选商品改为 `updateSelectionUI()` 局部更新计数条 + 全选框，不整表重建（0↔1 边界才 rerender）。
+   - `populateFilters` 下拉按「系列 / 品类 / 趋势下拉」的**内容签名**做缓存，商品集合没变不重建 `<option>`。
+
+### 技术实现与决策
+
+- **缩略图缓存归一化**：封面用 `coverThumbToBase64(src, storageDir, code)`（带磁盘缓存），lightbox 缩略条 / 上传回包用 `thumbToBase64(src)`（不带磁盘缓存）——共用同一 webp 管道，避免 getImages 的每张图都写进 code 封面缓存槽而互相覆盖。
+- **聚合缓存的正确性关键**：
+  - 缓存挂在**模块级**（不能放 `getDB()` 闭包内——每次消息都会重建闭包）；`closeDB()` 里 `resetAggCache()`。
+  - 「先写库、再改缓存」：缓存更新只在 `aggCache.loaded` 为真时生效；首次消息的懒加载仍从库里读全量，天然消除遗漏增量的错账。
+  - `deleteSales / deleteStockIn / upsertSale` 都先 `SELECT` 出原值再算增量（`deltaSold/deltaRefund`、借助预编译 `saleById` / `stockInGet`）。
+  - `deleteProduct` 删子表后同步删对应聚合 key。
+- **消息协议变化**：`imagesLoaded` 的 `images[]` 现在一律是**缩略图数组**，新增 `big0`（首图原图）；`fullImageLoaded {code,index,data}` 为新消息。`uploadImages` 回包同步改造，`clearImages` 不变。
+- **渲染点收敛依赖回包顺序**：`loadAll` 固定回包顺序 productsLoaded → rulesLoaded → settingsLoaded → settlesLoaded → liveState，settingsLoaded 一定是最后一个到达的，被作为唯一渲染点。
+
+### 维护要点 / 易踩坑
+
+- 以后**别再用 `getStockGroups()/getSaleGroups()` 全集合计**（已不被 loadAll 使用）；要走 `getStockTotals()/getSaleTotals()`，且任何**新写入路径**（尤其新表）记得同步 `aggCache` 增量——漏一处 = 累计数字在「第二次改动起」悄悄错（首次打开因懒加载全量读不会错，最容易麻痹你）。
+- 缩略图磁盘缓存当前是一商品一槽（封面）；若未来把「图条 × 多张图」也做磁盘缓存，key 要按 `code_序号` 细分，别与封面槽共用。
+- `imagesLoaded[i]` 与 `getFullImage index=i` 一一对应（都走同一份 `listImageFiles` 排序），改这两处之一要两处一起改。
+- 前端渲染依赖「settingsLoaded 兜底」；若未来 loadAll 把 settings 提前到 products 前发，要把渲染点调回去。
+
+### 验收（本轮快照）
+
+- `pnpm run compile`：通过（`tsc -p ./` 无报错）。
+- `pnpm run lint`：shopTool 三文件 0 错误；仅 `excelAnalyzeTool/client.js` 四条 pre-existing curly 警告。
+- 人工验收点：首屏 / 翻页封面渐次出现且 payload 显著变小（lightbox 不再一次性拉全部原图）；batch 勾选只刷计数条不整表闪烁；改字段 / 入库 / 记销售 / 删销售后库存与销量合计数字仍正确（聚合缓存全写入路径生效）；800 商品下画册滚动顺畅。

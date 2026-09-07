@@ -101,6 +101,7 @@ export const DEFAULT_SEED_RULES: SaleRule[] = [
 export interface ShopDB {
   getProducts(): Product[];
   getProductByCode(code: string): Product | undefined;
+  getProductById(id: number): Product | undefined;
   addProduct(p: Omit<Product, "id" | "created_at">): number;
   updateProductField(id: number, field: string, value: any): void;
   deleteProduct(id: number): void;
@@ -112,6 +113,8 @@ export interface ShopDB {
   getStockIns(): StockInRow[];
   getStockGroups(): StockGroupRow[];
   getSaleGroups(): SaleGroupRow[];
+  getStockTotals(): Map<number, number>;
+  getSaleTotals(): Map<number, { sold: number; refund: number }>;
   getSales(date?: string): SalesRecord[];
   upsertSale(r: {
     product_id: number;
@@ -142,6 +145,19 @@ export interface ShopDB {
 let db: Database.Database | null = null;
 let dbPath: string | null = null;
 
+// 库存合计 / 销量合计聚合缓存：首次懒加载全量 GROUP BY，之后在各写入路径增量维护，
+// 避免每次「改一个字段」都全表聚合。
+interface AggTotals {
+  loaded: boolean;
+  stock: Map<number, number>;
+  sale: Map<number, { sold: number; refund: number }>;
+}
+let aggCache: AggTotals = { loaded: false, stock: new Map(), sale: new Map() };
+
+function resetAggCache(): void {
+  aggCache = { loaded: false, stock: new Map(), sale: new Map() };
+}
+
 export function closeDB(): void {
   if (db) {
     try {
@@ -152,6 +168,7 @@ export function closeDB(): void {
     db = null;
     dbPath = null;
   }
+  resetAggCache();
 }
 
 export function getDBPath(): string {
@@ -326,6 +343,10 @@ export function getDB(): ShopDB {
     VALUES (@product_id, @qty, @date, @remark, @created_at)
   `);
   const stockInDelete = c.prepare("DELETE FROM stock_in WHERE id = ?");
+  const stockInGet = c.prepare("SELECT * FROM stock_in WHERE id = ?");
+  const productSalesDel = c.prepare("DELETE FROM sales_record WHERE product_id = ?");
+  const productStockDel = c.prepare("DELETE FROM stock_in WHERE product_id = ?");
+  const saleById = c.prepare("SELECT * FROM sales_record WHERE id = ?");
   const stockInsList = c.prepare(`
     SELECT s.*, p.code, p.name FROM stock_in s
     JOIN products p ON p.id = s.product_id
@@ -337,6 +358,39 @@ export function getDB(): ShopDB {
   const saleGroupStmt = c.prepare(`
     SELECT product_id, SUM(sold_qty) AS sold, SUM(refund_qty) AS refund FROM sales_record GROUP BY product_id
   `);
+  const pFieldStmts = new Map<string, Database.Statement>();
+  for (const f of [
+    "code",
+    "name",
+    "category",
+    "series",
+    "grade",
+    "cost_price",
+    "sale_price",
+    "price_manual",
+    "purchase_link",
+    "status",
+    "remark",
+  ]) {
+    pFieldStmts.set(f, c.prepare(`UPDATE products SET ${f} = @value WHERE id = @id`));
+  }
+  const ensureAggLoaded = () => {
+    if (aggCache.loaded) {
+      return;
+    }
+    const stock = new Map<number, number>();
+    for (const r of stockGroupStmt.all() as any[]) {
+      stock.set(Number(r.product_id), Number(r.qty || 0));
+    }
+    const sale = new Map<number, { sold: number; refund: number }>();
+    for (const r of saleGroupStmt.all() as any[]) {
+      sale.set(Number(r.product_id), {
+        sold: Number(r.sold || 0),
+        refund: Number(r.refund || 0),
+      });
+    }
+    aggCache = { loaded: true, stock, sale };
+  };
   const salesInsert = c.prepare(`
     INSERT INTO sales_record (product_id, date, sold_qty, refund_qty, cost_price, note)
     VALUES (@product_id, @date, @sold_qty, @refund_qty, @cost_price, @note)
@@ -412,38 +466,27 @@ export function getDB(): ShopDB {
       const r = sByCode.get(code) as any;
       return r ? mapProduct(r) : undefined;
     },
+    getProductById(id: number): Product | undefined {
+      const r = sById.get(id) as any;
+      return r ? mapProduct(r) : undefined;
+    },
     addProduct(p: Omit<Product, "id" | "created_at">): number {
       const info = pInsert.run({ ...p, created_at: nowStr() });
       return Number(info.lastInsertRowid);
     },
     updateProductField(id, field, value) {
-      const allowed = new Set([
-        "code",
-        "name",
-        "category",
-        "series",
-        "grade",
-        "cost_price",
-        "sale_price",
-        "price_manual",
-        "purchase_link",
-        "status",
-        "remark",
-      ]);
-      if (!allowed.has(field)) {
+      const stmt = pFieldStmts.get(field);
+      if (!stmt) {
         throw new Error(`不允许的字段: ${field}`);
       }
-      const stmt = c.prepare(`UPDATE products SET ${field} = @value WHERE id = @id`);
       stmt.run({ value, id });
     },
     deleteProduct(id) {
-      const delSales = c.prepare("DELETE FROM sales_record WHERE product_id = ?");
-      const delStock = c.prepare("DELETE FROM stock_in WHERE product_id = ?");
       const p = sById.get(id) as any;
       const code = p ? String(p.code) : "";
       const tx = c.transaction(() => {
-        delSales.run(id);
-        delStock.run(id);
+        productSalesDel.run(id);
+        productStockDel.run(id);
         pDelete.run(id);
         if (code) {
           liveStarDelByCode.run(code);
@@ -451,6 +494,10 @@ export function getDB(): ShopDB {
         }
       });
       tx();
+      if (aggCache.loaded) {
+        aggCache.stock.delete(id);
+        aggCache.sale.delete(id);
+      }
     },
     getRules(): SaleRule[] {
       return (rulesList.all() as any[]).map((r) => ({
@@ -490,10 +537,26 @@ export function getDB(): ShopDB {
     },
     addStockIn(s) {
       const info = stockInInsert.run({ ...s, created_at: nowStr() });
+      if (aggCache.loaded) {
+        aggCache.stock.set(
+          s.product_id,
+          (aggCache.stock.get(s.product_id) || 0) + s.qty,
+        );
+      }
       return Number(info.lastInsertRowid);
     },
     deleteStockIn(id) {
+      const r = stockInGet.get(id) as any;
       stockInDelete.run(id);
+      if (r && aggCache.loaded) {
+        const key = Number(r.product_id);
+        const next = (aggCache.stock.get(key) || 0) - Number(r.qty || 0);
+        if (next <= 0) {
+          aggCache.stock.delete(key);
+        } else {
+          aggCache.stock.set(key, next);
+        }
+      }
     },
     getStockIns(): StockInRow[] {
       return (stockInsList.all() as any[]).map((r) => ({
@@ -519,6 +582,14 @@ export function getDB(): ShopDB {
         refund: Number(r.refund || 0),
       }));
     },
+    getStockTotals(): Map<number, number> {
+      ensureAggLoaded();
+      return new Map(aggCache.stock);
+    },
+    getSaleTotals(): Map<number, { sold: number; refund: number }> {
+      ensureAggLoaded();
+      return new Map(aggCache.sale);
+    },
     getSales(date?: string): SalesRecord[] {
       const rows = (date ? salesDateAll.all(date) : salesAll.all()) as any[];
       return rows.map(mapSales);
@@ -529,6 +600,8 @@ export function getDB(): ShopDB {
         if (r.mode === "skip") {
           return "skipped";
         }
+        const deltaSold = r.sold_qty - existing.sold_qty;
+        const deltaRefund = r.refund_qty - existing.refund_qty;
         if (r.mode === "accumulate") {
           salesUpdate.run({
             sold_qty: existing.sold_qty + r.sold_qty,
@@ -548,15 +621,39 @@ export function getDB(): ShopDB {
             product_id: r.product_id,
           });
         }
+        if (aggCache.loaded) {
+          const t = aggCache.sale.get(r.product_id) || { sold: 0, refund: 0 };
+          t.sold += deltaSold;
+          t.refund += deltaRefund;
+          aggCache.sale.set(r.product_id, t);
+        }
         return "updated";
       }
       salesInsert.run(r);
+      if (aggCache.loaded) {
+        const t = aggCache.sale.get(r.product_id) || { sold: 0, refund: 0 };
+        t.sold += r.sold_qty;
+        t.refund += r.refund_qty;
+        aggCache.sale.set(r.product_id, t);
+      }
       return "created";
     },
     deleteSales(ids) {
       const tx = c.transaction(() => {
         for (const id of ids) {
+          const r = saleById.get(id) as any;
           salesDel.run(id);
+          if (r && aggCache.loaded) {
+            const key = Number(r.product_id);
+            const t = aggCache.sale.get(key) || { sold: 0, refund: 0 };
+            t.sold -= Number(r.sold_qty || 0);
+            t.refund -= Number(r.refund_qty || 0);
+            if (t.sold <= 0 && t.refund <= 0) {
+              aggCache.sale.delete(key);
+            } else {
+              aggCache.sale.set(key, t);
+            }
+          }
         }
       });
       tx();

@@ -21,9 +21,11 @@
       coverCache: {},
       coverPending: {},
       coverRenderQueued: false,
+      lbFullCache: {},
       liveStars: null,
       livePlan: [],
       liveOutDir: "",
+      selectedProducts: new Set(),
     };
 
     const PRESET_CATEGORIES = ["手链", "项链", "耳环", "戒指", "手镯"];
@@ -71,7 +73,11 @@
     let selSales = new Set();
     let sortKey = "code";
     let sortDir = 1;
+    let filtersSig = "";
     const filters = {};
+    const COVER_CONCURRENCY = 6;
+    let coverQueue = [];
+    let coverInFlight = 0;
 
     const $ = (id) => document.getElementById(id);
     const post = (msg) => vs.postMessage({ toolName: "shopTool", ...msg });
@@ -119,6 +125,10 @@
       return r ? r.label || "等级" + grade : "等级" + grade;
     }
 
+    function displayGrade(p) {
+      return p && p.price_manual === 1 ? "自定义" : gradeLabel(p && p.grade);
+    }
+
     function applyExpr(cost, expr) {
       const e = String(expr ?? "").replace(/cost/gi, `(${cost})`);
       if (!/^[0-9+\-*/().\s]+$/.test(e)) {
@@ -164,7 +174,7 @@
         .replace(/\{name\}/g, p.name || "")
         .replace(/\{category\}/g, p.category || "")
         .replace(/\{series\}/g, p.series || "")
-        .replace(/\{grade\}/g, gradeLabel(p.grade))
+        .replace(/\{grade\}/g, displayGrade(p))
         .replace(/\{code\}/g, p.code);
     }
 
@@ -257,7 +267,7 @@
         case "code":
           return p.code;
         case "grade":
-          return gradeLabel(p.grade);
+          return displayGrade(p);
         case "status":
           return p.status === 1 ? "已下架" : "在售";
         case "netTotal":
@@ -345,11 +355,14 @@
     }
 
     function openLightbox(product) {
+      if (state.lbCode !== product.code) {
+        state.lbFullCache = {};
+      }
       state.lbCode = product.code;
       const mask = showModal(`
         <div class="lightbox" id="lbBox">
           <div class="lb-head">
-            <span><b>${esc(product.code)}</b> ${esc(product.name)} <span class="muted" style="color:#aaa">（${esc(gradeLabel(product.grade))}・售价 ¥${money(product.sale_price)}）</span></span>
+            <span><b>${esc(product.code)}</b> ${esc(product.name)} <span class="muted" style="color:#aaa">（${esc(displayGrade(product))}・售价 ¥${money(product.sale_price)}）</span></span>
             <span style="display:flex;gap:8px;align-items:center">
               <button id="lbCopy">📋 复制完整名称</button>
               <button id="lbUpload">🖼 上传图片</button>
@@ -434,13 +447,21 @@
       if (viewMode === "gallery") {
         $("productListView").style.display = "none";
         $("productGalleryView").style.display = "block";
+        renderGallery(pd.page);
       } else {
         $("productListView").style.display = "block";
         $("productGalleryView").style.display = "none";
+        renderList(pd.page);
       }
-      renderGallery(pd.page);
-      renderList(pd.page);
       ensureCovers(pd.page);
+    }
+
+    function pumpCovers() {
+      while (coverInFlight < COVER_CONCURRENCY && coverQueue.length > 0) {
+        const code = coverQueue.shift();
+        coverInFlight++;
+        post({ type: "getCover", code });
+      }
     }
 
     function ensureCovers(list) {
@@ -452,8 +473,9 @@
           continue;
         }
         state.coverPending[p.code] = true;
-        post({ type: "getCover", code: p.code });
+        coverQueue.push(p.code);
       }
+      pumpCovers();
     }
 
     function requestCoverRender() {
@@ -473,6 +495,7 @@
       const imgAt = plIdx >= 0 ? plIdx : vis.length;
       const headCols = [];
       const filterCols = [];
+      filterCols.push(`<td></td>`);
       for (let i = 0; i < vis.length; i++) {
         if (i === imgAt) {
           headCols.push(`<th>图片</th>`);
@@ -494,9 +517,6 @@
       }
       headCols.push(`<th>操作</th>`);
       filterCols.push(`<td></td>`);
-      const head =
-        `<tr>${headCols.join("")}</tr>` +
-        `<tr class="filter-row">${filterCols.join("")}</tr>`;
       const body = list
         .map((p) => {
           const net = p.soldTotal - p.refundTotal;
@@ -508,6 +528,8 @@
             : `<span class="thumb placeholder" data-p-act="img" data-id="${p.id}">无图</span>`;
           const starred = state.liveStars && state.liveStars.has(p.code);
           const tds = [];
+          const isSelected = state.selectedProducts.has(p.id);
+          tds.push(`<td><input type="checkbox" class="product-checkbox" data-id="${p.id}" ${isSelected ? "checked" : ""} title="选择 #${p.code}" /></td>`);
           for (let i = 0; i < vis.length; i++) {
             if (i === imgAt) {
               tds.push(`<td>${cover}</td>`);
@@ -531,7 +553,7 @@
                 v = esc(p.series);
                 break;
               case "grade":
-                v = esc(gradeLabel(p.grade));
+                v = esc(displayGrade(p));
                 break;
               case "cost_price":
                 v = money(p.cost_price);
@@ -580,12 +602,27 @@
           return `<tr class="${off ? "off" : ""} ${low ? "lowstock" : ""}">${tds.join("")}</tr>`;
         })
         .join("");
+      const selectedCount = state.selectedProducts.size;
+      const allSelected = list.length > 0 && list.every((p) => state.selectedProducts.has(p.id));
       $("productListView").innerHTML =
         list.length === 0 && !hasFilter()
           ? `<p class="muted">（无商品，点「＋ 新建商品」添加；也支持「导入商品」批量粘贴）</p>`
-          : `<div class="table-wrap"><table class="data-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>
-             <div class="muted" style="margin-top:4px">双击单元格直接改字段；右键行/表格复制</div>`;
+          : `${selectedCount > 0
+               ? `<div class="batch-ops" id="batchOpsBar" style="margin-bottom:8px;padding:8px;background:var(--vscode-input-background);border:1px solid var(--vscode-panel-border);border-radius:4px;display:flex;gap:8px;align-items:center">
+                    <span>已选 <b data-sel-count>${selectedCount}</b> 个商品</span>
+                    <button class="mini-btn" id="batchOn" title="上架选中的商品">🔺 上架</button>
+                    <button class="mini-btn" id="batchOff" title="下架选中的商品">🔻 下架</button>
+                    <button class="mini-btn btn-danger" id="batchDel" title="删除选中的商品（含记录，不可恢复）">🗑 删除</button>
+                    <button class="mini-btn" id="batchClear" title="取消全部选择">✕ 取消</button>
+                  </div>`
+               : ""}
+             <div class="table-wrap"><table class="data-table"><thead><tr>
+               <th style="width:30px"><input type="checkbox" id="selectAllProducts" ${list.length === 0 ? "disabled" : ""} ${allSelected ? "checked" : ""} title="全选 / 取消全选" /></th>
+               ${headCols.join("")}
+             </tr><tr class="filter-row">${filterCols.join("")}</tr></thead><tbody>${body}</tbody></table></div>
+             <div class="muted" style="margin-top:4px">双击单元格编辑（回车或点击别处即保存）；右键行/表格复制</div>`;
       bindFilterRow();
+      bindBatchOps();
     }
 
     function hasFilter() {
@@ -611,6 +648,100 @@
         });
     }
 
+    function updateSelectionUI() {
+      const selAll = $("selectAllProducts");
+      if (selAll) {
+        const cbs = document.querySelectorAll(".product-checkbox");
+        selAll.checked =
+          cbs.length > 0 && Array.from(cbs).every((c) => c.checked);
+      }
+      const count = state.selectedProducts.size;
+      const bar = $("batchOpsBar");
+      if (count === 0) {
+        if (bar) {
+          bar.remove();
+        }
+        return;
+      }
+      if (!bar) {
+        renderProducts();
+        return;
+      }
+      const countEl = bar.querySelector("[data-sel-count]");
+      if (countEl) {
+        countEl.textContent = String(count);
+      }
+    }
+
+    function bindBatchOps() {
+      const selectAll = $("selectAllProducts");
+      if (selectAll) {
+        selectAll.onchange = () => {
+          const checked = selectAll.checked;
+          document.querySelectorAll(".product-checkbox").forEach((cb) => {
+            const id = Number(cb.dataset.id);
+            if (checked) {
+              state.selectedProducts.add(id);
+            } else {
+              state.selectedProducts.delete(id);
+            }
+          });
+          renderProducts();
+        };
+      }
+
+      document.querySelectorAll(".product-checkbox").forEach((cb) => {
+        cb.onchange = () => {
+          const id = Number(cb.dataset.id);
+          if (cb.checked) {
+            state.selectedProducts.add(id);
+          } else {
+            state.selectedProducts.delete(id);
+          }
+          updateSelectionUI();
+        };
+      });
+
+      const batchOn = $("batchOn");
+      const batchOff = $("batchOff");
+      const batchDel = $("batchDel");
+      const batchClear = $("batchClear");
+
+      if (batchOn) {
+        batchOn.onclick = () => {
+          if (state.selectedProducts.size === 0) { return; }
+          post({ type: "setProductsStatus", ids: [...state.selectedProducts], status: 0 });
+          state.selectedProducts.clear();
+        };
+      }
+      if (batchOff) {
+        batchOff.onclick = () => {
+          if (state.selectedProducts.size === 0) { return; }
+          post({ type: "setProductsStatus", ids: [...state.selectedProducts], status: 1 });
+          state.selectedProducts.clear();
+        };
+      }
+      if (batchDel) {
+        batchDel.onclick = () => {
+          if (state.selectedProducts.size === 0) { return; }
+          confirmBox(
+            `确认删除选中的 ${state.selectedProducts.size} 个商品？\n将同时删除它们的销售记录和入库记录，且不可恢复！`,
+          ).then((ok) => {
+            if (ok) {
+              post({ type: "deleteProducts", ids: [...state.selectedProducts] });
+              state.selectedProducts.clear();
+            }
+          });
+        };
+      }
+      if (batchClear) {
+        batchClear.onclick = () => {
+          state.selectedProducts.clear();
+          renderProducts();
+        };
+      }
+    }
+
     function renderGallery(list) {
       $("productGalleryView").innerHTML =
         list.length === 0
@@ -626,7 +757,7 @@
                   .map((f) => {
                     let v = "";
                     if (f.key === "grade") {
-                      v = esc(gradeLabel(p.grade));
+                      v = esc(displayGrade(p));
                     } else if (f.key === "status") {
                       v = "";
                     } else if (f.key === "netTotal") {
@@ -1049,14 +1180,15 @@
       };
       if (field === "grade") {
         editor = document.createElement("select");
-        editor.innerHTML = state.rules
-          .map(
-            (r) =>
-              `<option value="${r.grade}" ${r.grade === product.grade ? "selected" : ""}>${esc(gradeLabel(r.grade))}</option>`,
-          )
-          .join("");
+        editor.innerHTML =
+          `<option value="0" ${product.price_manual === 1 ? "selected" : ""}>自定义（不按公式自动算）</option>` +
+          state.rules
+            .map(
+              (r) =>
+                `<option value="${r.grade}" ${product.price_manual !== 1 && r.grade === product.grade ? "selected" : ""}>${esc(gradeLabel(r.grade))}</option>`,
+            )
+            .join("");
         editor.onchange = () => finish(true);
-        editor.onblur = () => finish(true);
       } else if (field === "cost_price" || field === "sale_price") {
         editor = document.createElement("input");
         editor.type = "number";
@@ -1070,10 +1202,11 @@
           editor.setAttribute("list", "shopCatList");
         }
       }
-      editor.style.width = "100%";
-      editor.style.minWidth = "70px";
+      editor.style.cssText =
+        "width:100%;min-width:70px;box-sizing:border-box;padding:2px 5px";
       td.innerHTML = "";
       td.appendChild(editor);
+      editor.onblur = () => finish(true);
       editor.onkeydown = (e) => {
         if (e.key === "Enter") {
           finish(true);
@@ -1347,12 +1480,22 @@
     }
 
     function populateFilters() {
-      const series = [
+      const seriesAll = [
         ...new Set(state.products.map((p) => p.series).filter(Boolean)),
-      ];
-      const cats = [
+      ].sort();
+      const catsAll = [
         ...new Set(state.products.map((p) => p.category).filter(Boolean)),
-      ];
+      ].sort();
+      const trendAll = state.products.map(
+        (p) => `${p.id}|${p.code}|${p.name}`,
+      );
+      const sig = JSON.stringify([seriesAll, catsAll, trendAll]);
+      if (sig === filtersSig) {
+        return;
+      }
+      filtersSig = sig;
+      const series = seriesAll;
+      const cats = catsAll;
       const fillSel = (el, vals, emptyLabel) => {
         const cur = el.value;
         el.innerHTML =
@@ -1388,9 +1531,12 @@
           <label>名称 *</label><input id="npName" placeholder="如：铜合金锆石手链 四叶花" />
           <label>品类</label><input id="npCategory" list="shopCatList" placeholder="手链 / 项链 / 耳环 / 戒指 / 手镯…可自定义" />
           <label>系列</label><input id="npSeries" placeholder="A类 / B类 / C类…（平台链接系列，可空）" />
-          <label>等级</label><select id="npGrade">${selGrades
+          <label>等级</label><select id="npGrade"><option value="0">自定义（售价手动定）</option>${selGrades
             .split(",")
-            .map((g) => `<option value="${g}">${gradeLabel(g)}</option>`)
+            .map(
+              (g) =>
+                `<option value="${g}">${gradeLabel(g)}</option>`,
+            )
             .join("")}</select>
           <label>进价 ¥</label><input id="npCost" type="number" min="0" step="0.01" value="0" />
           <label>售价 ¥（留空=按等级自动算）</label><input id="npSale" type="number" min="0" step="0.01" />
@@ -1405,14 +1551,15 @@
         </div>`);
       const upd = () => {
         const cost = Number($("npCost").value || 0);
-        const rule = state.rules.find(
-          (r) => r.grade === Number($("npGrade").value),
-        );
+        const grade = Number($("npGrade").value);
+        const rule = state.rules.find((r) => r.grade === grade);
         const manual = Number($("npSale").value || 0);
         $("npPreview").textContent =
           manual > 0
             ? `手动售价 ¥${money(manual)}`
-            : `将按规则自动算：进价 ¥${money(cost)} → ¥${money(calcPrice(cost, rule))}`;
+            : grade === 0
+              ? `自定义售价：请填「售价」`
+              : `将按规则自动算：进价 ¥${money(cost)} → ¥${money(calcPrice(cost, rule))}`;
       };
       $("npGrade").onchange = upd;
       $("npCost").oninput = upd;
@@ -1424,13 +1571,18 @@
           toast("编号和名称必填");
           return;
         }
+        const npGrade = Number($("npGrade").value);
+        if (npGrade === 0 && !(Number($("npSale").value || 0) > 0)) {
+          toast("自定义等级需要填写售价");
+          return;
+        }
         post({
           type: "addProduct",
           code: $("npCode").value,
           name: $("npName").value,
           category: $("npCategory").value,
           series: $("npSeries").value,
-          grade: Number($("npGrade").value),
+          grade: npGrade,
           costPrice: Number($("npCost").value || 0),
           salePrice: Number($("npSale").value || 0),
           initialStock: Number($("npStock").value || 0),
@@ -1999,13 +2151,11 @@ L002 合金项链十字架 项链 A类 1 8.5"></textarea>
           state.products = msg.products || [];
           state.settings.stock_alert = msg.stockAlert || 0;
           populateFilters();
-          renderProducts();
           break;
         }
         case "rulesLoaded": {
           state.rules = msg.rules || [];
           renderRules();
-          renderProducts();
           break;
         }
         case "settingsLoaded": {
@@ -2078,6 +2228,8 @@ L002 合金项链十字架 项链 A类 1 8.5"></textarea>
         case "coverLoaded": {
           state.coverCache[msg.code] = msg.data || "";
           delete state.coverPending[msg.code];
+          coverInFlight = Math.max(0, coverInFlight - 1);
+          pumpCovers();
           requestCoverRender();
           break;
         }
@@ -2125,7 +2277,8 @@ L002 合金项链十字架 项链 A类 1 8.5"></textarea>
             big.style.display = "none";
             return;
           }
-          big.src = msg.images[0];
+          const big0 = msg.big0 || "";
+          big.src = big0;
           big.style.display = "inline-block";
           thumbs.innerHTML = msg.images
             .map(
@@ -2135,13 +2288,35 @@ L002 合金项链十字架 项链 A类 1 8.5"></textarea>
             .join("");
           thumbs.querySelectorAll("img").forEach((img) => {
             img.onclick = () => {
-              big.src = img.src;
+              const idx = Number(img.dataset.i);
+              const key = `${msg.code}:${idx}`;
               thumbs
                 .querySelectorAll("img")
                 .forEach((x) => x.classList.remove("active"));
               img.classList.add("active");
+              const cached = state.lbFullCache[key];
+              if (cached) {
+                big.src = cached;
+              } else if (idx === 0 && big0) {
+                state.lbFullCache[key] = big0;
+                big.src = big0;
+              } else {
+                post({ type: "getFullImage", code: msg.code, index: idx });
+              }
             };
           });
+          break;
+        }
+        case "fullImageLoaded": {
+          if (state.lbCode !== msg.code) {
+            break;
+          }
+          const big = document.getElementById("lbBig");
+          if (!big || !msg.data) {
+            break;
+          }
+          state.lbFullCache[`${msg.code}:${msg.index}`] = msg.data;
+          big.src = msg.data;
           break;
         }
       }

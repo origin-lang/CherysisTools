@@ -135,6 +135,74 @@ function firstImageFile(dir: string, code: string): string | null {
   return fs.existsSync(fp) ? fp : null;
 }
 
+// ── 封面 / 图片缩略图 ──────────────────────────────────────────────
+// 列表/画册/lightbox 缩略条用 webp 小图，大幅降低过 IPC 的 payload；lightbox 大图仍按需读原图。
+const COVER_THUMB = 160;
+
+function coverThumbCachePaths(storageDir: string, code: string): { thumbPath: string; metaPath: string } | null {
+  if (!storageDir) {
+    return null;
+  }
+  const root = path.join(storageDir, "shop_thumbs");
+  try {
+    fs.mkdirSync(root, { recursive: true });
+  } catch {
+    return null;
+  }
+  return {
+    thumbPath: path.join(root, `${code}.webp`),
+    metaPath: path.join(root, `${code}.webp.json`),
+  };
+}
+
+function fileFingerprint(src: string): string {
+  try {
+    const st = fs.statSync(src);
+    return `${st.mtimeMs}|${st.size}`;
+  } catch {
+    return "";
+  }
+}
+
+/** 把单张图缩成 webp base64 小图；失败时回退原图 base64 */
+async function thumbToBase64(src: string, size = COVER_THUMB): Promise<string> {
+  try {
+    const out = await sharp(src).resize(size, size, { fit: "cover" }).webp({ quality: 80 }).toBuffer();
+    return `data:image/webp;base64,${out.toString("base64")}`;
+  } catch {
+    try {
+      return await readImageToBase64(src);
+    } catch {
+      return "";
+    }
+  }
+}
+
+/** 商品封面缩略图：磁盘缓存（按 code）+ 源文件指纹校验，命中直接读盘 */
+async function coverThumbToBase64(src: string, storageDir: string, code: string): Promise<string> {
+  const paths = coverThumbCachePaths(storageDir, code);
+  if (paths) {
+    try {
+      const meta = JSON.parse(fs.readFileSync(paths.metaPath, "utf-8")) as { src?: string; key?: string };
+      if (meta.src === src && meta.key === fileFingerprint(src) && fs.existsSync(paths.thumbPath)) {
+        return `data:image/webp;base64,${fs.readFileSync(paths.thumbPath).toString("base64")}`;
+      }
+    } catch {
+      /* 无缓存或缓存头不匹配 */
+    }
+  }
+  const data = await thumbToBase64(src);
+  if (paths && data.startsWith("data:image/webp")) {
+    try {
+      fs.writeFileSync(paths.thumbPath, Buffer.from(data.split(",")[1], "base64"));
+      fs.writeFileSync(paths.metaPath, JSON.stringify({ src, key: fileFingerprint(src) }));
+    } catch {
+      /* 写缓存失败忽略 */
+    }
+  }
+  return data;
+}
+
 function greyCellSvg(w: number, h: number): string {
   return `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
   <rect width="100%" height="100%" fill="#d6d6d6"/>
@@ -314,41 +382,30 @@ export const shopTool: ToolDefinition = {
         return "";
       }
       const folder = path.join(dir, code);
-      let files: string[] = [];
-      try {
-        files = fs.readdirSync(folder).filter((f) => IMAGE_EXTS.has(path.extname(f).toLowerCase()));
-      } catch {
-        return "";
-      }
-      files.sort((a, b) => {
-        const na = Number((a.match(/(\d+)/) || ["", "0"])[1]);
-        const nb = Number((b.match(/(\d+)/) || ["", "0"])[1]);
-        return na - nb || a.localeCompare(b);
-      });
+      const files = listImageFiles(folder);
       if (files.length === 0) {
         return "";
       }
-      try {
-        return await readImageToBase64(path.join(folder, files[0]));
-      } catch {
-        return "";
-      }
+      return coverThumbToBase64(path.join(folder, files[0]), ctx.storageDir, code);
     };
     const invalidateCover = (code: string) => {
       coverCache.delete(code);
+      const paths = coverThumbCachePaths(ctx.storageDir, code);
+      if (paths) {
+        try {
+          fs.rmSync(paths.thumbPath, { force: true });
+          fs.rmSync(paths.metaPath, { force: true });
+        } catch {
+          /* 忽略缓存清理失败 */
+        }
+      }
       ctx.postToWebview({ type: "coverInvalidated", code });
     };
 
     const loadAll = () => {
       const products: Product[] = db.getProducts();
-      const stockMap = new Map<number, number>();
-      for (const r of db.getStockGroups()) {
-        stockMap.set(r.product_id, r.qty);
-      }
-      const saleMap = new Map<number, { sold: number; refund: number }>();
-      for (const r of db.getSaleGroups()) {
-        saleMap.set(r.product_id, { sold: r.sold, refund: r.refund });
-      }
+      const stockMap = db.getStockTotals();
+      const saleMap = db.getSaleTotals();
       const payload = products.map((p) => ({
         ...p,
         stockTotal: stockMap.get(p.id) ?? 0,
@@ -420,11 +477,15 @@ export const shopTool: ToolDefinition = {
           break;
         }
         const grade = Number(msg.grade ?? 1);
-        if (db.ensureRule(grade)) {
+        const custom = grade === 0;
+        if (!custom && db.ensureRule(grade)) {
           log(`ℹ️等级 ${grade} 无规则，已自动创建默认规则（cost*1.5 → +0.88）`);
         }
-        const rule = db.getRules().find((r) => r.grade === grade);
-        const manual = Number(msg.salePrice ?? 0) > 0;
+        const manualSale = Math.max(0, Number(msg.salePrice ?? 0));
+        const rule = custom
+          ? undefined
+          : db.getRules().find((r) => r.grade === grade);
+        const isManual = custom || manualSale > 0;
         const pid = db.addProduct({
           code,
           name: String(msg.name ?? "").trim(),
@@ -432,8 +493,8 @@ export const shopTool: ToolDefinition = {
           series: String(msg.series ?? "").trim(),
           grade,
           cost_price: cost,
-          sale_price: manual ? Number(msg.salePrice) : calcPrice(cost, rule),
-          price_manual: manual ? 1 : 0,
+          sale_price: isManual ? manualSale : calcPrice(cost, rule),
+          price_manual: isManual ? 1 : 0,
           purchase_link: String(msg.purchaseLink ?? "").trim(),
           status: 0,
           remark: String(msg.remark ?? "").trim(),
@@ -454,7 +515,7 @@ export const shopTool: ToolDefinition = {
       case "updateProductField": {
         const field = String(msg.field);
         const id = Number(msg.id);
-        const product = db.getProducts().find((p) => p.id === id);
+        const product = db.getProductById(id);
         if (!product) {
           log("❌商品不存在");
           break;
@@ -479,27 +540,45 @@ export const shopTool: ToolDefinition = {
             break;
           }
           if (field === "grade") {
-            if (db.ensureRule(grade)) {
-              log(`ℹ️等级 ${grade} 无规则，已自动创建默认规则（cost*1.5 → +0.88）`);
+            if (grade === 0) {
+              // 切成「自定义」：售价固定不动，不再跟随规则
+              db.updateProductField(id, "grade", 0);
+              db.updateProductField(id, "price_manual", 1);
+            } else {
+              if (db.ensureRule(grade)) {
+                log(`ℹ️等级 ${grade} 无规则，已自动创建默认规则（cost*1.5 → +0.88）`);
+              }
+              // 主动选回某个等级 = 明确要跟随该等级规则，立即按规则重算
+              db.updateProductField(id, "grade", grade);
+              db.updateProductField(id, "price_manual", 0);
+              const rule = db.getRules().find((r) => r.grade === grade);
+              db.updateProductField(id, "sale_price", calcPrice(cost, rule));
             }
-            db.updateProductField(id, "grade", grade);
           } else {
             db.updateProductField(id, "cost_price", cost);
-          }
-          if (product.price_manual === 1) {
-            log(`⚠️${product.code} 售价是手动设置，等级/进价改动不会重算`);
-          } else {
-            const rule = db.getRules().find((r) => r.grade === grade);
-            db.updateProductField(id, "sale_price", calcPrice(cost, rule));
+            if (product.price_manual === 1) {
+              log(`⚠️${product.code} 售价是「自定义」，改进价不会重算售价；想跟随规则请把等级改回 ${product.grade || "对应等级"}`);
+            } else {
+              const rule = db.getRules().find((r) => r.grade === product.grade);
+              db.updateProductField(id, "sale_price", calcPrice(cost, rule));
+            }
           }
         } else if (field === "sale_price") {
           const v = Number(msg.value);
-          if (v < 0) {
+          if (!Number.isFinite(v) || v < 0) {
             log("❌售价不能为负");
             break;
           }
-          db.updateProductField(id, "sale_price", v);
-          db.updateProductField(id, "price_manual", v > 0 ? 1 : 0);
+          if (v > 0) {
+            // 手动填售价 → 转「自定义」（等级列会显示“自定义”）
+            db.updateProductField(id, "sale_price", v);
+            db.updateProductField(id, "price_manual", 1);
+          } else {
+            // 清空售价 → 回归规则，立即按当前进价重算
+            const rule = db.getRules().find((r) => r.grade === product.grade);
+            db.updateProductField(id, "sale_price", calcPrice(product.cost_price, rule));
+            db.updateProductField(id, "price_manual", 0);
+          }
         } else {
           db.updateProductField(id, field, msg.value);
         }
@@ -509,7 +588,7 @@ export const shopTool: ToolDefinition = {
       }
       case "deleteProduct": {
         const id = Number(msg.id);
-        const p = db.getProducts().find((x) => x.id === id);
+        const p = db.getProductById(id);
         db.deleteProduct(id);
         log(`🗑已删除 ${p ? p.code : id}（含其销售记录与入库记录）`);
         refreshSales(todayStr());
@@ -520,8 +599,43 @@ export const shopTool: ToolDefinition = {
         const id = Number(msg.id);
         const status = msg.status === 1 ? 1 : 0;
         db.updateProductField(id, "status", status);
-        const p = db.getProducts().find((x) => x.id === id);
+        const p = db.getProductById(id);
         log(status === 1 ? `🔻已下架 ${p?.code ?? id}` : `🔺已上架 ${p?.code ?? id}`);
+        loadAll();
+        break;
+      }
+      case "setProductsStatus": {
+        const ids: number[] = (msg.ids || []).map(Number);
+        const status = msg.status === 1 ? 1 : 0;
+        if (ids.length === 0) {
+          log("⚠没有选中要操作的商品");
+          break;
+        }
+        for (const id of ids) {
+          db.updateProductField(id, "status", status);
+        }
+        log(`✅已${status === 1 ? "下架" : "上架"} ${ids.length} 个商品`);
+        loadAll();
+        break;
+      }
+      case "deleteProducts": {
+        const ids: number[] = (msg.ids || []).map(Number);
+        if (ids.length === 0) {
+          log("⚠没有选中要删除的商品");
+          break;
+        }
+        let n = 0;
+        const deleted: string[] = [];
+        for (const id of ids) {
+          const p = db.getProductById(id);
+          if (p) {
+            deleted.push(p.code);
+          }
+          db.deleteProduct(id);
+          n++;
+        }
+        log(`✅删除商品 ${n} 个${deleted.length ? `：${deleted.slice(0, 8).join("、")}${deleted.length > 8 ? " 等" : ""}` : ""}`);
+        refreshSales(todayStr());
         loadAll();
         break;
       }
@@ -566,7 +680,7 @@ export const shopTool: ToolDefinition = {
           break;
         }
         const id = Number(msg.productId);
-        const p = db.getProducts().find((x) => x.id === id);
+        const p = db.getProductById(id);
         if (!p) {
           log("❌商品不存在");
           break;
@@ -605,7 +719,7 @@ export const shopTool: ToolDefinition = {
           break;
         }
         const productId = Number(msg.productId);
-        const p = db.getProducts().find((x) => x.id === productId);
+        const p = db.getProductById(productId);
         if (!p) {
           log("❌商品不存在");
           break;
@@ -842,28 +956,48 @@ export const shopTool: ToolDefinition = {
           break;
         }
         const folder = path.join(dir, code);
-        let files: string[] = [];
-        try {
-          files = fs
-            .readdirSync(folder)
-            .filter((f) => IMAGE_EXTS.has(path.extname(f).toLowerCase()));
-        } catch {
-          files = [];
+        const files = listImageFiles(folder);
+        if (files.length === 0) {
+          ctx.postToWebview({ type: "imagesLoaded", code, images: [] });
+          break;
         }
-        files.sort((a, b) => {
-          const na = Number((a.match(/(\d+)/) || ["", "0"])[1]);
-          const nb = Number((b.match(/(\d+)/) || ["", "0"])[1]);
-          return na - nb || a.localeCompare(b);
-        });
-        const images: string[] = [];
-        for (const f of files) {
-          try {
-            images.push(await readImageToBase64(path.join(folder, f)));
-          } catch {
-            /* 单张读取失败忽略 */
+        const thumbs: string[] = [];
+        let big0 = "";
+        for (let i = 0; i < files.length; i++) {
+          const fp = path.join(folder, files[i]);
+          if (i === 0) {
+            try {
+              big0 = await readImageToBase64(fp);
+            } catch {
+              big0 = "";
+            }
           }
+          thumbs.push(await thumbToBase64(fp));
         }
-        ctx.postToWebview({ type: "imagesLoaded", code, images });
+        ctx.postToWebview({ type: "imagesLoaded", code, images: thumbs, big0 });
+        break;
+      }
+      case "getFullImage": {
+        const code = String(msg.code ?? "");
+        const index = Number(msg.index ?? 0);
+        const dir = imageDir();
+        if (!dir) {
+          ctx.postToWebview({ type: "fullImageLoaded", code, index, data: "" });
+          break;
+        }
+        const folder = path.join(dir, code);
+        const files = listImageFiles(folder);
+        const fp = files[index] ? path.join(folder, files[index]) : null;
+        if (!fp) {
+          ctx.postToWebview({ type: "fullImageLoaded", code, index, data: "" });
+          break;
+        }
+        try {
+          const data = await readImageToBase64(fp);
+          ctx.postToWebview({ type: "fullImageLoaded", code, index, data });
+        } catch {
+          ctx.postToWebview({ type: "fullImageLoaded", code, index, data: "" });
+        }
         break;
       }
       case "uploadImages": {
@@ -904,14 +1038,19 @@ export const shopTool: ToolDefinition = {
         log(`🖼已上传导入 ${added} 张图 → ${code} 文件夹（自动按 ${code}_时间戳.jpg 命名）`);
         const files = listImageFiles(folder);
         const imgs: string[] = [];
-        for (const f of files) {
-          try {
-            imgs.push(await readImageToBase64(path.join(folder, f)));
-          } catch {
-            /* 忽略 */
+        let big0 = "";
+        for (let i = 0; i < files.length; i++) {
+          const fp = path.join(folder, files[i]);
+          if (i === 0) {
+            try {
+              big0 = await readImageToBase64(fp);
+            } catch {
+              big0 = "";
+            }
           }
+          imgs.push(await thumbToBase64(fp));
         }
-        ctx.postToWebview({ type: "imagesLoaded", code, images: imgs });
+        ctx.postToWebview({ type: "imagesLoaded", code, images: imgs, big0 });
         invalidateCover(code);
         loadAll();
         break;
@@ -980,16 +1119,19 @@ export const shopTool: ToolDefinition = {
           const category = String(parts[2] ?? "");
           const series = String(parts[3] ?? "");
           const gradeRaw = Math.floor(Number(parts[4] ?? 1));
-          const grade = Number.isFinite(gradeRaw) && gradeRaw >= 1 && gradeRaw <= 99 ? gradeRaw : 1;
+          const grade = Number.isFinite(gradeRaw) && gradeRaw >= 0 && gradeRaw <= 99 ? gradeRaw : 1;
           const costRaw = Number(parts[5] ?? 0);
           const cost = Number.isFinite(costRaw) && costRaw >= 0 ? costRaw : 0;
           const saleRaw = Number(parts[6] ?? 0);
-          const manual = Number.isFinite(saleRaw) && saleRaw > 0 ? saleRaw : 0;
           const link = String(parts[7] ?? "");
-          if (db.ensureRule(grade)) {
+          const manual = Number.isFinite(saleRaw) && saleRaw > 0 ? saleRaw : 0;
+          const custom = grade === 0;
+          if (!custom && db.ensureRule(grade)) {
             log(`ℹ️等级 ${grade} 无规则，已自动创建默认规则（cost*1.5 → +0.88）`);
           }
-          const rule = db.getRules().find((r) => r.grade === grade);
+          const rule = custom
+            ? undefined
+            : db.getRules().find((r) => r.grade === grade);
           db.addProduct({
             code,
             name,
@@ -997,8 +1139,8 @@ export const shopTool: ToolDefinition = {
             series,
             grade,
             cost_price: cost,
-            sale_price: manual > 0 ? manual : calcPrice(cost, rule),
-            price_manual: manual > 0 ? 1 : 0,
+            sale_price: custom || manual > 0 ? manual : calcPrice(cost, rule),
+            price_manual: custom || manual > 0 ? 1 : 0,
             purchase_link: link,
             status: 0,
             remark: "",
