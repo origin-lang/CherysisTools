@@ -413,7 +413,7 @@
       el.innerHTML = `
         <span class="muted">共 ${pd.total} 条　每页</span>
         <select id="pageSizeSel">
-          ${[100, 200, 500].map((n) => `<option value="${n}"${n === pageSize ? " selected" : ""}>${n}</option>`).join("")}
+          ${[50, 100, 200, 500].map((n) => `<option value="${n}"${n === pageSize ? " selected" : ""}>${n}</option>`).join("")}
         </select>
         <button class="mini-btn" data-pg="prev"${listPage <= 1 ? " disabled" : ""}>‹ 上一页</button>
         <span class="muted">第 <b>${listPage}</b> / ${pd.pages} 页</span>
