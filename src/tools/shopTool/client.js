@@ -623,6 +623,21 @@
              <div class="muted" style="margin-top:4px">双击单元格编辑（回车或点击别处即保存）；右键行/表格复制</div>`;
       bindFilterRow();
       bindBatchOps();
+      const listTable = document.querySelector(
+        "#productListView .table-wrap .data-table",
+      );
+      if (listTable) {
+        const headRow = listTable.querySelector("thead tr");
+        const tblWrap = listTable.closest(".table-wrap");
+        if (headRow && tblWrap) {
+          const h = headRow.offsetHeight;
+          if (h > 0) {
+            tblWrap.style.setProperty("--thead-h", h + "px");
+          } else {
+            tblWrap.style.removeProperty("--thead-h");
+          }
+        }
+      }
     }
 
     function hasFilter() {
@@ -879,16 +894,16 @@
             } else {
               cls = "empty";
             }
-            cells += `<div class="live-cell">
+            cells += `<div class="live-cell" data-g="${g}">
+              <div class="live-cover">${coverTile(bySlot, s, startNum)}</div>
               <input data-ls-cell data-g="${g}" data-slot="${s}" data-num="${num}" class="${cls}" value="${esc(code)}" placeholder="${placeholder}" title="${cls === "dup" ? "重复出现的编号，请检查是否填重了" : ""}" />
-              <div class="cell-code">${num}号</div>
             </div>`;
           }
           return `<div class="live-group">
             <div class="g-head">
               <b>第 ${g} 组</b>
               <span class="muted">${startNum}号~${startNum + 8}号</span>
-              <button class="mini-btn g-gen" data-ls-act="gen" data-g="${g}" title="只生成这一组的九宫格并复制这组清单">🖼 生成这组</button>
+              <button class="mini-btn g-gen" data-ls-act="gen" data-g="${g}" title="只生成这一组的九宫格">🖼 生成这组</button>
               <button class="mini-btn btn-danger g-del" data-ls-act="delgroup" data-g="${g}">删组</button>
             </div>
             <div class="live-grid">${cells}</div>
@@ -907,6 +922,7 @@
             inp.classList.remove("ok");
           }
           upsertLiveSlot(groupNo, slotNo, code);
+          renderLivePreview(groupNo);
           scheduleLivePlanSave();
         };
         inp.onblur = () => {
@@ -938,6 +954,65 @@
           }
         };
       });
+      ensureCovers(
+        plan.filter((r) => r.code).map((r) => ({ code: r.code })),
+      );
+      renderLivePreviews();
+    }
+
+    function coverTile(bySlot, s, startNum) {
+      const code = bySlot.get(s) || "";
+      const num = startNum + s - 1;
+      const numBadge = `<span class="lp-num">${num}号</span>`;
+      if (!code) {
+        return `<div class="cover-ph">空</div>${numBadge}`;
+      }
+      const p = stateProduct(code);
+      const cover = state.coverCache[code] || "";
+      if (cover) {
+        return `<img src="${cover}" alt="" />${numBadge}`;
+      }
+      let cls = "";
+      let text = esc(code);
+      if (!p) {
+        cls = "err";
+        text = `${esc(code)}（不存在）`;
+      } else {
+        const dupCount = state.livePlan.filter((r) => r.code === code).length;
+        if (dupCount > 1) {
+          cls = "dup";
+          text = `${esc(code)}（重复）`;
+        }
+      }
+      return `<div class="cover-ph ${cls}">${text}</div>${numBadge}`;
+    }
+
+    function renderLivePreview(groupNo) {
+      const area = $("liveGridArea");
+      if (!area) {
+        return;
+      }
+      const slots = state.livePlan.filter((r) => r.group_no === groupNo);
+      const bySlot = new Map(slots.map((r) => [r.slot_no, r.code]));
+      const startNum = (groupNo - 1) * 9 + 1;
+      const covers = area.querySelectorAll(
+        `.live-cell[data-g="${groupNo}"] .live-cover`,
+      );
+      covers.forEach((el, i) => {
+        el.innerHTML = coverTile(bySlot, i + 1, startNum);
+      });
+      ensureCovers(
+        state.livePlan.filter((r) => r.code).map((r) => ({ code: r.code })),
+      );
+    }
+
+    function renderLivePreviews() {
+      const groupNos = [
+        ...new Set(state.livePlan.map((r) => r.group_no)),
+      ].sort((a, b) => a - b);
+      for (const g of groupNos) {
+        renderLivePreview(g);
+      }
     }
 
     function upsertLiveSlot(groupNo, slotNo, code) {
@@ -957,7 +1032,7 @@
         post({
           type: "saveLivePlan",
           plan: state.livePlan
-            .filter((r) => r.code)
+            .filter((r) => r.code || r.slot_no === 0)
             .map((r) => ({
               group_no: r.group_no,
               slot_no: r.slot_no,
@@ -968,23 +1043,21 @@
     }
 
     function buildLiveListText() {
-      const lines = [];
       const rows = state.livePlan
-        .filter((r) => r.code)
+        .filter((r) => r.code && stateProduct(r.code))
         .sort((a, b) => a.group_no - b.group_no || a.slot_no - b.slot_no);
+      const lines = [];
+      let curGroup = 0;
       for (const r of rows) {
-        const p = stateProduct(r.code);
-        if (!p) {
-          continue;
+        if (r.group_no !== curGroup) {
+          if (lines.length) {
+            lines.push("");
+          }
+          curGroup = r.group_no;
+          lines.push(`第${curGroup}组`);
         }
         const num = (r.group_no - 1) * 9 + r.slot_no;
-        const price =
-          p.sale_price !== null && p.sale_price !== undefined
-            ? Number(p.sale_price).toFixed(2)
-            : "0.00";
-        lines.push(
-          `${num}号 ${p.code} ${p.name} ¥${price} ${p.purchase_link || ""}`.trim(),
-        );
+        lines.push(`${num}号 ${r.code}`);
       }
       return lines.join("\n");
     }
@@ -992,6 +1065,15 @@
     function removeLiveGroup(groupNo) {
       state.livePlan = state.livePlan.filter((r) => r.group_no !== groupNo);
       scheduleLivePlanSave();
+    }
+
+    function findNextLiveGroupNo() {
+      const existing = new Set(state.livePlan.map((r) => r.group_no));
+      let g = 1;
+      while (existing.has(g)) {
+        g++;
+      }
+      return g;
     }
 
     function findNextEmptySlot() {
@@ -1042,13 +1124,9 @@
       const add = $("liveAddGroupBtn");
       if (add) {
         add.onclick = () => {
-          const newest = state.livePlan.length
-            ? Math.max(...state.livePlan.map((r) => r.group_no))
-            : 0;
-          const groupNo = newest + 1;
-          for (let s = 1; s <= 9; s++) {
-            state.livePlan.push({ group_no: groupNo, slot_no: s, code: "" });
-          }
+          const groupNo = findNextLiveGroupNo();
+          state.livePlan.push({ group_no: groupNo, slot_no: 0, code: "" });
+          scheduleLivePlanSave();
           renderLiveGrid();
         };
       }
@@ -1977,6 +2055,15 @@ L002 合金项链十字架 项链 A类 1 8.5"></textarea>
           key: "stock_alert",
           value: String(Number($("setStockAlert").value || 0)),
         });
+      $("dbBackupBtn").onclick = () => post({ type: "exportDB" });
+      $("dbRestoreBtn").onclick = () =>
+        confirmBox("恢复会用所选备份整体替换当前全部数据（商品/库存/销售/月报/排品）。确定继续？").then(
+          (ok) => {
+            if (ok) {
+              post({ type: "importDB" });
+            }
+          },
+        );
       bindLiveEvents();
     }
 
@@ -2231,12 +2318,14 @@ L002 合金项链十字架 项链 A类 1 8.5"></textarea>
           coverInFlight = Math.max(0, coverInFlight - 1);
           pumpCovers();
           requestCoverRender();
+          renderLivePreviews();
           break;
         }
         case "coverInvalidated": {
           delete state.coverCache[msg.code];
           delete state.coverPending[msg.code];
           requestCoverRender();
+          renderLivePreviews();
           break;
         }
         case "liveState": {
@@ -2254,10 +2343,15 @@ L002 合金项链十字架 项链 A类 1 8.5"></textarea>
           break;
         }
         case "liveGenerated": {
-          toast(
-            `已生成 ${msg.count || 0} 张九宫格 → ${msg.dir || ""}` +
-              (msg.count ? "；清单已复制" : ""),
-          );
+          toast(`已生成 ${msg.count || 0} 张九宫格 → ${msg.dir || ""}`);
+          break;
+        }
+        case "toast": {
+          toast(String(msg.text ?? ""));
+          break;
+        }
+        case "dbOpError": {
+          toast(`❌${String(msg.message ?? "操作失败")}`);
           break;
         }
         case "imagesLoaded": {

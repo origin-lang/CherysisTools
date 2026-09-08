@@ -18,6 +18,12 @@ function todayStr(): string {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
+function fileStamp(): string {
+  const d = new Date();
+  const p = (n: number, w = 2) => String(n).padStart(w, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
 function canonicalCode(raw: unknown): string | null {
   const s = String(raw ?? "").trim().replace(/[【】\[\]（）()#\s_\-\u3000]/g, "");
   let digits: string | null = null;
@@ -229,8 +235,15 @@ async function renderLiveGrid(
   if (firstImg) {
     try {
       const meta = await sharp(firstImg.img!).metadata();
-      tileW = meta.width && meta.width > 40 ? meta.width : tileW;
-      tileH = meta.height && meta.height > 40 ? meta.height : tileH;
+      const w = meta.width || 0;
+      const h = meta.height || 0;
+      if (w > 40 && h > 40) {
+        const MAX_EDGE = 1024;
+        const MIN_EDGE = 256;
+        const scale = Math.min(MAX_EDGE / w, MAX_EDGE / h, 1);
+        tileW = Math.max(MIN_EDGE, Math.round(w * scale));
+        tileH = Math.max(MIN_EDGE, Math.round(h * scale));
+      }
     } catch {
       /* 尺寸读取失败用默认 */
     }
@@ -255,7 +268,7 @@ async function renderLiveGrid(
       top: row * tileH,
     });
     if (cell.code) {
-      const text = `${startNum + idx}号 ${cell.code}`;
+      const text = `${startNum + idx}号`;
       layers.push({
         input: Buffer.from(labelSvg(tileW, tileH, text), "utf-8"),
         left: col * tileW,
@@ -317,7 +330,7 @@ export const shopTool: ToolDefinition = {
       log(`❌数据库初始化失败：${err.message}`);
       return;
     }
-    const db = getDB();
+    let db = getDB();
 
     if (!codeMigrated) {
       codeMigrated = true;
@@ -455,6 +468,7 @@ export const shopTool: ToolDefinition = {
       return lockedMonth(month) ? month : null;
     };
 
+    try {
     switch (msg.type) {
       case "loadAll": {
         loadAll();
@@ -1305,7 +1319,6 @@ export const shopTool: ToolDefinition = {
           break;
         }
         const files: string[] = [];
-        const list: string[] = [];
         for (const g of groupNos) {
           const slots = groups.get(g)!;
           const cells: Array<{ code: string; img: string | null }> = [];
@@ -1313,29 +1326,10 @@ export const shopTool: ToolDefinition = {
             const code = slots.get(s) ?? "";
             cells.push({ code, img: code ? firstImageFile(dir, code) : null });
           }
-          for (let s = 1; s <= 9; s++) {
-            const code = slots.get(s) ?? "";
-            const p = byCode.get(code);
-            if (!p) {
-              continue;
-            }
-            const num = (g - 1) * 9 + s;
-            list.push(
-              `${num}号 ${p.code} ${p.name} ¥${round2(p.sale_price)} ${p.purchase_link || ""}`.trim(),
-            );
-          }
           try {
             files.push(await renderLiveGrid(cells, outDir, g));
           } catch (err: any) {
             log(`❌第 ${g} 组生成失败：${err.message}`);
-          }
-        }
-        const copyText = list.join("\n");
-        if (copyText) {
-          try {
-            await vscode.env.clipboard.writeText(copyText);
-          } catch {
-            /* 忽略剪贴板失败 */
           }
         }
         try {
@@ -1344,15 +1338,60 @@ export const shopTool: ToolDefinition = {
           /* 忽略打开失败 */
         }
         log(
-          `🖼直播九宫格完成 ${files.length} 张（${groupNos.map((g) => `第${g}组`).join(" ")}）；清单已复制到剪贴板`,
+          `🖼直播九宫格完成 ${files.length} 张（${groupNos.map((g) => `第${g}组`).join(" ")}）`,
         );
         ctx.postToWebview({ type: "liveGenerated", dir: outDir, count: files.length });
         postLiveState();
         break;
       }
+      case "exportDB": {
+        const dir = await ctx.selectFolder("选择数据库备份目录");
+        if (!dir) {
+          break;
+        }
+        const outFile = path.join(dir, `商品数据_${fileStamp()}.db`);
+        try {
+          await db.backupDB(outFile);
+          log(`✅数据库已备份：${outFile}`);
+          ctx.postToWebview({ type: "toast", text: "数据库备份完成" });
+        } catch (err: any) {
+          log(`❌备份数据库失败：${err.message}`);
+          ctx.postToWebview({ type: "toast", text: `备份失败：${err.message}` });
+        }
+        break;
+      }
+      case "importDB": {
+        const fp = await ctx.selectFile({ 数据库: ["db"] });
+        if (!fp) {
+          break;
+        }
+        try {
+          db.restoreDB(fp, ctx.storageDir);
+          db = getDB();
+          log("✅数据库已恢复，数据已替换为所选备份");
+          ctx.postToWebview({ type: "toast", text: "数据库恢复完成" });
+          loadAll();
+          postLiveState();
+        } catch (err: any) {
+          log(`❌恢复数据库失败：${err.message}`);
+          ctx.postToWebview({ type: "toast", text: `恢复失败：${err.message}` });
+          try {
+            db = getDB();
+            loadAll();
+          } catch {
+            /* 忽略 */
+          }
+        }
+        break;
+      }
       default: {
         log(`❌未处理的消息类型:${msg.type}`);
       }
+    }
+    } catch (err: any) {
+      const text = String(err?.message ?? err ?? "未知错误");
+      log(`❌操作失败：${text}`);
+      ctx.postToWebview({ type: "dbOpError", message: text });
     }
   },
 };

@@ -338,7 +338,10 @@
         } else if (msg.type === "log") {
           const logDom = document.getElementById("logArea");
           if (logDom) {
-            logDom.innerText += msg.text + "\n";
+            const div = document.createElement("div");
+            div.className = "log-line";
+            div.textContent = msg.text;
+            logDom.appendChild(div);
             logDom.scrollTop = logDom.scrollHeight;
           }
         } else if (msg.type === "toast") {

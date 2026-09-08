@@ -221,3 +221,80 @@
 - `pnpm run compile`：通过（`tsc -p ./` 无报错）。
 - `pnpm run lint`：shopTool 三文件 0 错误；仅 `excelAnalyzeTool/client.js` 四条 pre-existing curly 警告。
 - 人工验收点：首屏 / 翻页封面渐次出现且 payload 显著变小（lightbox 不再一次性拉全部原图）；batch 勾选只刷计数条不整表闪烁；改字段 / 入库 / 记销售 / 删销售后库存与销量合计数字仍正确（聚合缓存全写入路径生效）；800 商品下画册滚动顺畅。
+
+---
+
+## 七、九宫格体验修正（2026-09-08 第四波迭代）
+
+> 主题：直播排品值班使用一轮后的体验修正——**图上标注只留 N号、封面+输入框同一格、修掉像素上限报错、去掉自动复制、筛选行吸顶、日志换行、组号复用最小空缺不重排**。
+
+### 本期功能清单
+
+1. **图上标注只留「N号」**：格子标注原先把 `cell.code` 也拼进去，图上太挤。现在只画 `N号`（`index.ts renderLiveGrid`：`text = \`${startNum + idx}号\``）。
+2. **九宫格布局合并「封面在上、输入在下」**（用户最终选择的方案）：
+   - 一个 3×3 网格，每格 = `.live-cover` 封面子块（左上角 `.lp-num` 的 N号 角标，缺图灰格 `.cover-ph`）+ 下方编号输入框；
+   - `index.ts` 每次生成时下发 `{image, cells:{N号,坏格,缺图,不存在,重复}}` 元数据，前端 `renderLivePreview(groupNo)` 只更新 `.live-cover`，不重建输入区 → **焦点不丢**。
+3. **生成像素上限修复**：原用第一张商品原图尺寸做格尺寸，画布 `tile×3` 在 4K 原图下超过 sharp 默认 ~268MP → 报 `Input image exceeds pixel limit`。修复：长边 clamp `MAX_EDGE=1024`、短边等比、下限 `MIN_EDGE=256`。
+4. **生成后不再自动复制剪贴板**：去掉 `vscode.env.clipboard.writeText` 与后端 list 构建；「复制清单」按钮保留，格式精简为纯「编号↔编码」对照（`客户端 buildLiveListText`：`N号 Lxxx` + 空行 + `第N组` 头），复制这组同理。
+5. **日志换行修复**（`main.html`）：原来 `logDom.innerText += msg.text + "\n"` 换行会被 innerText 折叠（连成一条超长串）；改为每条日志**独立 `<div class="log-line">`**（`#logArea` 保持 `white-space:pre-wrap`）。
+6. **筛选行吸顶**：`#tabProducts .data-table thead tr.filter-row th { position:sticky; top: var(--thead-h, 25px); z-index:2 }`；`--thead-h` 由 JS 实测表头高度写入 `.table-wrap`，**tab 隐藏时 offsetHeight=0 就 removeProperty 走 CSS 兜底**（否则 0 会让筛选行重叠在表头下面）。
+7. **组号「复用最小空缺、不重排」**：删第2组后仍 1、3；加组时 `findNextLiveGroupNo()` 取**不存在的最小正整数**（1、3 → 新组=2）；显示按组号升序，永远正序。空组持久化：加组不再 push 9 个空行，改为单个占位行 `{group_no, slot_no: 0, code: ""}`，`db.replaceLivePlan`（`PRIMARY KEY(group_no, slot_no)` 天然支持 slot 0）放行该占位行——否则空组会被 350ms 保存回传丢弃。
+8. **「加了组马上又消失」修复**（关键 bug）：`scheduleLivePlanSave` 里 `plan: state.livePlan.filter(r => r.code)` 把 `code:""` 的占位行滤掉了 → 350ms 防抖保存只发 1、3 组 → 后端全清再插 → 回包 `liveState` 覆盖本地 → 第2组消失、回到 1、3。改为 `.filter(r => r.code || r.slot_no === 0)`，占位行进入请求并被后端显式落库。
+
+### 技术实现与决策
+
+- **封面元数据一次生成、前端增量渲染**：`renderLiveGrid`（后端）返回 `grid` 数组（每格 image/data-url/坏格标记），前端 `coverTile()` 按元数据拼 `img/占位/svg`，`renderLivePreviews()` 遍历各组调 `renderLivePreview(g)` 只改 `.live-cover` 的 innerHTML。输入框由前端 `renderLiveGrid` 单独渲染，存档在 `.live-cell[data-g][data-s]`，行内 input `oninput` 只更新 state + 防抖，不重建。
+- **组号猜测策略**——为何不重排：重排（删组后连续化）会改变已生成直播图的组号、且让用户记忆错位；用户明确要「1、3 稳定，新组=2」。实现只看 `live_plan` 的 `group_no` 集合，`while(set.has(n)) n++`。
+- **占位行设计**：只存 `{group_no, slot_no:0}`，渲染时组内固定展开 9 个格（画 9 个空输入框），所以空白组也「存在」；删组 = 删整组所有行（含 slot 0）；清空格子 = `state.livePlan = []` + `clearLivePlan`（连占位行一起清）。
+- **后端 saveLivePlan 对 slot 0 的显式分支**：`s===0` 时不上抛校验 `if (!code) continue`，直接 `INSERT OR REPLACE` 空码行；而普通空格（s≥1、code 空）照旧跳过，避免库里攒碎行。
+
+### 维护要点 / 易踩坑更新
+
+- `scheduleLivePlanSave` 的过滤条件**必须**带上 `slot_no === 0`，不能只按 `r.code` 过滤——否则空组「加了就消失」。
+- 格子布局改动后旧前缀全清：`.live-preview` / `.lp-tile` / `.cell-code` / `previewTile` 已删除，别混用（`cell-code` 现仅指商品列表的「编号」列）。
+- tile 尺寸必须 clamp，否则 4K 原图 × 9 格必炸 sharp 像素上限；`MIN_EDGE` 保证小图不糊。
+- 筛选行 sticky 的 `--thead-h` 必须实测 + 兜底，tab 隐藏时测到 0 会破坏布局。
+- 日志别再退回 `innerText += text + "\n"` 拼接。
+
+### 验收（本轮快照）
+
+- `node --check src/tools/shopTool/client.js`、`pnpm run compile`、`pnpm run lint`（0 error，4 条既有 warning）通过。
+- 人工验收点：1、3 组时点「＋ 加一组」→ 第2组出现且**不消失**、刷新面板仍在；删第2组回 1、3；大图商品正常生成、剪贴板不被占用；筛选行随滚动吸顶、切 Tab 回来不叠头；日志逐条换行。
+
+---
+
+## 八、数据库备份 / 恢复 + 写失败反馈（2026-09-08 第五波迭代）
+
+> 主题：数据安全两件事——**① 原数据文件级备份/恢复（本工具唯一的恢复手段，性价比最高）；② 写操作失败的 UI 明确反馈（不再静默/只进日志）**。
+
+### 本期功能清单
+
+1. **数据库备份**：设置 Tab 新增「数据库备份 / 恢复」面板，`备份数据库` → 选目录 → 生成 `商品数据_YYYYMMDD_HHMMSS.db` 一致性快照。
+2. **从备份恢复**：`从备份恢复`（二次 confirmBox 确认）→ 选 `.db` → 校验合法后整体替换当前库，恢复完成自动重发全量状态（`loadAll` + `postLiveState`）。
+3. **写失败反馈**：`handleMessage` 整个 switch 包进 try/catch，任何异常 → 后端 `log("❌操作失败：<msg>")` + 前端红色气泡（新增 `dbOpError` 消息）；另加通用 `toast` 消息分支，backup/restore 成功失败都在前端弹气泡。
+
+### 技术实现与决策
+
+- **备份用 better-sqlite3 原生 `db.backup(dest)`**（在线备份 API，单个文件、含 WAL 未落盘数据）而不是 `VACUUM INTO`；⚠️ v13 该 API 是**异步**的（返回 `Promise`），必须 `await`，否则文件没写完就返回、后续 `statSync` 直接 ENOENT。
+- **恢复的安全顺序**（`db.restoreDB(src, storageDir)`）：
+  1. 拒绝「自我恢复」（目标路径 === 源路径）；
+  2. 拷到**同目录**临时文件 `shop.db.restore.<ts>.tmp` → 校验 SQLite 魔数（`SQLite format 3\0`）；
+  3. **只读探针连接**查 `sqlite_master` 有 `products` 表（防把别人的库换进来，校验不污染主连接）；
+  4. `closeDB()` → 删旧 `-wal` / `-shm`（否则旧 WAL 会回放到新库上）→ `renameSync` **原子替换**；
+  5. `initDB(storageDir)` 重开；失败分支尽量 `initDB` 恢复现场再上抛。
+- **连接换代**：`index.ts` 的 `db` 从 `const` 改 `let`；恢复成功后 `db = getDB()`，由于所有 helper（`loadAll`/`postLiveState`/`getSetting`…）都闭包引用 `db` 这个**绑定**，重赋值后同一消息内的收尾推送自动用新连接。
+- **错误不再「静默」**：写路径原有局部 try/catch 的地方保留（如单组生成失败），外层 catch 兜底那些**没有** catch 的写操作（UNIQUE 冲突、校验遗漏、磁盘问题等）→ 必然有日志 + 气泡，与「成功 toast」区分。
+
+### 维护要点 / 易踩坑更新
+
+- **新增任何**「能关到数据库连接的恢复类操作」都要重取 `db = getDB()`；闭包捕获的是绑定不是值，改 `let` 即可。
+- 备份目标目录若不存在，`backupDB` 已 `mkdirSync recursive`；备份文件命名含时间戳，天然防覆盖。
+- 恢复是**整体替换**，无撤销；前端已二次确认，将来若要「恢复前自动备份」，在该 case 里先 `backupDB` 一次即可。
+- 外层 try/catch 只兜未捕获异常；`log("❌…") + break` 这类**预期校验不弹气泡**（避免验证性错误刷屏）。
+- 相关类型：`ShopDB` 新增 `getDBFilePath / backupDB / restoreDB`。
+
+### 验收（本轮快照）
+
+- `pnpm run compile`、`pnpm run lint`（0 error）、`node --check client.js` 通过。
+- **端到端冒烟**（临时 SQLite 实例，脚本跑通）：插商品/入库/live_plan → `backupDB` 落盘 → `deleteProduct + clear` 制造破坏 → `restoreDB` 恢复 → 商品/排品占位行/库存合计全部还原；写入非法文本文件被拒且连接仍存活。
+- 人工验收点：设置页点「备份数据库」生成 .db；改几项数据后「从备份恢复」→ 数据回到备份点、面板全量刷新；故意选非 SQLite 文件被拒 + 红色气泡提示。

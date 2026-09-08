@@ -411,6 +411,17 @@
         font-size: 11px;
         box-sizing: border-box;
       }
+      #tabProducts .data-table thead tr.filter-row th {
+        position: sticky;
+        top: var(--thead-h, 25px);
+        z-index: 2;
+        background-color: var(--vscode-editor-background);
+        cursor: auto;
+        user-select: auto;
+      }
+      #tabProducts .data-table thead tr.filter-row th:hover {
+        background: var(--vscode-editor-background);
+      }
       .toast {
         position: fixed;
         bottom: 20px;
@@ -498,6 +509,9 @@
       }
       .live-cell {
         position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
       }
       .live-cell .cell-num {
         position: absolute;
@@ -533,11 +547,47 @@
         border-color: #e6a23c;
         background: rgba(230, 162, 60, 0.1);
       }
-      .live-cell .cell-code {
-        margin-top: 4px;
-        text-align: center;
-        font-size: 11px;
+      .live-cover {
+        position: relative;
+        aspect-ratio: 1 / 1;
+        width: 100%;
+        background: var(--vscode-input-background);
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 4px;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .live-cover img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      .cover-ph {
         color: var(--vscode-descriptionForeground);
+        font-size: 11px;
+        padding: 4px;
+        text-align: center;
+        word-break: break-all;
+      }
+      .cover-ph.err {
+        color: #e0404b;
+      }
+      .cover-ph.dup {
+        color: #e6a23c;
+      }
+      .lp-num {
+        position: absolute;
+        top: 4px;
+        left: 4px;
+        z-index: 2;
+        background: rgba(0, 0, 0, 0.6);
+        color: #fff;
+        border-radius: 3px;
+        padding: 0 5px;
+        font-size: 11px;
       }
       .g-del {
         margin-left: auto;
@@ -766,6 +816,14 @@ L032,1"></textarea>
             <button id="saveStockAlertBtn">保存</button>
           </div>
         </div>
+      </div>
+      <div class="panel">
+        <h4 style="margin: 0 0 8px 0">数据库备份 / 恢复</h4>
+        <div class="rows">
+          <button id="dbBackupBtn" class="btn-teal">备份数据库</button>
+          <button id="dbRestoreBtn" class="btn-danger">从备份恢复</button>
+        </div>
+        <p class="muted" style="margin: 8px 0 0 0">备份会生成一个完整的 .db 快照文件（含 WAL 未落盘数据）；恢复会用所选备份整体替换当前全部数据，操作前建议先备份一次。</p>
       </div>
       <div class="panel">
         <h4 style="margin: 0 0 8px 0">录入与命名规范</h4>

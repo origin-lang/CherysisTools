@@ -139,6 +139,9 @@ export interface ShopDB {
   replaceLiveStars(codes: string[]): void;
   getLivePlan(): LivePlanRow[];
   replaceLivePlan(plan: LivePlanRow[]): void;
+  getDBFilePath(): string;
+  backupDB(destPath: string): Promise<void>;
+  restoreDB(srcPath: string, storageDir: string): void;
   close(): void;
 }
 
@@ -285,6 +288,21 @@ function core(): Database.Database {
 
 function nowStr(): string {
   return new Date().toISOString();
+}
+
+function isValidSqliteFile(fp: string): boolean {
+  try {
+    const fd = fs.openSync(fp, "r");
+    const buf = Buffer.alloc(16);
+    try {
+      fs.readSync(fd, buf, 0, 16, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
+    return buf.slice(0, 16).equals(Buffer.from("SQLite format 3\0"));
+  } catch {
+    return false;
+  }
 }
 
 function mapProduct(r: any): Product {
@@ -738,10 +756,14 @@ export function getDB(): ShopDB {
         for (const r of plan) {
           const g = Number(r.group_no);
           const s = Number(r.slot_no);
-          if (!Number.isInteger(g) || g < 1 || !Number.isInteger(s) || s < 1 || s > 9) {
+          if (!Number.isInteger(g) || g < 1 || !Number.isInteger(s) || s < 0 || s > 9) {
             continue;
           }
           const code = String(r.code ?? "").trim();
+          if (s === 0) {
+            livePlanIns.run({ group_no: g, slot_no: s, code: "" });
+            continue;
+          }
           if (!code) {
             continue;
           }
@@ -749,6 +771,83 @@ export function getDB(): ShopDB {
         }
       });
       tx();
+    },
+    getDBFilePath(): string {
+      return getDBPath();
+    },
+    async backupDB(destPath: string): Promise<void> {
+      const c = core();
+      const dir = path.dirname(destPath);
+      if (dir && !fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      await c.backup(destPath);
+    },
+    restoreDB(srcPath: string, storageDir: string): void {
+      const target = getDBPath();
+      const src = path.resolve(srcPath);
+      if (target.toLowerCase() === src.toLowerCase()) {
+        throw new Error("目标文件就是当前数据库，不能自我恢复（请换一份备份文件）");
+      }
+      const tmp = path.join(path.dirname(target), `shop.db.restore.${Date.now()}.tmp`);
+      try {
+        fs.copyFileSync(src, tmp);
+        if (!isValidSqliteFile(tmp)) {
+          throw new Error("所选文件不是有效的 SQLite 数据库文件");
+        }
+        // 用只读连接确认是本工具的库（含 products 表），避免把别人的库換进来
+        let probe: Database.Database | null = null;
+        try {
+          probe = new Database(tmp, { readonly: true });
+          const row = probe.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='products'",
+          ).get();
+          if (!row) {
+            throw new Error("所选备份不是本工具的数据库（缺少 products 表）");
+          }
+        } finally {
+          if (probe) {
+            try {
+              probe.close();
+            } catch {
+              /* 忽略 */
+            }
+          }
+        }
+        // 关闭当前连接，清掉旧 WAL/SHM，再原子替换，避免旧 WAL 回放到新库上
+        closeDB();
+        for (const f of [target + "-wal", target + "-shm"]) {
+          try {
+            if (fs.existsSync(f)) {
+              fs.rmSync(f, { force: true });
+            }
+          } catch {
+            /* 忽略 */
+          }
+        }
+        fs.renameSync(tmp, target);
+        const ok = initDB(storageDir);
+        if (!ok) {
+          db = null;
+          throw new Error("数据库文件已替换，但重新打开连接失败");
+        }
+      } catch (err) {
+        if (fs.existsSync(tmp)) {
+          try {
+            fs.rmSync(tmp, { force: true });
+          } catch {
+            /* 忽略 */
+          }
+        }
+        if (!db) {
+          try {
+            initDB(storageDir);
+          } catch {
+            /* 忽略 */
+          }
+        }
+        throw err;
+      }
     },
     close() {
       closeDB();
