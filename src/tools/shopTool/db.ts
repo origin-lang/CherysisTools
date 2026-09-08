@@ -116,6 +116,7 @@ export interface ShopDB {
   getStockTotals(): Map<number, number>;
   getSaleTotals(): Map<number, { sold: number; refund: number }>;
   getSales(date?: string): SalesRecord[];
+  getSalesRange(from: string, to: string): SalesRecord[];
   upsertSale(r: {
     product_id: number;
     date: string;
@@ -428,6 +429,12 @@ export function getDB(): ShopDB {
     JOIN products p ON p.id = s.product_id
     ORDER BY s.date DESC, p.code
   `);
+  const salesRange = c.prepare(`
+    SELECT s.*, p.code, p.name FROM sales_record s
+    JOIN products p ON p.id = s.product_id
+    WHERE s.date >= ? AND s.date <= ?
+    ORDER BY s.date, p.code
+  `);
   const salesDel = c.prepare("DELETE FROM sales_record WHERE id = ?");
   const trendMonth = c.prepare(`
     SELECT substr(date, 1, 7) AS period, SUM(sold_qty) AS sold, SUM(refund_qty) AS refund
@@ -611,6 +618,9 @@ export function getDB(): ShopDB {
     getSales(date?: string): SalesRecord[] {
       const rows = (date ? salesDateAll.all(date) : salesAll.all()) as any[];
       return rows.map(mapSales);
+    },
+    getSalesRange(from: string, to: string): SalesRecord[] {
+      return (salesRange.all(from, to) as any[]).map(mapSales);
     },
     upsertSale(r): "created" | "updated" | "skipped" {
       const existing = salesByDateProduct.get(r.date, r.product_id) as any;

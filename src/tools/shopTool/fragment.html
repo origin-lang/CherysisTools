@@ -606,7 +606,20 @@
     </div>
 
     <div id="tabProducts" class="sub-panel show">
+      <div id="onboardPanel" class="panel" style="display: none; margin-bottom: 10px">
+        <div style="font-weight: 600; margin-bottom: 6px">三步开始使用</div>
+        <div class="muted" style="line-height: 1.9">
+          1. 「规则与设置」里填图片目录，让商品图和直播排品能取到图；<br />
+          2. 「商品管理 → ＋ 新建商品」或「导入商品」粘贴表格建立档案；<br />
+          3. 回到「每日销售」录入卖货，直播前到「直播排品」排九宫格。
+        </div>
+        <div style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap">
+          <button id="onboardGoSettings" class="btn-teal">去设置图片目录</button>
+          <button id="onboardDismiss">我已知道，收起</button>
+        </div>
+      </div>
       <div class="toolbar">
+        <input id="keywordSearch" placeholder="🔍 编号 / 名称 / 品类 / 系列" style="width: 170px" />
         <button id="viewListBtn" class="btn-teal">列表</button>
         <button id="viewGalleryBtn">画册</button>
         <select id="filterStatus">
@@ -619,6 +632,7 @@
         <button id="newProductBtn" class="btn-teal">＋ 新建商品</button>
         <button id="colSetBtn">字段显示</button>
         <button id="importProductBtn" title="粘贴商品表格批量导入">导入商品</button>
+        <button id="exportProductBtn" title="按当前筛选结果导出为 Excel，无筛选则为全部">📤 导出Excel</button>
         <button id="clearFilterBtn" class="btn-danger" style="visibility: hidden">清除筛选</button>
       </div>
       <div id="productPager" class="toolbar"></div>
@@ -675,6 +689,22 @@ L032,1"></textarea>
         </div>
       </div>
       <div class="panel">
+        <h4 style="margin: 0 0 8px 0">导出销售流水</h4>
+        <div class="rows">
+          <div class="field">
+            <label>起始日期</label>
+            <input type="date" id="salesFrom" />
+          </div>
+          <div class="field">
+            <label>结束日期</label>
+            <input type="date" id="salesTo" />
+          </div>
+        </div>
+        <div style="margin-top: 8px">
+          <button id="exportSalesBtn">📤 导出销售流水</button>
+        </div>
+      </div>
+      <div class="panel">
         <h4 style="margin: 0 0 8px 0">当日销售 <span class="muted" id="salesDateLabel"></span>
           <span style="margin-left: 10px">
             <button id="salesRefreshBtn" class="mini-btn" title="重新从数据库加载当日销售">🔄 刷新</button>
@@ -718,6 +748,7 @@ L032,1"></textarea>
         <span class="muted">月份</span>
         <input type="month" id="settleMonth" />
         <button id="settleBuildBtn" class="btn-teal">生成 / 刷新月报</button>
+        <button id="exportSettlesBtn" title="导出全部月份月报汇总为 Excel">📤 导出Excel</button>
       </div>
       <div class="panel" id="settlePanel">
         <div class="stat-line" id="settleStats"></div>
@@ -764,6 +795,7 @@ L032,1"></textarea>
           <button id="livePickOutBtn" title="选择九宫格输出目录">输出目录</button>
           <button id="liveCopyListBtn">复制清单</button>
           <button id="liveGenerateBtn" class="btn-teal">生成全部九宫格</button>
+          <button id="exportLiveBtn" title="导出当前排品清单为 Excel">📤 导出Excel</button>
         </div>
         <p class="muted" style="margin: 0 0 8px 0">🟩绿=有效编号 · 🟥红=编号不存在 · 🟧橙=同编号出现≥2次（排品重复）。每组右上角「生成这组」只重出这一张图并复制这组清单。</p>
         <div id="liveGridArea"></div>

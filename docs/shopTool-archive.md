@@ -298,3 +298,121 @@
 - `pnpm run compile`、`pnpm run lint`（0 error）、`node --check client.js` 通过。
 - **端到端冒烟**（临时 SQLite 实例，脚本跑通）：插商品/入库/live_plan → `backupDB` 落盘 → `deleteProduct + clear` 制造破坏 → `restoreDB` 恢复 → 商品/排品占位行/库存合计全部还原；写入非法文本文件被拒且连接仍存活。
 - 人工验收点：设置页点「备份数据库」生成 .db；改几项数据后「从备份恢复」→ 数据回到备份点、面板全量刷新；故意选非 SQLite 文件被拒 + 红色气泡提示。
+## 九、模块化重构（按域拆分，纯搬移 0 行为变化）
+
+### 背景与目标
+
+- shopTool 是唯一一个「越做越大」的工具：后端 `index.ts` 一度 1397 行、前端 `client.js` 2426 行，全部业务挤在单文件，改一个功能要滚动很长的上下文。
+- 本轮只做 **结构拆分，不改变任何行为**：前端每个函数原样搬进新文件，后端把纯工具函数抽取为模块。刚修好的边界全部保留（如 `scheduleLivePlanSave` 保 `slot_no=0` 占位行、备份/恢复、组号复用空缺不重排）。
+
+### 后端拆分（index.ts 1397 → 1120 行）
+
+| 模块 | 内容 |
+| --- | --- |
+| `pricing.ts` | `todayStr / fileStamp / canonicalCode / extractCodeToken / round2 / applyExpr / calcPrice / monthOf / normalizeRule`（价格规则与编码，进口 `SaleRule`）
+| `images.ts` | `IMAGE_EXTS / UPLOAD_FILTER / listImageFiles / firstImageFile / COVER_THUMB / coverThumbCachePaths / thumbToBase64 / coverThumbToBase64`（图片目录与封面缩略，`fileFingerprint` 内部）
+| `liveGrid.ts` | `renderLiveGrid`（九宫格 SVG，含 1024/256 像素上限 clamp；`localYmd / greyCellSvg / labelSvg` 内部）
+| `index.ts` | 删除整块辅助函数与 `sharp` 依赖（缩略图已统一走 sharp → 无残留引用），换成模块 import + `readImageToBase64` 等保留项
+
+> ESM / Node16 已支持 `.js` 相对导入（`./db.js` 先例），无需改编译配置。
+
+### 前端拆分（client.js 2426 行 → 6 个模块）
+
+| 文件 | 加载序 | 职责 |
+| --- | --- | --- |
+| `client-core.js` | 1 | 共享 `state`、常量、`$ / post / esc / money / qty`、价格/编码工具、toast/modal/confirm/copyText、封面 pump 管线、`window.toolClients` 初始化 |
+| `client-product.js` | 2 | 商品管理：列表/画册、筛选、内联编辑、批量、新建/导入/入库、列设置、右键菜单、`stateProduct` |
+| `client-sales.js` | 3 | 销售：今日销售渲染、快捷录入、批量删除选中、分析趋势 |
+| `client-report.js` | 4 | 月报/月结面板、定价规则、设置渲染 |
+| `client-live.js` | 5 | 直播排品：九宫格、加组/删组、预览、生成 |
+| `client-main.js` | 6 | `bindEvents / init / onMessage` 装配 `window.toolClients.shopTool = { init, onMessage, _state, _isReady }` |
+
+### 技术方案与决策
+
+- **平台小改（多脚本加载）**：
+  - `toolRegistry.ts`：`ToolMeta.clientScriptPath` 支持 `string | string[]`；`switchFragment` 不再传单 `uri`，改传 `clientScript: { uris: string[], toolName }`（沿用逐条 `asWebviewUri`）；
+  - `main.html loadToolClient`：`script.id` → `script.className="toolClientScript"`，**按序加载全部**，最后一个 `onload` 后统一 `init()` 并投递 `pendingClientMessages`。两态兼容：单文件工具照旧只要一个 `uris` 元素。
+- **为什么不每个文件一个 IIFE（关键决策）**：原 `client.js` 是单一闭包，函数间靠闭包变量（`state`、`selSales`、**会重赋值的** `sortKey / sortDir / visList / visGallery / listPage / pageSize / viewMode`）互访。若拆成独立 IIFE，传值/传引用会断裂。方案改为 **6 个经典 script 共享全局作用域**：
+  - 共享可变状态用 **`var`**（不是 `const/let`）声明在 `client-core.js` 顶层 → 跨文件共享同一份全局绑定，且**工具切换后重载不报 `Identifier has already been declared`**（`const/let` 全局词法绑定被占用会抛 SyntaxError，`var` 可重复声明）✓ 已验证其它工具 client 均为 IIFE、无顶层全局名冲突；
+  - 函数声明天然可跨文件在调用期解析（global function / var），调用都发生在 `init()` 之后，加载顺序只保证 core 先于引用它的文件。
+- **结构探测脚本**：顶部 4 空格缩进可判定功能边界 —— 实测 `^    \}$` 行数 === 顶层函数数（72），据此按 [start, 后一个 `    }` ] 精确切函数、捕获函数间散落的顶层语句（`let toastTimer`、`let livePlanSaveTimer` 原样归位到 core/live），保证 0 行漂移。
+- **行为等价验证**：
+  1. 6 文件拆后合并再 `node --check` → parse OK；
+  2. Node 桩环境（stub `window/__vscode/document`）跑 **18 项跨模块冒烟**全 PASS：`canonicalCode`、`calcPrice(p99)`、`fillCustom`/`gradeLabel`、`fullName(模板)`、`stateProduct`、`findNextEmptySlot / findNextLiveGroupNo / buildLiveListText / removeLiveGroup`、以及 `scheduleLivePlanSave` 350ms 保存仍保留 `slot_no=0` 占位行；
+  3. `pnpm run compile`、`pnpm run lint`（0 error，仅 excelAnalyzeTool 既有 4 条 curly warning）、全部 6 文件 `node --check` 通过。
+- **副作用提示**：client-*.js 现在会泄漏一组全局名（`state/post/$/toast/…` 及各渲染函数）；已核对 `main.html`（无同名）、`fragment.html`（无内联脚本）、其它工具 client（IIFE 无全局）均不冲突，且本工具重载用 `var` 自洽。
+
+### 维护要点 / 易踩坑更新
+
+- 换工具再切回 shopTool = **重新加载** 6 个脚本，`var` 声明安全；**不要**把顶层共享声明改回 `const/let`（重载会直接 SyntaxError）。
+- 新加跨文件函数：放进对应域文件即可，天然是全局函数；要共享的**可变状态**必须声明在 `client-core.js`（全局 `var`），别在域文件里再声明同名 `let`。
+- 后端新增纯函数优先落 `pricing/images/liveGrid` 等模块，`index.ts` 只保留消息处理与调度。
+
+### 验收（本轮快照）
+
+- `pnpm run compile`、`pnpm run lint`（0 error）、`node --check` × 6 文件、合并脚本 parse、18 项跨模块冒烟全 PASS。
+- 需人工复验面板：切到 shopTool（6 脚本按序加载无报错）→ 商品/销售/月报/排品各 Tab 正常 → 加一组再生成（占位行保留）→ 备份/恢复。
+
+## 十、Excel 导出（xlsx）
+
+### 功能
+
+| 位置 | 入口 | 内容 | 列 |
+| --- | --- | --- | --- |
+| 商品管理 | `📤 导出Excel`（工具栏） | **按当前筛选结果**导出，无筛选即全部 | 编号/名称/品类/系列/等级/进价/售价/**库存**/累计售出/累计净售/状态/采购链接 |
+| 销售录入 | `导出销售流水`（专属面板，可**选日期段** from/to） | 指定区间流水（按日升序、编号） | 日期/编号/名称/销量/退款/净售/成本/备注 |
+| 月度结算 | `📤 导出Excel`（月份旁） | 全部月份月报汇总 | 月份/收入/额外支出/货品成本/累计售出/累计退款/利润/已锁定/更新时间 |
+| 直播排品 | `📤 导出Excel`（九宫格工具栏） | 当前全部排品（含有效占位判断） | 组号/号数/编号/名称 |
+
+统一交互：选文件夹 → `名称_时间戳.xlsx`（`fileStamp()`）→ 后端 `log` ✅ + 前端 `toast`；失败 → `log` ❌ + 红色 `dbOpError` 气泡。复用 `xlsx@0.18.5`（order1688/procurement/excelAnalyze 同款），不引新依赖。
+
+### 技术实现与决策
+
+- **商品筛选导出**：前端 `bindEvents` 里 `filteredProducts().map(x => x.code)` 把当前筛选后的编号顺序发给后端（`exportProducts`），后端用 `Map(code→product)` 保序还原，**导出顺序与页面所见一致**；无筛选时就是全量，故不做第二个按钮。
+- **日期段查询**：`db.ts` 新增 prepared statement `salesRange`（`WHERE s.date >= ? AND s.date <= ?`，JOIN products 联出 code/name）与 `ShopDB.getSalesRange(from, to)`；字符串日期字典序等价于日期序。前端口 `salesFrom`/`salesTo` 默认本月1日 ~ 今天。
+- **等级/状态本地化**：等级用 `rules` 映射中文名；状态 `1→上架 / 0→下架`；库存 `getStockTotals()`、售/退 `getSaleTotals()`，净售 = 售 − 退。数值列直接落数值（便于 Excel 求和），中文列头直写。
+- **排品**：只导出 `code` 非空的有效槽，号数 = `(组-1)*9 + 槽`，附商品名称。
+
+### 维护要点 / 易踩坑更新
+
+- 新增导出放在 `default` 之前、`exportDB` 之前；每个 case 单独 try/catch（外层兜底也保留），失败给 `dbOpError` 气泡不与成功 toast 混淆。
+- 日期段为空时后端直接导空表（前端默认已填本月），不会报错。
+- 文件命名带 `fileStamp()` 时间戳，避免覆盖；Excel 中文列无需特殊编码（xlsx 库原样写入）。
+
+### 验收（本轮快照）
+
+- `pnpm run compile`、`pnpm run lint`（0 error，仅 excelAnalyzeTool 既有 4 条 curly）、`node --check client-main.js` 通过。
+- **导出冒烟**（临时 SQLite，17 项全 PASS）：`getSalesRange` 区间/排除边界；商品筛选保序 + 库存/净售/等级/状态；销售流水行数与退款净售=0；月报数值；排品号数与名称。
+- 需人工复验：各 Tab 点导出生成 .xlsx → 用 Excel 打开核对列/中文/求和；商品先筛选再导出看是否只出筛选集。
+
+## 十一、客户体验改进：导出口径 / 自动备份 / 全局搜索 / 空态引导
+
+### 功能
+
+| 项 | 入口 | 行为 |
+| --- | --- | --- |
+| 导出口径 | 四类导出按钮 | 成功后气泡**带完整路径** + 「📂 查看文件」按钮（`revealFileInOS` 定位到资源管理器）；商品导出气泡**区分「筛选结果 N 条 / 全部 N 条」**；点按钮即置灰「⏳ 生成中…」直至收到结果 |
+| 自动备份 | 无入口（自动） | **每日首次启动**自动留档 `backups/shop_auto_时间戳.db`，写设置 `auto_backup_date` 记录日期；**破坏性操作前**（删除商品/删除销售/清空图片/恢复数据库）追加 `shop_pre_时间戳.db` |
+| 备份配额 | 无入口（自动） | 两类**分开剪除、只留最近 N 份**：`shop_auto_*` 保留 14、`shop_pre_*` 保留 20，按 mtime 从旧到新删，不无限累积 |
+| 全局商品搜索 | 商品工具栏 `🔍 编号/名称/品类/系列` | 实时子串过滤（含编号去前缀数字化匹配，输 `007` 也中 `L007`）；与既有筛选叠加，同样作用于「筛选后导出」 |
+| 空态引导 | 商品 Tab 顶部（无商品时） | 三步中文引导（设置图片目录→建/导入商品→录销售）；「去设置图片目录」跳转规则与设置页、「我已知道，收起」记 `localStorage` 本会话不再弹 |
+
+### 技术实现与决策
+
+- **导出口径**：后端 4 个导出 case 从同步 `XLSX.writeFile` 改为 `XLSX.write(type:"buffer")` + `await fs.promises.writeFile`（大表不阻塞面板）；成功统一回 `exportDone{kind, path, count, filtered?}`，前端 `onMessage` 用 `window.showGlobalToast(text, [{label, handler}])` 带操作按钮（`main.html` 的 `showGlobalToast` 加了可选 `actions` 参数与 `#shToastActions` CSS，兼容旧单参调用）。商品按钮点击时前端算 `filtered = filteredProducts().length < state.products.length` 随消息发出；`beginExport/endExport` 管理按钮忙态，`dbOpError` 也会复位。
+- **自动备份**：`backupToDir` 复用 `db.backupDB`（better-sqlite3 的 `db.backup()`，**异步必须 await**）；`maybeAutoBackup` 挂在 `handleMessage` 开头（进程内 `lastAutoBackupCheckDate` 缓存，一天只查一次 DB）；破坏性 case 各自在改动前 `await preOpBackup`，失败不阻断操作只记日志。目录统一 `storageDir/backups`（resourceRoots 已含 storageDir，天然在数据目录内）。
+- **全局搜索**：关键字存 `filters.keyword`（`client-product.js filteredProducts` 新增子串过滤：code/name/category/series 拼接小写子串 或 编号去 `\D` 数字化包含），`filterSig` 序列化含 `filters` → 输入自动重置翻页；不引拼音依赖，先做子串。
+- **空态引导**：`onboardPanel` 由 `maybeShowOnboard()` 在 `productsLoaded`/`productsImported` 后按 `无商品 && !localStorage("shopOnboardHidden")` 显隐；「去设置图片目录」直接 `.click()` 复用 main.html 泛用 sub-tab 切换。
+
+### 维护要点 / 易踩坑更新
+
+- 自动备份参数在 `index.ts` 顶部常量 `AUTO_BACKUP_KEEP=14` / `PRE_BACKUP_KEEP=20`，改配额只动这两处。
+- 手动备份（备份数据库）不在自动剪除范围（它往 `backups` 外的自选路径写）；剪除只按前缀匹配 `shop_auto_*`/`shop_pre_*`。
+- `showGlobalToast(text, actions?)` 第二参为 `[{label, handler}]`，其它工具仍可单参调用；带 action 时停留 6s，无则维持 2s。
+- `revealFile` 消息后端用 `vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(fp))`（与直播「生成后打开目录」同一命令），路径来自后端返回，不信任前端拼接。
+
+### 验收（本轮快照）
+
+- `pnpm run compile`（0 error）、`pnpm run lint`（0 error，仅 excelAnalyzeTool 既有 4 条 curly）、`node --check` client-main.js / client-product.js 通过。
+- **备份冒烟**（临时 SQLite，5 项全 PASS）：`backupDB` 真实落盘 ×3、按 mtime 剪除保留 N 份裁掉最早、`auto_backup_date` 读写、pre/auto 前缀互不干扰。
+- 需人工复验：导出后气泡带路径→「查看文件」定位；商品搜 `007`/`手链` 即时过滤并联动清除筛选；删一条商品前后看在 `storageDir/backups` 出现 `shop_pre_*.db`；空库首次打开见三步引导、收起后本会话不重现。

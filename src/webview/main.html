@@ -131,6 +131,25 @@
       #shToast.show {
         opacity: 1;
       }
+      #shToastActions {
+        display: inline-flex;
+        gap: 6px;
+        margin-left: 10px;
+        pointer-events: auto;
+        vertical-align: middle;
+      }
+      #shToastActions button {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+        border: none;
+        border-radius: 12px;
+        padding: 2px 10px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      #shToastActions button:hover {
+        filter: brightness(1.1);
+      }
     </style>
   </head>
   <body>
@@ -167,7 +186,7 @@
       const logPanelEl = document.getElementById("logPanel");
       const logPanelToggle = document.getElementById("logPanelToggle");
       let shToastTimer = null;
-      function showGlobalToast(text) {
+      function showGlobalToast(text, actions) {
         let el = document.getElementById("shToast");
         if (!el) {
           el = document.createElement("div");
@@ -175,9 +194,27 @@
           document.body.appendChild(el);
         }
         el.textContent = text;
+        const oldWrap = document.getElementById("shToastActions");
+        if (oldWrap) {
+          oldWrap.remove();
+        }
+        if (actions && actions.length) {
+          const wrap = document.createElement("span");
+          wrap.id = "shToastActions";
+          for (const a of actions) {
+            const b = document.createElement("button");
+            b.textContent = a.label;
+            b.onclick = a.handler;
+            wrap.appendChild(b);
+          }
+          el.appendChild(wrap);
+        }
         el.classList.add("show");
         clearTimeout(shToastTimer);
-        shToastTimer = setTimeout(() => el.classList.remove("show"), 2000);
+        shToastTimer = setTimeout(
+          () => el.classList.remove("show"),
+          actions && actions.length ? 6000 : 2000,
+        );
       }
       window.showGlobalToast = showGlobalToast;
       function setLogCollapsed(collapsed) {
@@ -285,37 +322,45 @@
       }
 
       function loadToolClient(clientInfo) {
-        // 移除上一个工具的客户端脚本
-        const oldScript = document.getElementById("toolClientScript");
-        if (oldScript) oldScript.remove();
+        // 移除上一个工具的全部客户端脚本
+        document.querySelectorAll(".toolClientScript").forEach((s) => s.remove());
         currentToolClient = null;
-        if (!clientInfo || !clientInfo.uri) return;
-        const script = document.createElement("script");
-        script.id = "toolClientScript";
-        script.src = clientInfo.uri;
-        const toolName = clientInfo.toolName;
-        script.onload = () => {
-          const client =
-            (window.toolClients && window.toolClients[toolName]) || null;
-          currentToolClient = client;
-          if (client && client.init) {
-            client.init();
-          }
-          // 投递暂存的消息
-          while (pendingClientMessages.length > 0) {
-            const m = pendingClientMessages.shift();
-            if (currentToolClient && currentToolClient.onMessage) {
-              currentToolClient.onMessage(m);
+        const uris = clientInfo && clientInfo.uris && clientInfo.uris.length
+          ? clientInfo.uris
+          : [];
+        const toolName = clientInfo && clientInfo.toolName;
+        if (!uris.length || !toolName) return;
+        // 按序加载多个脚本，全部加载成功后再装配并 init()
+        const loadOne = (i) => {
+          if (i >= uris.length) {
+            const client =
+              (window.toolClients && window.toolClients[toolName]) || null;
+            currentToolClient = client;
+            if (client && client.init) {
+              client.init();
             }
+            // 投递暂存的消息
+            while (pendingClientMessages.length > 0) {
+              const m = pendingClientMessages.shift();
+              if (currentToolClient && currentToolClient.onMessage) {
+                currentToolClient.onMessage(m);
+              }
+            }
+            return;
           }
+          const script = document.createElement("script");
+          script.className = "toolClientScript";
+          script.src = uris[i];
+          script.onload = () => loadOne(i + 1);
+          script.onerror = () => {
+            vscode.postMessage({
+              type: "log",
+              text: "❌工具客户端脚本加载失败：" + toolName,
+            });
+          };
+          document.body.appendChild(script);
         };
-        script.onerror = () => {
-          vscode.postMessage({
-            type: "log",
-            text: "❌工具客户端脚本加载失败：" + toolName,
-          });
-        };
-        document.body.appendChild(script);
+        loadOne(0);
       }
 
       function handleMessage(msg) {

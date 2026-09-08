@@ -8,8 +8,8 @@ export interface ToolDefinition {
   title: string;
   /** fragment.html 相对 src 根目录的路径，如 "tools/imageBatchTool/fragment.html" */
   fragmentPath?: string;
-  /** 工具专属前端脚本 client.js 的相对路径（可选），如 "tools/nineGridTool/client.js" */
-  clientScriptPath?: string;
+  /** 工具专属前端脚本 client.js 的相对路径（可选），如 "tools/nineGridTool/client.js"；可传数组按序加载 */
+  clientScriptPath?: string | string[];
   /** 处理来自 webview 的消息 */
   handleMessage(msg: any, ctx: ToolContext): Promise<void> | void;
   /** 额外允许 webview 加载资源的本地目录（如商品图片目录），面板创建时收集 */
@@ -21,7 +21,7 @@ export interface ToolMeta {
   title: string;
   /** 相对 src 根目录的路径字符串，运行期再解析为 Uri */
   fragmentPath?: string;
-  clientScriptPath?: string;
+  clientScriptPath?: string | string[];
   resourceRoots?: (storageDir: string) => string[];
 }
 
@@ -133,14 +133,21 @@ class ToolRegistry {
           this.currentToolName = meta.toolName;
           this.lastToolName = meta.toolName;
           const fragHtml = fs.readFileSync(fragmentUri.fsPath, "utf-8");
-          const clientScriptUri = this.resolveSrc(meta.clientScriptPath);
+          const clientRels = Array.isArray(meta.clientScriptPath)
+            ? meta.clientScriptPath
+            : meta.clientScriptPath
+              ? [meta.clientScriptPath]
+              : [];
+          const clientUris = clientRels
+            .map((rel) => this.resolveSrc(rel))
+            .filter((u): u is vscode.Uri => !!u);
           panel.webview.postMessage({
             type: "switchFragment",
             html: fragHtml,
-            clientScript: clientScriptUri
+            clientScript: clientUris.length
               ? {
-                  // 转成 webview 可加载的 URI
-                  uri: panel.webview.asWebviewUri(clientScriptUri).toString(),
+                  // 转成 webview 可加载的 URI，按序加载
+                  uris: clientUris.map((u) => panel.webview.asWebviewUri(u).toString()),
                   toolName: meta.toolName,
                 }
               : undefined,

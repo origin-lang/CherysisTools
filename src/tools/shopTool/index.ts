@@ -1,305 +1,106 @@
 import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
-import sharp from "sharp";
 import { ToolDefinition } from "../../core/toolRegistry.js";
 import { readImageToBase64 } from "../../core/utils.js";
 import { getDB, initDB, LivePlanRow, Product, SaleRule } from "./db.js";
+import {
+  canonicalCode,
+  extractCodeToken,
+  round2,
+  applyExpr,
+  calcPrice,
+  monthOf,
+  todayStr,
+  fileStamp,
+  normalizeRule,
+} from "./pricing.js";
+import {
+  UPLOAD_FILTER,
+  listImageFiles,
+  firstImageFile,
+  coverThumbToBase64,
+  coverThumbCachePaths,
+  thumbToBase64,
+} from "./images.js";
+import { renderLiveGrid } from "./liveGrid.js";
+import * as XLSX from "xlsx";
 
-const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif"]);
-const UPLOAD_FILTER: Record<string, string[]> = {
-  图片: ["jpg", "jpeg", "png", "bmp", "webp", "gif"],
-};
+// 自动备份：每日首次启动自动留档（shop_auto_*），破坏性操作前追加留档（shop_pre_*）。
+// 两类各自独立配额剪除，只保留最近 N 份，不无限累积。
+const AUTO_BACKUP_KEEP = 14;
+const PRE_BACKUP_KEEP = 20;
+let lastAutoBackupCheckDate = "";
+const backupDir = (storageDir: string): string => path.join(storageDir, "backups");
 
-function todayStr(): string {
-  const d = new Date();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${d.getFullYear()}-${mm}-${dd}`;
-}
-
-function fileStamp(): string {
-  const d = new Date();
-  const p = (n: number, w = 2) => String(n).padStart(w, "0");
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
-}
-
-function canonicalCode(raw: unknown): string | null {
-  const s = String(raw ?? "").trim().replace(/[【】\[\]（）()#\s_\-\u3000]/g, "");
-  let digits: string | null = null;
-  let m = s.match(/^[Ll](\d{1,4})$/);
-  if (m) {
-    digits = m[1];
-  } else {
-    m = s.match(/^(\d{1,4})$/);
-    if (m) {
-      digits = m[1];
-    }
-  }
-  if (!digits) {
-    return null;
-  }
-  const n = Number(digits);
-  if (!Number.isInteger(n) || n < 1 || n > 9999) {
-    return null;
-  }
-  // 统一 3 位补零：L7→L007、L76→L076、L999→L999、L1044→L1044（最多 4 位）
-  return `L${String(n).padStart(3, "0")}`;
-}
-
-function extractCodeToken(raw: unknown): string | null {
-  const s = String(raw ?? "").trim();
-  const direct = canonicalCode(s);
-  if (direct) {
-    return direct;
-  }
-  const m = s.match(/[Ll](\d{1,4})/);
-  if (m) {
-    return canonicalCode(`L${m[1]}`);
-  }
-  return null;
-}
-
-function round2(v: number): number {
-  return Math.round(v * 100) / 100;
-}
-
-function applyExpr(cost: number, expr: string): number | null {
-  const e = String(expr ?? "").replace(/cost/gi, `(${cost})`);
-  if (!/^[0-9+\-*/().\s]+$/.test(e)) {
-    return null;
-  }
+async function backupToDir(storageDir: string, prefix: string): Promise<string | null> {
   try {
-    const v = new Function(`return (${e});`)() as number;
-    return typeof v === "number" && Number.isFinite(v) ? v : null;
+    fs.mkdirSync(backupDir(storageDir), { recursive: true });
+  } catch {
+    return null;
+  }
+  const file = path.join(backupDir(storageDir), `${prefix}_${fileStamp()}.db`);
+  try {
+    await getDB().backupDB(file);
+    return file;
   } catch {
     return null;
   }
 }
 
-function calcPrice(cost: number, rule: SaleRule | undefined): number {
-  let v = rule ? applyExpr(cost, rule.expr) : null;
-  if (v === null) {
-    v = cost;
-  }
-  v = round2(v);
-  const mode = rule?.tail_mode ?? "raw";
-  const tail = String(rule?.tail_value ?? "").trim();
-  switch (mode) {
-    case "round":
-      return Math.round(v);
-    case "p99":
-      return Math.floor(v) + 0.99;
-    case "p88":
-      return Math.floor(v) + 0.88;
-    case "custom": {
-      if (!tail || !/^\d{1,2}$/.test(tail)) {
-        return v;
+function pruneBackups(storageDir: string, prefix: string, keep: number): void {
+  try {
+    const files = fs
+      .readdirSync(backupDir(storageDir))
+      .filter((f) => f.startsWith(prefix) && f.endsWith(".db"))
+      .map((f) => ({ f, m: fs.statSync(path.join(backupDir(storageDir), f)).mtimeMs }))
+      .sort((a, b) => b.m - a.m);
+    for (const { f } of files.slice(keep)) {
+      try {
+        fs.unlinkSync(path.join(backupDir(storageDir), f));
+      } catch {
+        /* 忽略单个删除失败 */
       }
-      const dec = Number(tail) / Math.pow(10, tail.length);
-      return round2(Math.floor(v) + dec);
     }
-    default:
-      return v;
-  }
-}
-
-function monthOf(date: string): string {
-  return date.slice(0, 7);
-}
-
-function listImageFiles(dir: string): string[] {
-  let files: string[] = [];
-  try {
-    files = fs
-      .readdirSync(dir)
-      .filter((f) => IMAGE_EXTS.has(path.extname(f).toLowerCase()));
   } catch {
-    files = [];
+    /* 目录不存在则无事可做 */
   }
-  files.sort((a, b) => {
-    const na = Number((a.match(/(\d+)/) || ["", "0"])[1]);
-    const nb = Number((b.match(/(\d+)/) || ["", "0"])[1]);
-    return na - nb || a.localeCompare(b);
-  });
-  return files;
 }
 
-function localYmd(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
-}
-
-function firstImageFile(dir: string, code: string): string | null {
-  const folder = path.join(dir, code);
-  const files = listImageFiles(folder);
-  if (files.length === 0) {
-    return null;
+async function maybeAutoBackup(storageDir: string, log: (s: string) => void): Promise<void> {
+  const now = new Date();
+  const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+  if (lastAutoBackupCheckDate === stamp) {
+    return;
   }
-  const fp = path.join(folder, files[0]);
-  return fs.existsSync(fp) ? fp : null;
-}
-
-// ── 封面 / 图片缩略图 ──────────────────────────────────────────────
-// 列表/画册/lightbox 缩略条用 webp 小图，大幅降低过 IPC 的 payload；lightbox 大图仍按需读原图。
-const COVER_THUMB = 160;
-
-function coverThumbCachePaths(storageDir: string, code: string): { thumbPath: string; metaPath: string } | null {
-  if (!storageDir) {
-    return null;
-  }
-  const root = path.join(storageDir, "shop_thumbs");
+  lastAutoBackupCheckDate = stamp;
   try {
-    fs.mkdirSync(root, { recursive: true });
-  } catch {
-    return null;
+    if (String(getDB().getSetting("auto_backup_date") || "") === stamp) {
+      return;
+    }
+    const file = backupToDir(storageDir, "shop_auto");
+    if (!file) {
+      log("⚠️每日自动备份失败");
+      return;
+    }
+    getDB().setSetting("auto_backup_date", stamp);
+    pruneBackups(storageDir, "shop_auto_", AUTO_BACKUP_KEEP);
+    log(`✅每日自动备份完成：${file}`);
+  } catch (err: any) {
+    log(`⚠️每日自动备份失败：${err.message}`);
   }
-  return {
-    thumbPath: path.join(root, `${code}.webp`),
-    metaPath: path.join(root, `${code}.webp.json`),
-  };
 }
 
-function fileFingerprint(src: string): string {
+async function preOpBackup(storageDir: string, log: (s: string) => void): Promise<void> {
   try {
-    const st = fs.statSync(src);
-    return `${st.mtimeMs}|${st.size}`;
-  } catch {
-    return "";
-  }
-}
-
-/** 把单张图缩成 webp base64 小图；失败时回退原图 base64 */
-async function thumbToBase64(src: string, size = COVER_THUMB): Promise<string> {
-  try {
-    const out = await sharp(src).resize(size, size, { fit: "cover" }).webp({ quality: 80 }).toBuffer();
-    return `data:image/webp;base64,${out.toString("base64")}`;
-  } catch {
-    try {
-      return await readImageToBase64(src);
-    } catch {
-      return "";
+    const file = backupToDir(storageDir, "shop_pre");
+    if (file) {
+      pruneBackups(storageDir, "shop_pre_", PRE_BACKUP_KEEP);
+      log(`🛡️操作前已自动留档：${file}`);
     }
+  } catch (err: any) {
+    log(`⚠️操作前自动留档失败：${err.message}`);
   }
-}
-
-/** 商品封面缩略图：磁盘缓存（按 code）+ 源文件指纹校验，命中直接读盘 */
-async function coverThumbToBase64(src: string, storageDir: string, code: string): Promise<string> {
-  const paths = coverThumbCachePaths(storageDir, code);
-  if (paths) {
-    try {
-      const meta = JSON.parse(fs.readFileSync(paths.metaPath, "utf-8")) as { src?: string; key?: string };
-      if (meta.src === src && meta.key === fileFingerprint(src) && fs.existsSync(paths.thumbPath)) {
-        return `data:image/webp;base64,${fs.readFileSync(paths.thumbPath).toString("base64")}`;
-      }
-    } catch {
-      /* 无缓存或缓存头不匹配 */
-    }
-  }
-  const data = await thumbToBase64(src);
-  if (paths && data.startsWith("data:image/webp")) {
-    try {
-      fs.writeFileSync(paths.thumbPath, Buffer.from(data.split(",")[1], "base64"));
-      fs.writeFileSync(paths.metaPath, JSON.stringify({ src, key: fileFingerprint(src) }));
-    } catch {
-      /* 写缓存失败忽略 */
-    }
-  }
-  return data;
-}
-
-function greyCellSvg(w: number, h: number): string {
-  return `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
-  <rect width="100%" height="100%" fill="#d6d6d6"/>
-  <text x="50%" y="50%" fill="#8a8a8a" font-size="${Math.round(h / 8)}" font-family="'Segoe UI',sans-serif" text-anchor="middle" dominant-baseline="middle">无图</text>
-  </svg>`;
-}
-
-function labelSvg(w: number, h: number, text: string): string {
-  const fs = Math.max(24, Math.round(Math.min(w, h) * 0.13));
-  return `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
-  <text x="50%" y="${Math.round(h * 0.93)}" font-family="'Consolas','Segoe UI',monospace" font-weight="900" font-size="${fs}" fill="#ffffff" stroke="#000000" stroke-width="${Math.max(14, Math.round(fs * 0.32))}" stroke-linejoin="round" paint-order="stroke fill" text-anchor="middle" dominant-baseline="bottom">${text}</text>
-  </svg>`;
-}
-
-// 直播排品九宫格：cells 长度 9，每项 { code, img }；缺图/缺码显示灰底占位
-async function renderLiveGrid(
-  cells: Array<{ code: string; img: string | null }>,
-  outDir: string,
-  groupNo: number,
-): Promise<string> {
-  let tileW = 300;
-  let tileH = 300;
-  const firstImg = cells.find((c) => c.img);
-  if (firstImg) {
-    try {
-      const meta = await sharp(firstImg.img!).metadata();
-      const w = meta.width || 0;
-      const h = meta.height || 0;
-      if (w > 40 && h > 40) {
-        const MAX_EDGE = 1024;
-        const MIN_EDGE = 256;
-        const scale = Math.min(MAX_EDGE / w, MAX_EDGE / h, 1);
-        tileW = Math.max(MIN_EDGE, Math.round(w * scale));
-        tileH = Math.max(MIN_EDGE, Math.round(h * scale));
-      }
-    } catch {
-      /* 尺寸读取失败用默认 */
-    }
-  }
-  const canvasW = tileW * 3;
-  const canvasH = tileH * 3;
-  const layers: Parameters<sharp.Sharp["composite"]>[0] = [];
-  const startNum = (groupNo - 1) * 9 + 1;
-  for (let idx = 0; idx < 9; idx++) {
-    const col = idx % 3;
-    const row = Math.floor(idx / 3);
-    const cell = cells[idx];
-    let input: Buffer;
-    if (cell.img) {
-      input = await sharp(cell.img).resize(tileW, tileH, { fit: "fill" }).toBuffer();
-    } else {
-      input = Buffer.from(greyCellSvg(tileW, tileH), "utf-8");
-    }
-    layers.push({
-      input,
-      left: col * tileW,
-      top: row * tileH,
-    });
-    if (cell.code) {
-      const text = `${startNum + idx}号`;
-      layers.push({
-        input: Buffer.from(labelSvg(tileW, tileH, text), "utf-8"),
-        left: col * tileW,
-        top: row * tileH,
-      });
-    }
-  }
-  const endNum = startNum + 8;
-  const outFile = path.join(outDir, `${startNum}号-${endNum}号_${localYmd()}.jpg`);
-  await sharp({
-    create: {
-      width: canvasW,
-      height: canvasH,
-      channels: 3,
-      background: { r: 255, g: 255, b: 255 },
-    },
-  })
-    .composite(layers)
-    .jpeg({ quality: 95 })
-    .toFile(outFile);
-  return outFile;
-}
-
-function normalizeRule(r: any): SaleRule {
-  return {
-    grade: Number(r.grade),
-    label: String(r.label ?? ("等级" + r.grade)),
-    expr: String(r.expr ?? "cost"),
-    tail_mode: String(r.tail_mode ?? "raw"),
-    tail_value: String(r.tail_value ?? ""),
-  };
 }
 
 // 老数据迁移：历史录入的是去前导零的编码（L76），新规范统一 3 位补零（L076）。
@@ -310,7 +111,14 @@ export const shopTool: ToolDefinition = {
   toolName: "shopTool",
   title: "🏪商品店铺管理",
   fragmentPath: "tools/shopTool/fragment.html",
-  clientScriptPath: "tools/shopTool/client.js",
+  clientScriptPath: [
+    "tools/shopTool/client-core.js",
+    "tools/shopTool/client-product.js",
+    "tools/shopTool/client-sales.js",
+    "tools/shopTool/client-report.js",
+    "tools/shopTool/client-live.js",
+    "tools/shopTool/client-main.js",
+  ],
 
   resourceRoots(storageDir) {
     try {
@@ -331,6 +139,8 @@ export const shopTool: ToolDefinition = {
       return;
     }
     let db = getDB();
+
+    await maybeAutoBackup(ctx.storageDir, log);
 
     if (!codeMigrated) {
       codeMigrated = true;
@@ -603,6 +413,9 @@ export const shopTool: ToolDefinition = {
       case "deleteProduct": {
         const id = Number(msg.id);
         const p = db.getProductById(id);
+        if (p) {
+          await preOpBackup(ctx.storageDir, log);
+        }
         db.deleteProduct(id);
         log(`🗑已删除 ${p ? p.code : id}（含其销售记录与入库记录）`);
         refreshSales(todayStr());
@@ -874,6 +687,7 @@ export const shopTool: ToolDefinition = {
           log(`❌${lk} 已月结锁定，不能删除销售记录`);
           break;
         }
+        await preOpBackup(ctx.storageDir, log);
         db.deleteSales(ids);
         log(`🗑已删除 ${ids.length} 条销售记录`);
         refreshSales(date);
@@ -1082,6 +896,7 @@ export const shopTool: ToolDefinition = {
           break;
         }
         const files = listImageFiles(folder);
+        await preOpBackup(ctx.storageDir, log);
         for (const f of files) {
           try {
             fs.unlinkSync(path.join(folder, f));
@@ -1344,6 +1159,194 @@ export const shopTool: ToolDefinition = {
         postLiveState();
         break;
       }
+      case "exportProducts": {
+        const dir = await ctx.selectFolder("选择导出目录");
+        if (!dir) {
+          ctx.postToWebview({ type: "exportCancelled" });
+          break;
+        }
+        try {
+          const all = db.getProducts();
+          let list = all;
+          if (Array.isArray(msg.codes) && msg.codes.length) {
+            const byCode = new Map(all.map((p) => [p.code, p]));
+list = (msg.codes as string[])
+              .map((code) => byCode.get(code))
+              .filter((p): p is Product => !!p);
+          }
+          const stockTotals = db.getStockTotals();
+          const saleTotals = db.getSaleTotals();
+          const gradeLabel = new Map(
+            db.getRules().map((r) => [String(r.grade), r.label || `等级${r.grade}`]),
+          );
+          const aoa: any[][] = [
+            ["编号", "名称", "品类", "系列", "等级", "进价", "售价", "库存", "累计售出", "累计净售", "状态", "采购链接"],
+          ];
+          for (const p of list) {
+            const stock = stockTotals.get(p.id) || 0;
+            const sale = saleTotals.get(p.id) || { sold: 0, refund: 0 };
+            aoa.push([
+              p.code,
+              p.name,
+              p.category,
+              p.series,
+              gradeLabel.get(String(p.grade)) || `等级${p.grade}`,
+              p.cost_price,
+              p.sale_price,
+              stock,
+              sale.sold,
+              sale.sold - sale.refund,
+              p.status === 1 ? "上架" : "下架",
+              p.purchase_link,
+            ]);
+          }
+          const ws = XLSX.utils.aoa_to_sheet(aoa);
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, ws, "商品清单");
+          const outFile = path.join(dir, `商品清单_${fileStamp()}.xlsx`);
+          await fs.promises.writeFile(outFile, XLSX.write(wb, { bookType: "xlsx", type: "buffer" }));
+          log(`✅商品清单已导出（${list.length}条）：${outFile}`);
+          ctx.postToWebview({
+            type: "exportDone",
+            kind: "products",
+            path: outFile,
+            count: list.length,
+            filtered: msg.filtered ? 1 : 0,
+          });
+        } catch (err: any) {
+          log(`❌导出商品清单失败：${err.message}`);
+          ctx.postToWebview({ type: "dbOpError", message: `导出商品失败：${err.message}` });
+        }
+        break;
+      }
+      case "exportSales": {
+        const dir = await ctx.selectFolder("选择导出目录");
+        if (!dir) {
+          ctx.postToWebview({ type: "exportCancelled" });
+          break;
+        }
+        try {
+          const from = String(msg.dateFrom || "");
+          const to = String(msg.dateTo || "");
+          const rows = from && to ? db.getSalesRange(from, to) : [];
+          const aoa: any[][] = [
+            ["日期", "编号", "名称", "销量", "退款", "净售", "成本", "备注"],
+          ];
+          let sold = 0;
+          let refund = 0;
+          for (const r of rows) {
+            sold += r.sold_qty;
+            refund += r.refund_qty;
+            aoa.push([
+              r.date,
+              r.code ?? "",
+              r.name ?? "",
+              r.sold_qty,
+              r.refund_qty,
+              r.sold_qty - r.refund_qty,
+              r.cost_price,
+              r.note || "",
+            ]);
+          }
+          const ws = XLSX.utils.aoa_to_sheet(aoa);
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, ws, "销售流水");
+          const outFile = path.join(dir, `销售流水_${from}_${to}.xlsx`);
+          await fs.promises.writeFile(outFile, XLSX.write(wb, { bookType: "xlsx", type: "buffer" }));
+          log(`✅销售流水已导出（${rows.length}条，${from} ~ ${to}）：${outFile}`);
+          ctx.postToWebview({
+            type: "exportDone",
+            kind: "sales",
+            path: outFile,
+            count: rows.length,
+          });
+        } catch (err: any) {
+          log(`❌导出销售流水失败：${err.message}`);
+          ctx.postToWebview({ type: "dbOpError", message: `导出销售失败：${err.message}` });
+        }
+        break;
+      }
+      case "exportSettles": {
+        const dir = await ctx.selectFolder("选择导出目录");
+        if (!dir) {
+          ctx.postToWebview({ type: "exportCancelled" });
+          break;
+        }
+        try {
+          const settles = db.getSettleMonths();
+          const aoa: any[][] = [
+            ["月份", "收入", "额外支出", "货品成本", "累计售出", "累计退款", "利润", "已锁定", "更新时间"],
+          ];
+          for (const s of settles) {
+            aoa.push([
+              s.month,
+              s.income_amount,
+              s.extra_expense,
+              s.goods_cost,
+              s.sold_total,
+              s.refund_total,
+              s.profit,
+              s.locked === 1 ? "是" : "否",
+              s.updated_at,
+            ]);
+          }
+          const ws = XLSX.utils.aoa_to_sheet(aoa);
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, ws, "月度结算");
+          const outFile = path.join(dir, `月度结算_${fileStamp()}.xlsx`);
+          await fs.promises.writeFile(outFile, XLSX.write(wb, { bookType: "xlsx", type: "buffer" }));
+          log(`✅月度结算已导出（${settles.length}个月）：${outFile}`);
+          ctx.postToWebview({
+            type: "exportDone",
+            kind: "settles",
+            path: outFile,
+            count: settles.length,
+          });
+        } catch (err: any) {
+          log(`❌导出月度结算失败：${err.message}`);
+          ctx.postToWebview({ type: "dbOpError", message: `导出月报失败：${err.message}` });
+        }
+        break;
+      }
+      case "exportLivePlan": {
+        const dir = await ctx.selectFolder("选择导出目录");
+        if (!dir) {
+          ctx.postToWebview({ type: "exportCancelled" });
+          break;
+        }
+        try {
+          const plan = db
+            .getLivePlan()
+            .filter((r) => r.code)
+            .sort((a, b) => a.group_no - b.group_no || a.slot_no - b.slot_no);
+          const aoa: any[][] = [["组号", "号数", "编号", "名称"]];
+          for (const r of plan) {
+            const p = db.getProductByCode(r.code);
+            aoa.push([
+              r.group_no,
+              (r.group_no - 1) * 9 + r.slot_no,
+              r.code,
+              p ? p.name : "",
+            ]);
+          }
+          const ws = XLSX.utils.aoa_to_sheet(aoa);
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, ws, "排品清单");
+          const outFile = path.join(dir, `排品清单_${fileStamp()}.xlsx`);
+          await fs.promises.writeFile(outFile, XLSX.write(wb, { bookType: "xlsx", type: "buffer" }));
+          log(`✅排品清单已导出（${plan.length}款）：${outFile}`);
+          ctx.postToWebview({
+            type: "exportDone",
+            kind: "live",
+            path: outFile,
+            count: plan.length,
+          });
+        } catch (err: any) {
+          log(`❌导出排品清单失败：${err.message}`);
+          ctx.postToWebview({ type: "dbOpError", message: `导出排品失败：${err.message}` });
+        }
+        break;
+      }
       case "exportDB": {
         const dir = await ctx.selectFolder("选择数据库备份目录");
         if (!dir) {
@@ -1366,6 +1369,7 @@ export const shopTool: ToolDefinition = {
           break;
         }
         try {
+          await preOpBackup(ctx.storageDir, log);
           db.restoreDB(fp, ctx.storageDir);
           db = getDB();
           log("✅数据库已恢复，数据已替换为所选备份");
@@ -1381,6 +1385,17 @@ export const shopTool: ToolDefinition = {
           } catch {
             /* 忽略 */
           }
+        }
+        break;
+      }
+      case "revealFile": {
+        try {
+          const fp = String(msg.path ?? "");
+          if (fp) {
+            await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(fp));
+          }
+        } catch (err: any) {
+          log(`❌定位文件失败：${err.message}`);
         }
         break;
       }
