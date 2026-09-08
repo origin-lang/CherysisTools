@@ -119,15 +119,17 @@
       }
       $("quickCode").oninput = updateQuickLog;
       $("quickCode").onchange = updateQuickLog;
-      $("quickSaveBtn").onclick = () => {
+      const submitQuick = () => {
         const code = canonicalCode($("quickCode").value);
         if (!code) {
           toast("编号格式不对");
+          $("quickCode").select();
           return;
         }
         const p = state.products.find((x) => x.code === code);
         if (!p) {
           toast("编号 " + code + " 不在商品档案里，先去「商品管理」新建");
+          $("quickCode").select();
           return;
         }
         post({
@@ -142,7 +144,20 @@
         $("quickSold").value = "0";
         $("quickRefund").value = "0";
         $("quickNote").value = "";
+        $("quickCode").value = "";
+        $("quickCode").focus();
+        $("quickCode").select();
       };
+      $("quickSaveBtn").onclick = submitQuick;
+      ["quickCode", "quickSold", "quickRefund", "quickNote"].forEach((id) => {
+        const inp = $(id);
+        inp.onkeydown = (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            submitQuick();
+          }
+        };
+      });
       $("pasteBtn").onclick = () => {
         const text = $("pasteArea").value;
         if (!text.trim()) {
@@ -193,11 +208,14 @@
       $("trendGroup").onchange = requestTrend;
       $("trendMonth").onchange = requestTrend;
 
-      $("settleBuildBtn").onclick = () =>
-        post({
-          type: "monthBuild",
-          month: $("settleMonth").value || monthNow(),
-        });
+      $("settleMonth").onchange = () =>
+        post({ type: "monthBuild", month: $("settleMonth").value || monthNow() });
+      const buildSettle = () =>
+        post({ type: "monthBuild", month: $("settleMonth").value || monthNow() });
+      const mtTab = document.querySelector('.sub-tab[data-sub="tabMonthly"]');
+      if (mtTab) {
+        mtTab.addEventListener("click", buildSettle);
+      }
       $("settleSaveBtn").onclick = () =>
         post({
           type: "saveSettle",
@@ -207,8 +225,15 @@
         });
       $("settleLockBtn").onclick = () =>
         post({ type: "lockSettle", month: $("settleMonth").value });
-      $("settleUnlockBtn").onclick = () =>
-        post({ type: "unlockSettle", month: $("settleMonth").value });
+      $("settleUnlockBtn").onclick = async () => {
+        if (
+          await confirmBox(
+            "解锁后，当月销售记录恢复可修改，已保存的月报会重新变为草稿。确认解锁？",
+          )
+        ) {
+          post({ type: "unlockSettle", month: $("settleMonth").value });
+        }
+      };
       $("settleDeleteBtn").onclick = async () => {
         if (await confirmBox("确认删除该月报？（不会删销售记录）")) {
           post({ type: "deleteSettle", month: $("settleMonth").value });
@@ -342,6 +367,7 @@
       renderLive();
       post({ type: "loadAll" });
       requestTrend();
+      post({ type: "monthBuild", month: monthNow() });
     }
 
     function onMessage(msg) {

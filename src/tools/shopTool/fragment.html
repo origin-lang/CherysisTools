@@ -128,6 +128,14 @@
       .data-table td.num {
         text-align: right;
       }
+      .data-table td.num-neg {
+        color: var(--vscode-errorForeground, #e0404b);
+        font-weight: 700;
+      }
+      .data-table tfoot td {
+        border-top: 1px solid var(--vscode-panel-border);
+        font-weight: 700;
+      }
       .data-table tr.off {
         opacity: 0.45;
         background: var(--vscode-list-inactiveSelectionBackground, transparent);
@@ -742,31 +750,38 @@ L032,1"></textarea>
 
     <div id="tabMonthly" class="sub-panel">
       <div class="muted" style="margin-bottom: 6px">
-        👉 流程：选月份 →「生成/刷新月报」（按每天成交时的进价快照算货成本）→ 填「到账收入 / 其他支出」→「保存月报」→ 核对无误后「锁定」（锁定后当月销售将不能再改，防止对账后反悔）。
+        三步：选好月份看数字 → 填到账与支出、点「保存月报」 → 对账无误点「锁定」封账（锁定后当月销售不能再改）。
       </div>
       <div class="toolbar">
         <span class="muted">月份</span>
         <input type="month" id="settleMonth" />
-        <button id="settleBuildBtn" class="btn-teal">生成 / 刷新月报</button>
         <button id="exportSettlesBtn" title="导出全部月份月报汇总为 Excel">📤 导出Excel</button>
       </div>
       <div class="panel" id="settlePanel">
-        <div class="stat-line" id="settleStats"></div>
-        <div class="rows" style="margin-top: 10px">
+        <div class="muted" style="margin-bottom: 6px">① 本月数字（自动汇总当月销售流水，无需手动刷新）</div>
+        <div id="settleStats"></div>
+        <div class="rows" style="margin-top: 12px">
           <div class="field">
-            <label>本月到账收入 ¥（结算到账/微信到账，口径你定）</label>
+            <label>② 到账收入 ¥（按你实际结算到账填）</label>
             <input id="settleIncome" type="number" min="0" step="0.01" style="width: 170px" />
           </div>
           <div class="field">
-            <label>本月其他支出 ¥（运费/佣金/杂支）</label>
+            <label>其他支出 ¥（运费/佣金/杂支）</label>
             <input id="settleExpense" type="number" min="0" step="0.01" style="width: 170px" />
           </div>
+        </div>
+        <div class="rows" style="margin-top: 8px">
           <button id="settleSaveBtn" class="btn-teal">保存月报</button>
-          <button id="settleLockBtn">锁定 🔒</button>
-          <button id="settleUnlockBtn">解锁 🔓</button>
-          <button id="settleDeleteBtn" class="btn-danger">删除该月报</button>
+          <button id="settleDeleteBtn" class="btn-danger" title="删除该月报（不影响销售记录）">删除该月报</button>
         </div>
         <div class="stat-line" style="margin-top: 10px" id="settleProfit"></div>
+        <div class="muted" style="margin-top: 14px">③ 封账（对账完成后）</div>
+        <div class="rows" style="margin-top: 6px">
+          <span class="badge badge-off" id="settleLockBadge" style="display:none">已锁定：月报已封账，当月销售不能改</span>
+          <button id="settleLockBtn">锁定本月（封账）</button>
+          <button id="settleUnlockBtn" style="display:none">解锁（恢复可修改）</button>
+        </div>
+        <p class="muted" style="margin: 8px 0 0 0; line-height: 1.7">锁定 = 封账：锁定后当月销售记录不能再改，月报数字固定，防止对账后反悔；想改销售就点「解锁」。</p>
       </div>
       <div class="panel">
         <h4 style="margin: 0 0 8px 0">月报列表（多年可对比）</h4>

@@ -22,7 +22,7 @@
               <td>${x.locked === 1 ? '<span class="badge badge-off">已锁定</span>' : '<span class="badge badge-on">草稿</span>'}</td>
               <td>
                 <button class="mini-btn" data-m-act="build" data-m="${esc(x.month)}">查看</button>
-                ${x.locked === 1 ? `<button class="mini-btn" data-m-act="unlock" data-m="${esc(x.month)}">解锁</button>` : `<button class="mini-btn" data-m-act="lock" data-m="${esc(x.month)}">锁定</button>`}
+                ${x.locked === 1 ? `<button class="mini-btn" data-m-act="unlock" data-m="${esc(x.month)}" title="解锁后当月销售可再改">解锁</button>` : `<button class="mini-btn" data-m-act="lock" data-m="${esc(x.month)}" title="锁定后当月销售不能再改（封账）">锁定</button>`}
                 <button class="mini-btn btn-danger" data-m-act="del" data-m="${esc(x.month)}" title="删除月报（不影响销售记录）">🗑</button>
               </td>
             </tr>`,
@@ -89,10 +89,21 @@
       incomeInput.oninput = upd;
       expInput.oninput = upd;
       $("settleSaveBtn").disabled = locked;
-      $("settleLockBtn").disabled = locked || !settle;
-      $("settleUnlockBtn").disabled = !locked;
+      $("settleSaveBtn").textContent = locked ? "已锁定，不能改" : "保存月报";
       $("settleDeleteBtn").disabled = locked;
-      $("settleSaveBtn").textContent = locked ? "已锁定" : "保存月报";
+      const lockBtn = $("settleLockBtn");
+      const unlockBtn = $("settleUnlockBtn");
+      const badge = $("settleLockBadge");
+      if (locked) {
+        lockBtn.style.display = "none";
+        unlockBtn.style.display = "";
+        badge.style.display = "";
+      } else {
+        lockBtn.style.display = "";
+        unlockBtn.style.display = "none";
+        badge.style.display = "none";
+        lockBtn.disabled = !settle;
+      }
     }
 
     function renderRules() {
@@ -150,7 +161,19 @@
       if (act === "build") {
         post({ type: "monthBuild", month });
       } else if (act === "lock" || act === "unlock") {
-        post({ type: act === "lock" ? "lockSettle" : "unlockSettle", month });
+        const doPost = () =>
+          post({ type: act === "lock" ? "lockSettle" : "unlockSettle", month });
+        if (act === "unlock") {
+          confirmBox(
+            `解锁 ${month} 后，当月销售记录将恢复可修改，已保存的月报会重新变成草稿。确认解锁？`,
+          ).then((ok) => {
+            if (ok) {
+              doPost();
+            }
+          });
+        } else {
+          doPost();
+        }
       } else if (act === "del") {
         confirmBox(`确认删除 ${month} 月报？`).then((ok) => {
           if (ok) {

@@ -26,12 +26,19 @@
               <td><input type="checkbox" data-s-act="sel" data-id="${r.id}" ${selSales.has(r.id) ? "checked" : ""} /></td>
               <td><b>${esc(r.code)}</b></td><td>${esc(r.name)}</td>
               <td class="num">${qty(r.sold_qty)}</td><td class="num">${qty(r.refund_qty)}</td>
-              <td class="num">${qty(r.sold_qty - r.refund_qty)}</td>
+              <td class="num ${r.sold_qty - r.refund_qty < 0 ? "num-neg" : ""}">${qty(r.sold_qty - r.refund_qty)}</td>
               <td class="num" title="当天进价快照">¥${money(r.cost_price)}</td><td>${esc(r.note)}</td>
               <td><button class="mini-btn btn-danger" data-s-act="del" data-id="${r.id}" title="删除当日该条销售记录">🗑</button></td>
             </tr>`,
             )
-            .join("")}</tbody></table>`;
+            .join("")}</tbody>
+          <tfoot><tr>
+            <td colspan="3">合计 ${rows.length} 条</td>
+            <td class="num">${qty(rows.reduce((a, r) => a + r.sold_qty, 0))}</td>
+            <td class="num">${qty(rows.reduce((a, r) => a + r.refund_qty, 0))}</td>
+            <td class="num ${rows.reduce((a, r) => a + r.sold_qty - r.refund_qty, 0) < 0 ? "num-neg" : ""}">${qty(rows.reduce((a, r) => a + r.sold_qty - r.refund_qty, 0))}</td>
+            <td colspan="3"></td>
+          </tr></tfoot></table>`;
       updateSelBtn();
     }
 
