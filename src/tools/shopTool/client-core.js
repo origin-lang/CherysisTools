@@ -292,3 +292,90 @@ window.toolClients = window.toolClients || {};
         renderProducts();
       }, 16);
     }
+
+    function loadImageFromDataUrl(dataUrl) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = dataUrl;
+      });
+    }
+
+    async function copyImageFromDataUrl(dataUrl) {
+      try {
+        const img = await loadImageFromDataUrl(dataUrl);
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth || img.width || 1;
+        canvas.height = img.naturalHeight || img.height || 1;
+        canvas.getContext("2d").drawImage(img, 0, 0);
+        const blob = await new Promise((res) => canvas.toBlob(res, "image/png"));
+        if (!blob) {
+          return false;
+        }
+        if (navigator.clipboard && window.ClipboardItem) {
+          await navigator.clipboard.write([
+            new ClipboardItem({ "image/png": blob }),
+          ]);
+          return true;
+        }
+        return false;
+      } catch {
+        return false;
+      }
+    }
+
+    function showImageCtxMenu(x, y, items) {
+      const old = document.getElementById("imgCtxMenu");
+      if (old) {
+        old.remove();
+      }
+      const menu = document.createElement("div");
+      menu.id = "imgCtxMenu";
+      menu.style.cssText =
+        "position:fixed;z-index:80;background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:4px;padding:4px 0;min-width:160px;box-shadow:0 2px 8px rgba(0,0,0,.3)";
+      menu.innerHTML = items
+        .map((it, i) => {
+          if (it.sep) {
+            return `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>`;
+          }
+          return `<div class="ctx-item${it.danger ? " ctx-danger" : ""}" data-ic="${i}">${esc(it.label)}</div>`;
+        })
+        .join("");
+      menu.style.left = Math.min(x, window.innerWidth - 180) + "px";
+      menu.style.top =
+        Math.min(y, window.innerHeight - items.length * 30 - 20) + "px";
+      document.body.appendChild(menu);
+      const close = () => {
+        menu.remove();
+        window.removeEventListener("mousedown", onDown);
+        window.removeEventListener("keydown", onKey);
+        window.removeEventListener("blur", onBlur);
+        window.removeEventListener("resize", onResize);
+      };
+      const onDown = (ev) => {
+        if (!menu.contains(ev.target)) {
+          close();
+        }
+      };
+      const onKey = (ev) => {
+        if (ev.key === "Escape") {
+          close();
+        }
+      };
+      const onBlur = () => close();
+      const onResize = () => close();
+      window.addEventListener("mousedown", onDown);
+      window.addEventListener("keydown", onKey);
+      window.addEventListener("blur", onBlur);
+      window.addEventListener("resize", onResize);
+      menu.querySelectorAll("[data-ic]").forEach((el) => {
+        el.onclick = () => {
+          const it = items[Number(el.dataset.ic)];
+          close();
+          if (it.run) {
+            it.run();
+          }
+        };
+      });
+    }

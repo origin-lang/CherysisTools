@@ -412,6 +412,9 @@
       .ctx-item:hover {
         background: var(--vscode-list-hoverBackground);
       }
+      .ctx-item.ctx-danger {
+        color: #e0404b;
+      }
       .toast {
         position: fixed;
         bottom: 20px;
@@ -468,14 +471,30 @@
       .live-star-chip .code {
         font-weight: 700;
       }
+      .toolbar-fill {
+        flex: 1;
+      }
+      #liveGridArea {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+        gap: 12px 16px;
+        align-items: start;
+      }
       .live-group {
-        margin-bottom: 16px;
+        margin-bottom: 0;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 6px;
+        padding: 10px 10px 12px;
+        background: rgba(127, 127, 127, 0.06);
       }
       .live-group .g-head {
         display: flex;
         align-items: center;
         gap: 8px;
-        margin-bottom: 8px;
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        flex-wrap: wrap;
       }
       .live-group .g-head .muted {
         margin-right: auto;
@@ -536,6 +555,17 @@
       .live-cell input.dup {
         border-color: #e6a23c;
         background: rgba(230, 162, 60, 0.1);
+      }
+      .live-cell .live-meta {
+        font-size: 11px;
+        line-height: 15px;
+        min-height: 15px;
+        text-align: center;
+        color: var(--vscode-descriptionForeground);
+      }
+      .live-cell .live-meta .price {
+        color: #e6a23c;
+        font-weight: 600;
       }
       .live-cover {
         position: relative;
@@ -617,6 +647,8 @@
           <option value="on">在售</option>
           <option value="off">已下架</option>
         </select>
+        <select id="filterCat"><option value="">全部品类</option></select>
+        <select id="filterSeries"><option value="">全部系列</option></select>
         <button id="newProductBtn" class="btn-teal">＋ 新建商品</button>
         <button id="colSetBtn">字段显示</button>
         <button id="importProductBtn" title="粘贴商品表格批量导入">导入商品</button>
@@ -666,6 +698,7 @@
       <div class="panel">
         <h4 style="margin: 0 0 8px 0">当日销售 <span class="muted" id="salesDateLabel"></span>
           <span style="margin-left: 10px">
+            <input id="salesKwInput" placeholder="🔍 筛编号/名称/备注" style="width: 150px; padding: 3px 6px; font-size: 12px" />
             <button id="salesRefreshBtn" class="mini-btn" title="重新从数据库加载当日销售">🔄 刷新</button>
             <button id="delSelBtn" class="mini-btn btn-danger" disabled title="删除勾选的行">删除选中</button>
           </span>
@@ -787,12 +820,13 @@ L032,1"></textarea>
         <h4 style="margin: 0 0 8px 0">九宫格排品</h4>
         <div class="toolbar">
           <button id="liveAddGroupBtn" class="btn-teal">＋ 加一组</button>
-          <button id="liveClearBtn" class="btn-danger">清空格子</button>
-          <span class="muted" id="liveOutLabel"></span>
-          <button id="livePickOutBtn" title="选择九宫格输出目录">输出目录</button>
+          <button id="liveClearBtn" class="btn-danger" title="清空所有排品格子（已选商品保留）">清空格子</button>
+          <span class="toolbar-fill"></span>
           <button id="liveCopyListBtn">复制清单</button>
-          <button id="liveGenerateBtn" class="btn-teal">生成全部九宫格</button>
           <button id="exportLiveBtn" title="导出当前排品清单为 Excel">📤 导出Excel</button>
+          <button id="livePickOutBtn" title="选择九宫格输出目录">输出目录</button>
+          <span class="muted" id="liveOutLabel"></span>
+          <button id="liveGenerateBtn" class="btn-teal">生成全部九宫格</button>
         </div>
         <p class="muted" style="margin: 0 0 8px 0">🟩绿=有效编号 · 🟥红=编号不存在 · 🟧橙=同编号出现≥2次（排品重复）。每组右上角「生成这组」只重出这一张图并复制这组清单。</p>
         <div id="liveGridArea"></div>

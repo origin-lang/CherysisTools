@@ -27,6 +27,8 @@
 
     function filteredProducts() {
       const status = $("filterStatus")?.value || "all";
+      const cat = $("filterCat")?.value || "";
+      const series = $("filterSeries")?.value || "";
       return state.products
         .filter((p) =>
           status === "all"
@@ -35,6 +37,8 @@
               ? p.status === 0
               : p.status === 1,
         )
+        .filter((p) => !cat || p.category === cat)
+        .filter((p) => !series || p.series === series)
         .filter((p) => {
           const kw = String(filters.keyword || "").trim().toLowerCase();
           if (!kw) {
@@ -97,6 +101,8 @@
         state.lbFullCache = {};
       }
       state.lbCode = product.code;
+      state.lbIdx = 0;
+      state.lbPendingCopy = null;
       const mask = showModal(`
         <div class="lightbox" id="lbBox">
           <div class="lb-head">
@@ -131,6 +137,8 @@
       return JSON.stringify({
         len: list.length,
         status: $("filterStatus")?.value || "all",
+        cat: $("filterCat")?.value || "",
+        series: $("filterSeries")?.value || "",
         filters,
         sortKey,
         sortDir,
@@ -300,8 +308,9 @@
           ? `<p class="muted">（无商品，点「＋ 新建商品」添加；也支持「导入商品」批量粘贴）</p>`
           : `${selectedCount > 0
                ? `<div class="batch-ops" id="batchOpsBar" style="margin-bottom:8px;padding:8px;background:var(--vscode-input-background);border:1px solid var(--vscode-panel-border);border-radius:4px;display:flex;gap:8px;align-items:center">
-                    <span>已选 <b data-sel-count>${selectedCount}</b> 个商品</span>
-                    <button class="mini-btn" id="batchOn" title="上架选中的商品">🔺 上架</button>
+<span>已选 <b data-sel-count>${selectedCount}</b> 个商品</span>
+                     <button class="mini-btn" id="batchCopy" title="把选中的商品按当前可见列复制到剪贴板（带表头）">📋 复制选中</button>
+                     <button class="mini-btn" id="batchOn" title="上架选中的商品">🔺 上架</button>
                     <button class="mini-btn" id="batchOff" title="下架选中的商品">🔻 下架</button>
                     <button class="mini-btn btn-danger" id="batchDel" title="删除选中的商品（含记录，不可恢复）">🗑 删除</button>
                     <button class="mini-btn" id="batchClear" title="取消全部选择">✕ 取消</button>
@@ -316,7 +325,19 @@
     }
 
     function hasFilter() {
-      return Object.values(filters).some((v) => String(v).trim().length > 0);
+      return (
+        Object.values(filters).some((v) => String(v).trim().length > 0) ||
+        ($("filterStatus")?.value || "all") !== "all" ||
+        !!($("filterCat")?.value || "") ||
+        !!($("filterSeries")?.value || "")
+      );
+    }
+
+    function syncClearFilterBtn() {
+      const clear = $("clearFilterBtn");
+      if (clear) {
+        clear.style.visibility = hasFilter() ? "visible" : "hidden";
+      }
     }
 
     function updateSelectionUI() {
@@ -377,6 +398,11 @@
       const batchOff = $("batchOff");
       const batchDel = $("batchDel");
       const batchClear = $("batchClear");
+      const batchCopy = $("batchCopy");
+
+      if (batchCopy) {
+        batchCopy.onclick = copySelectedProducts;
+      }
 
       if (batchOn) {
         batchOn.onclick = () => {
@@ -411,6 +437,28 @@
           renderProducts();
         };
       }
+    }
+
+    function copySelectedProducts() {
+      const rows = state.products.filter((p) =>
+        state.selectedProducts.has(p.id),
+      );
+      if (rows.length === 0) {
+        toast("先勾选要复制的商品");
+        return;
+      }
+      const keys = PRODUCT_FIELDS.map((f) => f.key).filter((k) =>
+        visList.has(k),
+      );
+      const lines = [
+        keys
+          .map((k) => PRODUCT_FIELDS.find((f) => f.key === k).label)
+          .join("\t"),
+      ];
+      for (const row of rows) {
+        lines.push(keys.map((k) => cellValue(row, k)).join("\t"));
+      }
+      copyText(lines.join("\n"), `已复制 ${rows.length} 行到剪贴板 ✅`);
     }
 
     function renderGallery(list) {
@@ -579,6 +627,26 @@
           .join("");
       trendSel.value = curP;
       fillCatList();
+      const fillSel = (selId, valOf) => {
+        const sel = $(selId);
+        if (!sel) {
+          return;
+        }
+        const cur = sel.value;
+        const opts = [
+          ...new Set(
+            state.products.map((p) => p[valOf]).filter((v) => v && String(v).trim()),
+          ),
+        ].sort((a, b) => String(a).localeCompare(String(b), "zh-Hans-CN"));
+        sel.innerHTML =
+          `<option value="">${selId === "filterCat" ? "全部品类" : "全部系列"}</option>` +
+          opts
+            .map((v) => `<option value="${esc(v)}">${esc(v)}</option>`)
+            .join("");
+        sel.value = cur;
+      };
+      fillSel("filterCat", "category");
+      fillSel("filterSeries", "series");
     }
 
     function openNewProduct() {
@@ -656,7 +724,7 @@
     function openImportProducts() {
       const mask = showModal(`
         <h3>📥 导入商品</h3>
-        <p class="muted">每行一商品，列顺序：<b>编号, 名称, 品类, 系列, 等级, 进价, 售价, 采购链接</b>；Tab 或空格或逗号分隔；只要「编号」也能建（其余走默认）。已有编号跳过。</p>
+        <p class="muted">每行一商品，列顺序：<b>编号, 名称, 品类, 系列, 等级, 进价, 售价, 采购链接</b>；Tab 或空格或逗号分隔；只要「编号」也能建（其余走默认）。名称内不要用空格（空格=列分隔符）。已有编号跳过；原名称空缺时会补填名称。</p>
         <textarea id="ipText" placeholder="示例：
 L001&#9;铜合金锆石手链四叶花&#9;手链&#9;C类&#9;2&#9;12&#9;&#9;
 L002 合金项链十字架 项链 A类 1 8.5"></textarea>
@@ -848,6 +916,16 @@ L002 合金项链十字架 项链 A类 1 8.5"></textarea>
     }
 
     function onProductCtx(e) {
+      const coverEl = e.target.closest("[data-p-act='img']");
+      if (coverEl) {
+        const p = state.products.find(
+          (x) => x.id === Number(coverEl.dataset.id),
+        );
+        if (p) {
+          openCoverMenu(e, p);
+        }
+        return;
+      }
       const td = e.target.closest("td[data-pid]");
       if (!td) {
         return;
@@ -857,6 +935,23 @@ L002 合金项链十字架 项链 A类 1 8.5"></textarea>
         return;
       }
       openContextMenu(e, p);
+    }
+
+    function openCoverMenu(e, p) {
+      const coverData = state.coverCache[p.code] || "";
+      const items = [];
+      if (coverData) {
+        items.push({
+          label: "📋 复制封面图",
+          run: () => {
+            copyImageFromDataUrl(coverData).then((ok) =>
+              ok ? toast("已复制封面图") : toast("复制失败"),
+            );
+          },
+        });
+      }
+      items.push({ label: "🔍 查看大图", run: () => openLightbox(p) });
+      showImageCtxMenu(e.clientX, e.clientY, items);
     }
 
     function onProductAct(e) {

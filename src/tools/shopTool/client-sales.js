@@ -1,9 +1,58 @@
 // shopTool 前端模块（加载顺序第 4 个）：销售录入（今日销售/快捷录入/批量删除/分析趋势）
 // 拆分自原 src/tools/shopTool/client.js，逻辑未改动
+    var salesSortKey = "";
+    var salesSortDir = 1;
+    var salesKw = "";
+
+    function salesTableRows() {
+      let rows = state.sales;
+      const kw = String(salesKw || "").trim().toLowerCase();
+      if (kw) {
+        const kwDigits = kw.replace(/\D/g, "");
+        rows = rows.filter((r) => {
+          const hay = `${r.code} ${r.name} ${r.note || ""}`.toLowerCase();
+          if (hay.includes(kw)) {
+            return true;
+          }
+          if (kwDigits) {
+            const codeDigits = r.code.replace(/\D/g, "");
+            if (codeDigits.includes(kwDigits)) {
+              return true;
+            }
+          }
+          return false;
+        });
+      }
+      if (salesSortKey) {
+        const dir = salesSortDir;
+        const key = salesSortKey;
+        rows = rows.slice().sort((a, b) => {
+          if (key === "code") {
+            return (Number(a.code.slice(1)) - Number(b.code.slice(1))) * dir;
+          }
+          if (key === "name" || key === "note") {
+            return (
+              String(a[key] ?? "").localeCompare(
+                String(b[key] ?? ""),
+                "zh-Hans-CN",
+              ) * dir
+            );
+          }
+          if (key === "net") {
+            return (
+              (a.sold_qty - a.refund_qty - (b.sold_qty - b.refund_qty)) * dir
+            );
+          }
+          return (Number(a[key] || 0) - Number(b[key] || 0)) * dir;
+        });
+      }
+      return rows;
+    }
+
     function renderSales() {
       $("salesDate").value = state.salesDate || nowStr();
       $("salesDateLabel").textContent = state.salesDate || "";
-      const rows = state.sales;
+      const rows = salesTableRows();
       const kept = new Set();
       rows.forEach((r) => {
         if (selSales.has(r.id)) {
@@ -12,13 +61,18 @@
       });
       selSales = kept;
       const allSel = rows.length > 0 && rows.every((r) => selSales.has(r.id));
+      const arrow = (key) =>
+        salesSortKey === key ? (salesSortDir === 1 ? " ▲" : " ▼") : "";
+      const th = (label, key) =>
+        `<th data-sort="${key}" class="sortable" title="点击排序">${label}${arrow(key)}</th>`;
       $("salesTableWrap").innerHTML =
-        rows.length === 0
+        state.sales.length === 0
           ? `<p class="muted">（当日暂无销售记录）</p>`
-          : `<table class="data-table"><thead><tr>
+          : rows.length === 0
+            ? `<p class="muted">（没有符合筛选的记录）</p>`
+            : `<table class="data-table"><thead><tr>
             <th style="width:30px"><input type="checkbox" data-s-act="selAll" ${allSel ? "checked" : ""} title="全选 / 取消全选" /></th>
-            <th>编号</th><th>名称</th><th>卖出数量</th><th>退款数量</th><th>净售数量</th>
-            <th title="记录当天成交时刻的进价快照；之后改进价不影响历史记录与月报">进价快照</th><th>备注</th><th></th>
+            ${th("编号", "code")}${th("名称", "name")}${th("卖出数量", "sold_qty")}${th("退款数量", "refund_qty")}${th("净售数量", "net")}${th("进价快照", "cost_price")}${th("备注", "note")}<th></th>
           </tr></thead>
           <tbody>${rows
             .map(
@@ -181,6 +235,18 @@
     }
 
     function onSalesAct(e) {
+      const th = e.target.closest("th[data-sort]");
+      if (th) {
+        const k = th.dataset.sort;
+        if (salesSortKey === k) {
+          salesSortDir = -salesSortDir;
+        } else {
+          salesSortKey = k;
+          salesSortDir = 1;
+        }
+        renderSales();
+        return;
+      }
       const btn = e.target.closest("[data-s-act]");
       if (!btn) {
         return;

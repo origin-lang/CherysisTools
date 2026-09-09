@@ -225,6 +225,36 @@ export const shopTool: ToolDefinition = {
       ctx.postToWebview({ type: "coverInvalidated", code });
     };
 
+    // 删商品时先删对应图片文件夹：失败自动重试一次，删完再校验一次，
+    // 仍删不掉就打印完整路径（多半是文件被占用），返回值标识是否真正删掉
+    const removeImageFolder = (code: string): boolean => {
+      const dir = imageDir();
+      if (!dir) {
+        log("⚠️未配置图片根目录，无法删除图片文件夹");
+        return false;
+      }
+      const folder = path.join(dir, code);
+      if (!fs.existsSync(folder)) {
+        return false;
+      }
+      try {
+        fs.rmSync(folder, { recursive: true, force: true });
+      } catch {
+        try {
+          fs.rmSync(folder, { recursive: true, force: true });
+        } catch (err: any) {
+          log(`⚠️删除图片文件夹失败：${folder}（${err?.message ?? err}）`);
+          return false;
+        }
+      }
+      if (fs.existsSync(folder)) {
+        log(`⚠️图片文件夹删除后仍存在：${folder}（可能被占用）`);
+        return false;
+      }
+      log(`🗑已清理图片文件夹：${folder}`);
+      return true;
+    };
+
     const loadAll = () => {
       const products: Product[] = db.getProducts();
       const stockMap = db.getStockTotals();
@@ -417,6 +447,11 @@ export const shopTool: ToolDefinition = {
         if (p) {
           await preOpBackup(ctx.storageDir, log);
         }
+        if (p) {
+          // 先删图片文件夹（删不掉也不阻塞删商品，但会打印完整路径），再删商品
+          removeImageFolder(p.code);
+          invalidateCover(p.code);
+        }
         db.deleteProduct(id);
         log(`🗑已删除 ${p ? p.code : id}（含其销售记录与入库记录）`);
         refreshSales(todayStr());
@@ -462,6 +497,16 @@ export const shopTool: ToolDefinition = {
           }
           db.deleteProduct(id);
           n++;
+        }
+        let imgCleaned = 0;
+        for (const code of deleted) {
+          if (removeImageFolder(code)) {
+            imgCleaned++;
+          }
+          invalidateCover(code);
+        }
+        if (imgCleaned > 0) {
+          log(`🗑已同时清理 ${imgCleaned} 个商品图片文件夹`);
         }
         log(`✅删除商品 ${n} 个${deleted.length ? `：${deleted.slice(0, 8).join("、")}${deleted.length > 8 ? " 等" : ""}` : ""}`);
         refreshSales(todayStr());
@@ -947,6 +992,70 @@ export const shopTool: ToolDefinition = {
         loadAll();
         break;
       }
+      case "openImageFile": {
+        const code = String(msg.code ?? "");
+        const dir = imageDir();
+        if (!dir) {
+          log("❌未配置图片根目录");
+          break;
+        }
+        const folder = path.join(dir, code);
+        if (!fs.existsSync(folder)) {
+          log(`⚠️${code} 没有图片文件夹`);
+          break;
+        }
+        try {
+          await vscode.commands.executeCommand(
+            "revealFileInOS",
+            vscode.Uri.file(folder),
+          );
+        } catch (err: any) {
+          log(`⚠️打开图片文件夹失败：${err.message}`);
+        }
+        break;
+      }
+      case "deleteImageFile": {
+        const code = String(msg.code ?? "");
+        const index = Number(msg.index ?? 0);
+        const dir = imageDir();
+        if (!dir) {
+          log("❌未配置图片根目录");
+          break;
+        }
+        const folder = path.join(dir, code);
+        const files = listImageFiles(folder);
+        const fp = files[index] ? path.join(folder, files[index]) : null;
+        if (!fp) {
+          log(`⚠️${code} 没有第 ${index + 1} 张图片`);
+          break;
+        }
+        await preOpBackup(ctx.storageDir, log);
+        try {
+          fs.unlinkSync(fp);
+        } catch (err: any) {
+          log(`⚠️删除图片失败：${err.message}`);
+          break;
+        }
+        log(`🗑已删除 ${code} 的第 ${index + 1} 张图片`);
+        const files2 = listImageFiles(folder);
+        let big0 = "";
+        const imgs: string[] = [];
+        for (let i = 0; i < files2.length; i++) {
+          const fp2 = path.join(folder, files2[i]);
+          if (i === 0) {
+            try {
+              big0 = await readImageToBase64(fp2);
+            } catch {
+              big0 = "";
+            }
+          }
+          imgs.push(await thumbToBase64(fp2));
+        }
+        ctx.postToWebview({ type: "imagesLoaded", code, images: imgs, big0 });
+        invalidateCover(code);
+        loadAll();
+        break;
+      }
       case "importProducts": {
         const black: string[] = [];
         let created = 0;
@@ -958,7 +1067,7 @@ export const shopTool: ToolDefinition = {
             continue;
           }
           const parts = raw
-            .split(/\t|[,;，；]|\s{2,}/)
+            .split(/[,;，；\s]+/)
             .map((s) => s.trim())
             .filter((s) => s.length > 0);
           if (parts.length === 0) {
@@ -977,7 +1086,8 @@ export const shopTool: ToolDefinition = {
             black.push(`行${i + 1}: ${raw}`);
             continue;
           }
-          if (db.getProductByCode(code)) {
+          const exist = db.getProductByCode(code);
+          if (exist) {
             skipped++;
             continue;
           }
@@ -1233,7 +1343,7 @@ list = (msg.codes as string[])
               stock,
               sale.sold,
               sale.sold - sale.refund,
-              p.status === 1 ? "上架" : "下架",
+              p.status === 1 ? "下架" : "上架",
               p.purchase_link,
             ]);
           }

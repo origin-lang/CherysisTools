@@ -77,13 +77,21 @@
           }
         });
       }
-      $("filterStatus").onchange = renderProducts;
+      $("filterStatus").onchange = () => {
+        syncClearFilterBtn();
+        renderProducts();
+      };
+      $("filterCat").onchange = () => {
+        syncClearFilterBtn();
+        renderProducts();
+      };
+      $("filterSeries").onchange = () => {
+        syncClearFilterBtn();
+        renderProducts();
+      };
       $("keywordSearch").oninput = () => {
         filters.keyword = $("keywordSearch").value;
-        const clear = $("clearFilterBtn");
-        if (clear) {
-          clear.style.visibility = hasFilter() ? "visible" : "hidden";
-        }
+        syncClearFilterBtn();
         renderProducts();
       };
       $("newProductBtn").onclick = openNewProduct;
@@ -97,7 +105,19 @@
         if (kw) {
           kw.value = "";
         }
-        $("clearFilterBtn").style.visibility = "hidden";
+        const st = $("filterStatus");
+        if (st) {
+          st.value = "all";
+        }
+        const cat = $("filterCat");
+        if (cat) {
+          cat.value = "";
+        }
+        const ser = $("filterSeries");
+        if (ser) {
+          ser.value = "";
+        }
+        syncClearFilterBtn();
         renderProducts();
       };
 
@@ -111,7 +131,14 @@
       $("productListView").addEventListener("click", onProductAct);
       $("productListView").addEventListener("contextmenu", onProductCtx);
       $("productGalleryView").addEventListener("click", onProductAct);
+      $("productGalleryView").addEventListener("contextmenu", onProductCtx);
       $("salesTableWrap").addEventListener("click", onSalesAct);
+      if ($("salesKwInput")) {
+        $("salesKwInput").oninput = () => {
+          salesKw = $("salesKwInput").value;
+          renderSales();
+        };
+      }
       $("salesTableWrap").addEventListener("dblclick", (e) => {
         const td = e.target.closest("td[data-edit]");
         if (td) {
@@ -573,6 +600,7 @@
           const big0 = msg.big0 || "";
           big.src = big0;
           big.style.display = "inline-block";
+          state.lbIdx = 0;
           thumbs.innerHTML = msg.images
             .map(
               (u, i) =>
@@ -582,6 +610,7 @@
           thumbs.querySelectorAll("img").forEach((img) => {
             img.onclick = () => {
               const idx = Number(img.dataset.i);
+              state.lbIdx = idx;
               const key = `${msg.code}:${idx}`;
               thumbs
                 .querySelectorAll("img")
@@ -597,6 +626,25 @@
                 post({ type: "getFullImage", code: msg.code, index: idx });
               }
             };
+            img.oncontextmenu = (e) => {
+              e.preventDefault();
+              const idx = Number(img.dataset.i);
+              const key = `${msg.code}:${idx}`;
+              let data = state.lbFullCache[key] || "";
+              if (!data && idx === 0) {
+                data = big0;
+              }
+              let loading = !data;
+              if (loading) {
+                state.lbPendingCopy = { code: msg.code, idx };
+                post({ type: "getFullImage", code: msg.code, index: idx });
+              }
+              openLightboxMenu(e, msg.code, idx, data, loading);
+            };
+          });
+          big.addEventListener("contextmenu", (e) => {
+            e.preventDefault();
+            openLightboxMenu(e, msg.code, state.lbIdx || 0, big.src || "", false);
           });
           break;
         }
@@ -610,9 +658,56 @@
           }
           state.lbFullCache[`${msg.code}:${msg.index}`] = msg.data;
           big.src = msg.data;
+          if (
+            state.lbPendingCopy &&
+            state.lbPendingCopy.code === msg.code &&
+            state.lbPendingCopy.idx === msg.index
+          ) {
+            const pc = state.lbPendingCopy;
+            state.lbPendingCopy = null;
+            copyImageFromDataUrl(msg.data).then((ok) =>
+              ok ? toast("已复制图片") : toast("复制失败"),
+            );
+          }
           break;
         }
       }
+    }
+
+    function openLightboxMenu(e, code, idx, dataUrl, loading) {
+      const items = [
+        {
+          label: loading ? "📋 复制这张图片（载入中…）" : "📋 复制这张图片",
+          run: () => {
+            if (loading) {
+              toast("原图载入后会自动复制");
+              return;
+            }
+            copyImageFromDataUrl(dataUrl).then((ok) =>
+              ok ? toast("已复制图片") : toast("复制失败"),
+            );
+          },
+        },
+        { sep: true },
+        {
+          label: "📂 打开图片文件夹",
+          run: () => post({ type: "openImageFile", code }),
+        },
+        {
+          label: "🗑 删除这张图片…",
+          danger: true,
+          run: () => {
+            confirmBox(
+              `确认删除 ${code} 的第 ${idx + 1} 张图片？（删除前先自动备份数据目录）`,
+            ).then((ok) => {
+              if (ok) {
+                post({ type: "deleteImageFile", code, index: idx });
+              }
+            });
+          },
+        },
+      ];
+      showImageCtxMenu(e.clientX, e.clientY, items);
     }
 
 window.toolClients.shopTool = {

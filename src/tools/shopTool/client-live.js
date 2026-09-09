@@ -61,36 +61,41 @@
           const slots = plan.filter((r) => r.group_no === g);
           const bySlot = new Map(slots.map((r) => [r.slot_no, r.code]));
           const startNum = (g - 1) * 9 + 1;
+          const filled = slots.filter((r) => r.code).length;
           let cells = "";
           for (let s = 1; s <= 9; s++) {
-            let code = bySlot.get(s) || "";
+            const code = bySlot.get(s) || "";
             const num = startNum + s - 1;
-            let cls = "";
+            const p = code ? stateProduct(code) : null;
+            let cls = p
+              ? dup.has(code)
+                ? "dup"
+                : "ok"
+              : code
+                ? "err"
+                : "empty";
             let placeholder = `填${num}号编码`;
-            if (code) {
-              const p = stateProduct(code);
-              if (!p) {
-                cls = "err";
-                placeholder = `${num}号 ${esc(code)}（不存在）`;
-              } else if (dup.has(code)) {
-                cls = "dup";
-                placeholder = `${num}号 ${esc(code)}（重复）`;
-              } else {
-                cls = "ok";
-                placeholder = `${num}号 ${esc(code)}`;
-              }
+            if (code && !p) {
+              placeholder = `${num}号 ${esc(code)}（不存在）`;
+            } else if (code && dup.has(code)) {
+              placeholder = `${num}号 ${esc(code)}（重复）`;
             } else {
-              cls = "empty";
+              placeholder = `${num}号 ${esc(code)}`;
             }
+            const meta = p
+              ? `<div class="live-meta"><span class="price">¥${money(p.sale_price)}</span></div>`
+              : `<div class="live-meta">&nbsp;</div>`;
             cells += `<div class="live-cell" data-g="${g}">
               <div class="live-cover">${coverTile(bySlot, s, startNum)}</div>
               <input data-ls-cell data-g="${g}" data-slot="${s}" data-num="${num}" class="${cls}" value="${esc(code)}" placeholder="${placeholder}" title="${cls === "dup" ? "重复出现的编号，请检查是否填重了" : ""}" />
+              ${meta}
             </div>`;
           }
           return `<div class="live-group">
             <div class="g-head">
               <b>第 ${g} 组</b>
-              <span class="muted">${startNum}号~${startNum + 8}号</span>
+              <span class="muted">${startNum}号~${startNum + 8}号 · ${filled}/9</span>
+              <button class="mini-btn" data-ls-act="clearg" data-g="${g}" title="清空这一组的所有格子">清空本组</button>
               <button class="mini-btn g-gen" data-ls-act="gen" data-g="${g}" title="只生成这一组的九宫格">🖼 生成这组</button>
               <button class="mini-btn btn-danger g-del" data-ls-act="delgroup" data-g="${g}">删组</button>
             </div>
@@ -104,10 +109,19 @@
         inp.oninput = () => {
           const raw = inp.value.trim();
           const code = raw ? canonicalCode(raw) : "";
-          if (code && stateProduct(code)) {
+          const p = code ? stateProduct(code) : null;
+          if (p) {
             inp.classList.add("ok");
           } else {
             inp.classList.remove("ok");
+          }
+          const meta = inp.parentElement
+            ? inp.parentElement.querySelector(".live-meta")
+            : null;
+          if (meta) {
+            meta.innerHTML = p
+              ? `<span class="price">¥${money(p.sale_price)}</span>`
+              : "&nbsp;";
           }
           upsertLiveSlot(groupNo, slotNo, code);
           renderLivePreview(groupNo);
@@ -254,6 +268,18 @@
       scheduleLivePlanSave();
     }
 
+    function clearLiveGroup(groupNo) {
+      const rest = state.livePlan.filter(
+        (r) => !(r.group_no === groupNo && r.slot_no !== 0),
+      );
+      if (!rest.some((r) => r.group_no === groupNo && r.slot_no === 0)) {
+        rest.push({ group_no: groupNo, slot_no: 0, code: "" });
+      }
+      state.livePlan = rest;
+      scheduleLivePlanSave();
+      renderLiveGrid();
+    }
+
     function findNextLiveGroupNo() {
       const existing = new Set(state.livePlan.map((r) => r.group_no));
       let g = 1;
@@ -391,6 +417,15 @@
           if (btn) {
             removeLiveGroup(Number(btn.dataset.g));
             renderLiveGrid();
+          }
+          const clrG = e.target.closest("[data-ls-act='clearg']");
+          if (clrG && !btn) {
+            const g = Number(clrG.dataset.g);
+            confirmBox(`确认清空第 ${g} 组的全部格子？`).then((ok) => {
+              if (ok) {
+                clearLiveGroup(g);
+              }
+            });
           }
         });
       }
