@@ -53,8 +53,6 @@
         });
       }
       $("filterStatus").onchange = renderProducts;
-      $("filterSeries").onchange = renderProducts;
-      $("filterCategory").onchange = renderProducts;
       $("keywordSearch").oninput = () => {
         filters.keyword = $("keywordSearch").value;
         const clear = $("clearFilterBtn");

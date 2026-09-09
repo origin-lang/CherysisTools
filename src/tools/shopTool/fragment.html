@@ -412,24 +412,6 @@
       .ctx-item:hover {
         background: var(--vscode-list-hoverBackground);
       }
-      .filter-row input[data-fkey] {
-        width: 100%;
-        min-width: 52px;
-        padding: 2px 4px;
-        font-size: 11px;
-        box-sizing: border-box;
-      }
-      #tabProducts .data-table thead tr.filter-row th {
-        position: sticky;
-        top: var(--thead-h, 25px);
-        z-index: 2;
-        background-color: var(--vscode-editor-background);
-        cursor: auto;
-        user-select: auto;
-      }
-      #tabProducts .data-table thead tr.filter-row th:hover {
-        background: var(--vscode-editor-background);
-      }
       .toast {
         position: fixed;
         bottom: 20px;
@@ -635,8 +617,6 @@
           <option value="on">在售</option>
           <option value="off">已下架</option>
         </select>
-        <select id="filterSeries"><option value="">全部系列</option></select>
-        <select id="filterCategory"><option value="">全部品类</option></select>
         <button id="newProductBtn" class="btn-teal">＋ 新建商品</button>
         <button id="colSetBtn">字段显示</button>
         <button id="importProductBtn" title="粘贴商品表格批量导入">导入商品</button>
@@ -653,8 +633,10 @@
         <span class="muted">日期</span>
         <input type="date" id="salesDate" />
         <span class="muted">当天已有记录时</span>
-        <select id="dupMode">
-          <option value="accumulate" selected>累加</option>
+        <select id="dupMode" title="当天同一商品已有记录时怎么办：
+累加 = 把这次的量加进原记录（连续录入几笔就自动累加）；
+覆盖 = 用这次输入直接替换原记录（改错数时用它）；
+跳过 = 已有记录就不动。"><option value="accumulate" selected>累加</option>
           <option value="overwrite">覆盖</option>
           <option value="skip">跳过</option>
         </select>

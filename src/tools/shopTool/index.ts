@@ -333,6 +333,7 @@ export const shopTool: ToolDefinition = {
           });
         }
         log(`✅已新建 ${code} ${String(msg.name ?? "")}（库存 +${initialStock}）`);
+        ctx.postToWebview({ type: "toast", text: `✅已新建 ${code}` });
         loadAll();
         break;
       }
@@ -451,6 +452,7 @@ export const shopTool: ToolDefinition = {
           log("⚠没有选中要删除的商品");
           break;
         }
+        await preOpBackup(ctx.storageDir, log);
         let n = 0;
         const deleted: string[] = [];
         for (const id of ids) {
@@ -557,7 +559,7 @@ export const shopTool: ToolDefinition = {
           log("❌卖出/退款需为非负整数，且至少一个 > 0");
           break;
         }
-        const mode = msg.mode === "accumulate" ? "accumulate" : msg.mode === "skip" ? "skip" : "accumulate";
+        const mode = msg.mode === "overwrite" ? "overwrite" : msg.mode === "skip" ? "skip" : "accumulate";
         const res = db.upsertSale({
           product_id: productId,
           date,
@@ -571,7 +573,9 @@ export const shopTool: ToolDefinition = {
           res === "created"
             ? `📝已记录 ${p.code} 卖${sold}退${refund}`
             : res === "updated"
-              ? `📝已累加 ${p.code}（当天已有记录，卖出+${sold} 退款+${refund}）`
+              ? mode === "overwrite"
+                ? `📝已覆盖 ${p.code}（当天已有记录，替换为 卖${sold}退${refund}）`
+                : `📝已累加 ${p.code}（当天已有记录，卖出+${sold} 退款+${refund}）`
               : `⏭已跳过 ${p.code}（当天已有记录）`,
         );
         refreshSales(date);
@@ -585,7 +589,7 @@ export const shopTool: ToolDefinition = {
           log(`❌${lk} 已月结锁定，不能改销售记录`);
           break;
         }
-        const mode = msg.mode === "accumulate" ? "accumulate" : msg.mode === "skip" ? "skip" : "accumulate";
+        const mode = msg.mode === "overwrite" ? "overwrite" : msg.mode === "skip" ? "skip" : "accumulate";
         const lines = String(msg.text ?? "").split(/\r?\n/);
         const products = db.getProducts();
         const byCode = new Map<string, Product>();

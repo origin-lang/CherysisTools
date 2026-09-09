@@ -53,17 +53,6 @@ window.toolClients = window.toolClients || {};
       "sale_price",
       "purchase_link",
     ]);
-    var FILTER_FIELDS = [
-      "code",
-      "name",
-      "category",
-      "series",
-      "grade",
-      "cost_price",
-      "sale_price",
-      "stockTotal",
-    ];
-
     var visList = new Set(PRODUCT_FIELDS.map((f) => f.key));
     var visGallery = new Set(PRODUCT_FIELDS.map((f) => f.key));
     var viewMode = "list";

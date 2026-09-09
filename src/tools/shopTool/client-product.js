@@ -27,8 +27,6 @@
 
     function filteredProducts() {
       const status = $("filterStatus")?.value || "all";
-      const series = $("filterSeries")?.value || "";
-      const category = $("filterCategory")?.value || "";
       return state.products
         .filter((p) =>
           status === "all"
@@ -37,8 +35,6 @@
               ? p.status === 0
               : p.status === 1,
         )
-        .filter((p) => (series ? p.series === series : true))
-        .filter((p) => (category ? p.category === category : true))
         .filter((p) => {
           const kw = String(filters.keyword || "").trim().toLowerCase();
           if (!kw) {
@@ -51,15 +47,6 @@
             hay.includes(kw) ||
             (kwDigits.length > 0 && codeDigits.includes(kwDigits))
           );
-        })
-        .filter((p) => {
-          for (const k of FILTER_FIELDS) {
-            const f = (filters[k] || "").trim();
-            if (f && !cellValue(p, k).toLowerCase().includes(f.toLowerCase())) {
-              return false;
-            }
-          }
-          return true;
         })
         .sort((a, b) => {
           let r = 0;
@@ -144,8 +131,6 @@
       return JSON.stringify({
         len: list.length,
         status: $("filterStatus")?.value || "all",
-        series: $("filterSeries")?.value || "",
-        category: $("filterCategory")?.value || "",
         filters,
         sortKey,
         sortDir,
@@ -212,29 +197,19 @@
       const plIdx = vis.findIndex((f) => f.key === "purchase_link");
       const imgAt = plIdx >= 0 ? plIdx : vis.length;
       const headCols = [];
-      const filterCols = [];
-      filterCols.push(`<td></td>`);
       for (let i = 0; i < vis.length; i++) {
         if (i === imgAt) {
           headCols.push(`<th>图片</th>`);
-          filterCols.push(`<td></td>`);
         }
         const f = vis[i];
         headCols.push(
           `<th data-sort="${f.key}">${f.label}${sortKey === f.key ? (sortDir === 1 ? " ▲" : " ▼") : ""}</th>`,
         );
-        filterCols.push(
-          FILTER_FIELDS.includes(f.key)
-            ? `<td><input data-fkey="${f.key}" value="${esc(filters[f.key] || "")}" placeholder="筛选${f.label}" style="width:100%;min-width:52px;padding:2px 4px;font-size:11px" /></td>`
-            : `<td></td>`,
-        );
       }
       if (imgAt >= vis.length) {
         headCols.push(`<th>图片</th>`);
-        filterCols.push(`<td></td>`);
       }
       headCols.push(`<th>操作</th>`);
-      filterCols.push(`<td></td>`);
       const body = list
         .map((p) => {
           const net = p.soldTotal - p.refundTotal;
@@ -313,8 +288,6 @@
               <button class="mini-btn" data-s-act="toggle" data-code="${esc(p.code)}" data-id="${p.id}" title="${starred ? "取消星标" : "加入直播排品备选"}">${starred ? "★" : "☆"}</button>
               <button class="mini-btn" data-p-act="copy" data-id="${p.id}" title="复制完整名称">📋</button>
               <button class="mini-btn" data-p-act="stockin" data-id="${p.id}" title="补货入库">📦</button>
-              ${off ? `<button class="mini-btn" data-p-act="status" data-id="${p.id}" data-status="0" title="上架恢复出售">🔺</button>` : `<button class="mini-btn" data-p-act="status" data-id="${p.id}" data-status="1" title="下架（置灰不删除，可随时上架）">🔻</button>`}
-              <button class="mini-btn" data-p-act="clearimg" data-id="${p.id}" title="清空图片文件夹">🌫</button>
               <button class="mini-btn btn-danger" data-p-act="del" data-id="${p.id}" title="删除(含记录)">🗑</button>
             </td>`);
           return `<tr class="${off ? "off" : ""} ${low ? "lowstock" : ""}">${tds.join("")}</tr>`;
@@ -337,48 +310,13 @@
              <div class="table-wrap"><table class="data-table"><thead><tr>
                <th style="width:30px"><input type="checkbox" id="selectAllProducts" ${list.length === 0 ? "disabled" : ""} ${allSelected ? "checked" : ""} title="全选 / 取消全选" /></th>
                ${headCols.join("")}
-             </tr><tr class="filter-row">${filterCols.join("")}</tr></thead><tbody>${body}</tbody></table></div>
+             </tr></thead><tbody>${body}</tbody></table></div>
              <div class="muted" style="margin-top:4px">双击单元格编辑（回车或点击别处即保存）；右键行/表格复制</div>`;
-      bindFilterRow();
       bindBatchOps();
-      const listTable = document.querySelector(
-        "#productListView .table-wrap .data-table",
-      );
-      if (listTable) {
-        const headRow = listTable.querySelector("thead tr");
-        const tblWrap = listTable.closest(".table-wrap");
-        if (headRow && tblWrap) {
-          const h = headRow.offsetHeight;
-          if (h > 0) {
-            tblWrap.style.setProperty("--thead-h", h + "px");
-          } else {
-            tblWrap.style.removeProperty("--thead-h");
-          }
-        }
-      }
     }
 
     function hasFilter() {
       return Object.values(filters).some((v) => String(v).trim().length > 0);
-    }
-
-    function bindFilterRow() {
-      document
-        .querySelectorAll(".filter-row input[data-fkey]")
-        .forEach((inp) => {
-          inp.oninput = () => {
-            filters[inp.dataset.fkey] = inp.value;
-            const el = $("clearFilterBtn");
-            if (el) {
-              el.style.visibility = hasFilter() ? "visible" : "hidden";
-            }
-          };
-          inp.onkeydown = (e) => {
-            if (e.key === "Enter") {
-              renderProducts();
-            }
-          };
-        });
     }
 
     function updateSelectionUI() {
@@ -519,7 +457,7 @@
                 return `<div class="card ${off ? "off" : ""}" data-p-act="img" data-id="${p.id}">
                   <button class="star ${starred ? "on" : ""}" data-s-act="toggle" data-code="${esc(p.code)}" data-id="${p.id}" title="${starred ? "取消星标" : "加入直播排品备选"}">${starred ? "★" : "☆"}</button>
                   <span class="card-badge ${off ? "off" : ""}">${off ? "已下架" : p.code}</span>
-                  ${coverData ? `<img src="${coverData}" />` : `<div class="ph">无图（双击表格行可改）</div>`}
+                  ${coverData ? `<img src="${coverData}" />` : `<div class="ph">暂无图片</div>`}
                   <div class="card-body">${lines}</div>
                 </div>`;
               })
@@ -568,6 +506,7 @@
             field,
             value: field === "grade" ? Number(val) : val,
           });
+          toast("已保存");
         }
         td.innerHTML = td.dataset.orig;
         delete td.dataset.orig;
@@ -620,33 +559,14 @@
     }
 
     function populateFilters() {
-      const seriesAll = [
-        ...new Set(state.products.map((p) => p.series).filter(Boolean)),
-      ].sort();
-      const catsAll = [
-        ...new Set(state.products.map((p) => p.category).filter(Boolean)),
-      ].sort();
       const trendAll = state.products.map(
         (p) => `${p.id}|${p.code}|${p.name}`,
       );
-      const sig = JSON.stringify([seriesAll, catsAll, trendAll]);
+      const sig = JSON.stringify(trendAll);
       if (sig === filtersSig) {
         return;
       }
       filtersSig = sig;
-      const series = seriesAll;
-      const cats = catsAll;
-      const fillSel = (el, vals, emptyLabel) => {
-        const cur = el.value;
-        el.innerHTML =
-          `<option value="">${emptyLabel}</option>` +
-          vals
-            .map((v) => `<option value="${esc(v)}">${esc(v)}</option>`)
-            .join("");
-        el.value = cur;
-      };
-      fillSel($("filterSeries"), series, "全部系列");
-      fillSel($("filterCategory"), cats, "全部品类");
       const trendSel = $("trendProduct");
       const curP = trendSel.value;
       trendSel.innerHTML =
@@ -857,7 +777,14 @@ L002 合金项链十字架 项链 A类 1 8.5"></textarea>
       menu.id = "ctxMenu";
       menu.style.cssText =
         "position:fixed;z-index:70;background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:4px;padding:4px 0;min-width:130px;box-shadow:0 2px 8px rgba(0,0,0,.3)";
-      menu.innerHTML = `<div class="ctx-item" data-copy="row">复制整行</div><div class="ctx-item" data-copy="table">复制整表(筛选后)</div>`;
+      menu.innerHTML =
+        `<div class="ctx-item" data-copy="row">复制整行</div>` +
+        `<div class="ctx-item" data-copy="table">复制整表(筛选后)</div>` +
+        `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
+        (p.status === 0
+          ? `<div class="ctx-item" data-pctx="off">下架（置灰不删除）</div>`
+          : `<div class="ctx-item" data-pctx="on">上架恢复出售</div>`) +
+        `<div class="ctx-item" data-pctx="clearimg">清空图片文件夹…</div>`;
       menu.style.left = Math.min(e.clientX, window.innerWidth - 140) + "px";
       menu.style.top = Math.min(e.clientY, window.innerHeight - 60) + "px";
       document.body.appendChild(menu);
@@ -883,6 +810,30 @@ L002 合金项链十字架 项链 A类 1 8.5"></textarea>
           lines.push(keys.map((k) => cellValue(row, k)).join("\t"));
         }
         copyText(lines.join("\n"));
+        close();
+      };
+      const offBtn = menu.querySelector('[data-pctx="off"]');
+      if (offBtn) {
+        offBtn.onclick = () => {
+          post({ type: "setStatus", id: p.id, status: 1 });
+          close();
+        };
+      }
+      const onBtn = menu.querySelector('[data-pctx="on"]');
+      if (onBtn) {
+        onBtn.onclick = () => {
+          post({ type: "setStatus", id: p.id, status: 0 });
+          close();
+        };
+      }
+      menu.querySelector('[data-pctx="clearimg"]').onclick = () => {
+        confirmBox(
+          `确认清空 ${p.code} 的图片文件夹？（文件会真的删除）`,
+        ).then((ok) => {
+          if (ok) {
+            post({ type: "clearImages", code: p.code });
+          }
+        });
         close();
       };
       setTimeout(() => {
