@@ -416,3 +416,89 @@
 - `pnpm run compile`（0 error）、`pnpm run lint`（0 error，仅 excelAnalyzeTool 既有 4 条 curly）、`node --check` client-main.js / client-product.js 通过。
 - **备份冒烟**（临时 SQLite，5 项全 PASS）：`backupDB` 真实落盘 ×3、按 mtime 剪除保留 N 份裁掉最早、`auto_backup_date` 读写、pre/auto 前缀互不干扰。
 - 需人工复验：导出后气泡带路径→「查看文件」定位；商品搜 `007`/`手链` 即时过滤并联动清除筛选；删一条商品前后看在 `storageDir/backups` 出现 `shop_pre_*.db`；空库首次打开见三步引导、收起后本会话不重现。
+
+## 十二、每日销售录入与对账三件套
+
+- **连续录入**：`quickSaveBtn` 逻辑抽为 `submitQuick()`（client-main.js）；`quickCode / quickSold / quickRefund / quickNote` 任意回车即保存，保存后清空卖出/退款/备注与编号，并 `focus()+select()` 编号框——柜台可全程键盘连录。编号非法/不存在时只提示并把光标留在框内，不吞输入。
+- **当日合计行**：`renderSales` 表底加 `<tfoot>`「合计 N 条 + 卖出/退款/净售件数」（client-sales.js），进价/备注/删除列留空跨列。
+- **负净售标红**：行级与合计行的净售 `< 0` 加 `.num-neg`（fragment.html 新增 CSS，`--vscode-errorForeground`，与库存预警同色系）。
+- 验证：`node --check` ×2、`pnpm run compile`（0 error）、`pnpm run lint`（仅既有 4 条警告）。人工复验：连续回车录 3 单、合计行数字、退款>卖出看红字。
+
+## 十三、分析·月报直观化（去掉「生成/刷新」，分区三步）
+
+- **去掉「生成/刷新月报」按钮**：改为自动刷新——月份切换（`settleMonth.onchange`）、进入月报 Tab（`.sub-tab[data-sub="tabMonthly"]` 上附加 click 监听，与 main.html 泛用 tab 切换并存）、以及 `init()` 首帧各触发一次 `monthBuild`，面板数字总是最新快照。
+- **面板拆三部曲**（fragment.html）：`① 本月数字`（自动汇总）→ `② 到账收入 + 支出 + 保存/删除` → `③ 封账`（锁定/解锁 + 徽章 + 人话说明）。
+- **锁定/解锁语义说明**：`③` 区配常识文案「锁定 = 封账：锁定后当月销售不能改，数字固定，随时可解锁再改」；`renderSettlePanel` 按锁定态显示/隐藏 锁定按钮、解锁按钮、`settleLockBadge` 徽章（锁定后保存按钮变灰「已锁定，不能改」）；月报列表行内锁定/解锁按钮补 `title` 说明。
+- **解锁二次确认**：面板「解锁」与月报列表「解锁」都弹确认框（提示影响：当月销售恢复可改、月报回滚草稿）。
+- 收入计算未动（仍为手动到账），后端零改动。
+- 验证：`node --check` ×2、`pnpm run compile`（0 error）、`pnpm run lint`（仅既有 4 条警告）、无 `settleBuildBtn` 残留引用。人工复验：切到月报 Tab 数字自动出现；换月即刷新；锁定后保存/删除变灰且月报列表出现「已锁定」；解锁有确认。
+
+## 十四、每日销售「覆盖」模式修复（真的覆盖）
+
+- **问题**：saveSale（index.ts）与 pasteSales（index.ts）的模式归一化三目把 "overwrite" 吞成 "accumulate"——前端选「覆盖」，后端实际走累加（改错数越改越大），db.upsertSale 的覆盖分支（db.ts else → 直接替换）从未被触发。
+- **修复**：两处归一化改为 msg.mode === "overwrite" ? "overwrite" : msg.mode === "skip" ? "skip" : "accumulate"；保存日志按真实语义措辞（已覆盖 （替换为 卖x退y） vs 已累加）。
+- **tooltip**：每日销售「当天已有记录时」下拉加 	itle，把累加/覆盖/跳过三个语义说清（减少再误会）。
+- 验证：smoke-overwrite.cjs（临时 SQLite）8 项 PASS——首次 created、累加 3+2=5、覆盖后 = 8 而非 13、跳过不动 8。
+
+## 十五、商品管理精简（顶栏 + 行操作 + 留档补漏 + 反馈）
+
+- **A 顶栏 13→10**：撤掉「全部系列」「全部品类」两个下拉（keywordSearch 已覆盖系列/品类子串搜索），同时**整行移除列头筛选输入框**（enderList 的 ilter-row 及其 indFilterRow、FILTER_FIELDS、.filter-row CSS、--thead-h 计算全部删除）；保留 搜索/列表/画册/状态/新建/字段显示/导入/导出/清除筛选。ilteredProducts 只剩 状态 + 关键字 两路过滤，ilterSig 同步精简。
+- **B 行操作 6→4**：行内只留 ★（星标）· 📋（复制名称）· 📦（补货）· 🗑（删除）；**上·下架、清空图片夹**移入右键菜单（在原有「复制整行/复制整表」下扩两项，分隔线分组，清空图保留二次确认）。
+- **C 批量删除补留档**：deleteProducts case 在删除前 wait preOpBackup——之前只给单删 deleteProduct 留了档，**批量删漏了**，补齐后可恢复。
+- **D 反馈小修**：画册卡片占位文案「无图（双击表格行可改）」（画廊根本没这功能）→「暂无图片」；双击单元格保存后气泡「已保存」；新建商品成功由后端发 	oast（ddProduct case 内 postToWebview）。
+- 验证：
+ode --check ×3、pnpm run compile（0 error）、pnpm run lint（仅既有 4 条）、smoke-overwrite 8 PASS、smoke-backup 5 PASS、全文件 grep 无 ilterSeries/filterCategory/filter-row/bindFilterRow/FILTER_FIELDS/thead-h 残留。
+- 人工复验：顶栏只剩一个搜索框 + 状态下拉；右键商品行出现「下架/上架」「清空图片文件夹…」；勾选多个商品批量删除后在 storageDir/backups 出现 shop_pre_*.db；新建商品弹「已新建 Lxxx」；编辑单元格回车弹「已保存」。
+
+## 十六、每日销售再顺路：面板顺序、行内改数、模板预览、趋势联动
+
+- **A 面板顺序重排**（fragment 纯调块）：每日销售页自上而下改为 **快捷录入 → 当日销售表 → 批量粘贴 → 导出流水 → 销售趋势**。柜台录完一笔，下方立刻看到表格确认，不必再滚屏。
+- **B 销售行内改数量**：双击当日表「卖出/退款数量」单元格直接改（number 输入，Enter/blur 提交、Escape 取消，复刻商品 Tab 内联编辑手感）。后端新增 case "updateSalesField"（index.ts，字段白名单 sold_qty/refund_qty/note，数值校验 ≥0 整数，走 equireMonthUnlocked 拒绝锁定月份）+ db.updateSalesField（按 id UPDATE，增量维护 ggCache.sale；接口 db.ts:129 附近，实现紧邻 deleteSales）。改错数不用再删除重录。
+- **C 完整名称模板实时预览**：设置页「完整名称模板」下方新增实时预览行（previewNameTemplate(tpl, p)，参数化 {name}{category}{series}{grade}{code} 替换，ullName 改为复用它，逻辑不变）；setNameTemplate.oninput + enderSettings/productsLoaded 各刷新一次，无商品时显示占位文案。
+- **D 趋势小联动**：syncTrendMonthField()——切「按日（选月）」自动补当月并显示月份行，切回「按月累计」收起月份行，init() 首帧即调；刷新语义不变。
+- 验证：
+ode --check ×4、pnpm run compile（0 error）、pnpm run lint（仅既有 4 条）、smoke-salesfield 6 PASS（改 sold/refund、agg 合计一致、note、不存在 id 静默）、smoke-overwrite 8 PASS、smoke-backup 5 PASS。
+- 人工复验：每日销售页面板新顺序；双击销售数改为 8 回车后表格与合计立即刷新、锁定月份则拒绝；模板预览随输入即时变化；趋势切按日出现月份框。
+
+## 十七、粘贴入库「单空格」分隔修复
+
+- **问题**：pasteSales 的分隔正则 /\t|[,;，；]|\s{2,}/ 只把「2 个以上连续空格」当分隔符——用户输 L001 5 4（单空格）整行被当成 1 个 token，extractCodeToken 只抠出编号 L001，5/4 丢失，落库成 卖出0 退款0，看起来就是「粘贴不生效」。
+- **修复**（index.ts pasteSales）：分隔改为 [,;，；]|\s+（任意空白/逗号/分号均可分隔；销售粘贴每行只有 编号/卖出/退款，无名称列，单空格安全）；另加校验：**卖出与退款同时为 0 的行判为「无法解析」**并在摘要里列明，不再静默建空行。
+- **备注**：商品导入 importProducts 沿用 \s{2,} 不动（那台每行含名称列，名称里有单空格，按单空格切会错位）。
+- 验证：compile 0 error、lint 仅既有 4 条、smoke-paste 8 PASS（单空格 L001 5 4 → sold5 refund4；Tab/逗号/单空格各格式；0/0 判失败；重复行拒绝）。人工复验：粘贴「L001 5 4」后当日表出现卖出 5 退款 4。
+
+## 十八、直播排品九宫格双列排布
+
+- 纯 CSS（fragment.html）：#liveGridArea 改 display:grid; grid-template-columns: repeat(auto-fit, minmax(360px,1fr)); gap:12px 16px——宽面板一行 2 组、窄自动回 1 列；.live-group 的 margin-bottom 交给容器 gap；.g-head 加 lex-wrap: wrap。
+- .live-grid 的 max-width:540px 保留（窄列自动跟列宽）。JS/后端零改动，刷新面板即生效。
+
+## 十九、图片右键菜单（复制/系统打开/删单张）
+
+- **浮层 menu**：showImageCtxMenu(x,y,items)（client-core.js）——自定义右键浮层，复用 .ctx-item 样式 + 新增 .ctx-danger（红色危险项），点击外部/Esc/blur/resize 关闭。
+- **复制图片**：copyImageFromDataUrl（client-core.js）data URL→canvas→PNG→
+avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
+- **大图/缩略图右键**（imagesLoaded 处绑定）：复制这张图片（缩略图未载入大图时先 getFullImage 载入后自动复制，state.lbPendingCopy 接力）、复制完整名称、系统看图打开原图、删除这张图片…；
+- **后端新增**（index.ts）：openImageFile（scode.env.openExternal(Uri.file) 系统看图软件打开原文件）、deleteImageFile（按 index 删单张，preOpBackup 后刷新 imagesLoaded + invalidateCover + loadAll）。索引与 getImages 共用 listImageFiles 排序（数字升序），冒烟验证索引映射一致。
+- **封面右键**（onProductCtx 扩展 + 画册视图补 contextmenu 绑定）：复制封面图、查看大图。
+- 验证：compile 0 error、lint 仅既有 4 条、smoke-img 4 PASS。前端刷新面板、后端 compile 后 F5 生效。
+
+## 二十、直播排品组边界/价格与导出状态修复
+
+- **导出状态反了**：index.ts exportProducts 里状态列写的是 p.status === 1 ? "上架" : "下架"，而 status=1 表示下架——已改为 "下架" : "上架"。
+- **双列边界**：.live-group 加边框+圆角+浅底+头部分割线，两列相邻不再糊成一团；组头加「已填 x/9」。
+- **价格框**：每个格子输入框下方加 live-meta，填了有效商品就显示金色 ¥售价，输入时联动刷新。
+- **按钮排布**：toolbar 按「组操作（加一组/清空格子）｜清单（复制清单/导出Excel）｜输出（输出目录+路径）｜生成全部九宫格」重排，	oolbar-fill 撑开留白。
+- 验证：compile 0 error、lint 仅既有 4 条；编译产物确认状态列已修正。前端刷新面板、后端 F5 生效。
+
+## 二十一、组合筛选/清空本组/图片菜单收敛
+
+- **组合筛选**：商品管理工具栏按「状态 + 品类 + 系列 + 关键词」四维 AND 组合筛（ilterCat/ilterSeries 下拉，选项随商品数据自动刷新并保留当前值）；hasFilter/syncClearFilterBtn 统一判断，任一维度生效即显示「清除筛选」，清除时一并重置状态/品类/系列/关键词。
+- **清空本组**：每个九宫格组头新增「清空本组」按钮（保留组、只清格子，确认后执行 clearLiveGroup）。
+- **图片右键菜单收敛**：移除与浮层头「📋 复制完整名称」重复的菜单项；「打开原图」改为「📂 打开图片文件夹」（evealFileInOS，与导出定位同一机制），后端 openImageFile 改为直接 reveal 该编码的图片文件夹。
+- 验证：compile 0 error、lint 仅既有 4 条。前端刷新面板、后端 F5 生效。
+
+## 二十二、每日销售表：表头排序 + 筛选
+
+- 当日销售表表头可点击排序（编号/名称/卖出数量/退款数量/净售数量/进价快照/备注，点击切换升/降序，表头 ▲▼ 提示），onSalesAct 新增 	h[data-sort] 分支。
+- 「当日销售」标题行新增筛选框（编号/名称/备注关键词，含编号数字忽略格式匹配），salesKw + salesTableRows() 先筛后排序；合计行按筛选后结果汇总；无记录/筛空分别给提示。
+- 仅前端改动。验证：node --check 过、lint 仅既有 4 条。刷新面板即生效。
