@@ -33,6 +33,26 @@ const PRE_BACKUP_KEEP = 20;
 let lastAutoBackupCheckDate = "";
 const backupDir = (storageDir: string): string => path.join(storageDir, "backups");
 
+// 商品字段的固定显示顺序（与前端 client-core.js PRODUCT_FIELDS 保持一致）
+const PRODUCT_FIELD_ORDER: Array<{ key: string; label: string }> = [
+  { key: "code", label: "编号" },
+  { key: "name", label: "名称" },
+  { key: "category", label: "品类" },
+  { key: "series", label: "系列" },
+  { key: "grade", label: "等级" },
+  { key: "cost_price", label: "进价" },
+  { key: "sale_price", label: "售价" },
+  { key: "stockTotal", label: "库存" },
+  { key: "soldTotal", label: "累计售出" },
+  { key: "netTotal", label: "累计净售" },
+  { key: "status", label: "状态" },
+  { key: "purchase_link", label: "采购链接" },
+];
+// 可写字段子集（派生列不参与导入/导出写回）
+const IMPORTABLE_FIELD_ORDER = PRODUCT_FIELD_ORDER.filter((f) =>
+  ["name", "category", "series", "grade", "cost_price", "sale_price", "purchase_link"].includes(f.key),
+);
+
 async function backupToDir(storageDir: string, prefix: string): Promise<string | null> {
   try {
     fs.mkdirSync(backupDir(storageDir), { recursive: true });
@@ -1060,6 +1080,33 @@ export const shopTool: ToolDefinition = {
         const black: string[] = [];
         let created = 0;
         let skipped = 0;
+        // 导入列 = “编号” + 当前可见列∩可写字段（派生列不参与导入；默认可见=旧 8 列格式）
+        const IMPORT_WRITABLE = new Set([
+          "name",
+          "category",
+          "series",
+          "grade",
+          "cost_price",
+          "sale_price",
+          "purchase_link",
+        ]);
+        let rawVis: unknown;
+        try {
+          rawVis = JSON.parse(String(getSetting("col_visible_list") || "[]"));
+        } catch {
+          rawVis = [];
+        }
+        const visSet = new Set<string>(Array.isArray(rawVis) ? (rawVis as string[]) : []);
+        // 没配置/全隐藏时兜底为完整可写列（=旧 8 列格式），避免第一次用时只导得进编号
+        let importable = IMPORTABLE_FIELD_ORDER.filter((f) =>
+          visSet.has(f.key),
+        );
+        if (importable.length === 0) {
+          importable = IMPORTABLE_FIELD_ORDER;
+        }
+        const importFields = ["code"].concat(
+          importable.map((f) => f.key),
+        );
         const lines = String(msg.text ?? "").split(/\r?\n/);
         for (let i = 0; i < lines.length; i++) {
           const raw = lines[i].trim();
@@ -1091,15 +1138,19 @@ export const shopTool: ToolDefinition = {
             skipped++;
             continue;
           }
-          const name = String(parts[1] ?? "");
-          const category = String(parts[2] ?? "");
-          const series = String(parts[3] ?? "");
-          const gradeRaw = Math.floor(Number(parts[4] ?? 1));
+          const get = (key: string) => {
+            const idx = importFields.indexOf(key);
+            return idx >= 0 ? String(parts[idx] ?? "") : "";
+          };
+          const name = get("name");
+          const category = get("category");
+          const series = get("series");
+          const gradeRaw = Math.floor(Number(get("grade") || 1));
           const grade = Number.isFinite(gradeRaw) && gradeRaw >= 0 && gradeRaw <= 99 ? gradeRaw : 1;
-          const costRaw = Number(parts[5] ?? 0);
+          const costRaw = Number(get("cost_price") || 0);
           const cost = Number.isFinite(costRaw) && costRaw >= 0 ? costRaw : 0;
-          const saleRaw = Number(parts[6] ?? 0);
-          const link = String(parts[7] ?? "");
+          const saleRaw = Number(get("sale_price") || 0);
+          const link = get("purchase_link");
           const manual = Number.isFinite(saleRaw) && saleRaw > 0 ? saleRaw : 0;
           const custom = grade === 0;
           if (!custom && db.ensureRule(grade)) {
@@ -1326,26 +1377,40 @@ list = (msg.codes as string[])
           const gradeLabel = new Map(
             db.getRules().map((r) => [String(r.grade), r.label || `等级${r.grade}`]),
           );
-          const aoa: any[][] = [
-            ["编号", "名称", "品类", "系列", "等级", "进价", "售价", "库存", "累计售出", "累计净售", "状态", "采购链接"],
-          ];
-          for (const p of list) {
-            const stock = stockTotals.get(p.id) || 0;
+          let rawVis: unknown;
+          try {
+            rawVis = JSON.parse(String(getSetting("col_visible_list") || "[]"));
+          } catch {
+            rawVis = [];
+          }
+          const vis = new Set<string>(Array.isArray(rawVis) ? (rawVis as string[]) : []);
+          let cols = PRODUCT_FIELD_ORDER.filter((f) => vis.has(f.key));
+          if (cols.length === 0) {
+            cols = [{ key: "code", label: "编号" }];
+          }
+          const valOf = (p: Product, key: string): any => {
             const sale = saleTotals.get(p.id) || { sold: 0, refund: 0 };
-            aoa.push([
-              p.code,
-              p.name,
-              p.category,
-              p.series,
-              gradeLabel.get(String(p.grade)) || `等级${p.grade}`,
-              p.cost_price,
-              p.sale_price,
-              stock,
-              sale.sold,
-              sale.sold - sale.refund,
-              p.status === 1 ? "下架" : "上架",
-              p.purchase_link,
-            ]);
+            switch (key) {
+              case "grade":
+                return gradeLabel.get(String(p.grade)) || `等级${p.grade}`;
+              case "status":
+                return p.status === 1 ? "已下架" : "在售";
+              case "netTotal":
+                return sale.sold - sale.refund;
+              case "stockTotal":
+                return stockTotals.get(p.id) || 0;
+              case "soldTotal":
+                return sale.sold;
+              case "cost_price":
+              case "sale_price":
+                return Number((p as any)[key] ?? 0);
+              default:
+                return (p as any)[key] ?? "";
+            }
+          };
+          const aoa: any[][] = [cols.map((c) => c.label)];
+          for (const p of list) {
+            aoa.push(cols.map((c) => valOf(p, c.key)));
           }
           const ws = XLSX.utils.aoa_to_sheet(aoa);
           const wb = XLSX.utils.book_new();
