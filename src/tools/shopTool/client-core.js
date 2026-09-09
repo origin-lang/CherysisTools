@@ -161,7 +161,11 @@ window.toolClients = window.toolClients || {};
 
     function fullName(p) {
       const t = state.settings.name_template || "{name}{series}{grade}{code}";
-      return t
+      return previewNameTemplate(t, p);
+    }
+
+    function previewNameTemplate(tpl, p) {
+      return String(tpl || "{name}{series}{grade}{code}")
         .replace(/\{name\}/g, p.name || "")
         .replace(/\{category\}/g, p.category || "")
         .replace(/\{series\}/g, p.series || "")

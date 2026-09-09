@@ -664,6 +664,15 @@
         </div>
       </div>
       <div class="panel">
+        <h4 style="margin: 0 0 8px 0">当日销售 <span class="muted" id="salesDateLabel"></span>
+          <span style="margin-left: 10px">
+            <button id="salesRefreshBtn" class="mini-btn" title="重新从数据库加载当日销售">🔄 刷新</button>
+            <button id="delSelBtn" class="mini-btn btn-danger" disabled title="删除勾选的行">删除选中</button>
+          </span>
+        </h4>
+        <div class="table-wrap" style="max-height: 260px" id="salesTableWrap"></div>
+      </div>
+      <div class="panel">
         <div class="rows">
           <div class="field" style="flex: 1">
             <label>批量粘贴（每行：编号 卖出 退款，可用 Tab / 空格 / 逗号分隔）</label>
@@ -695,15 +704,6 @@ L032,1"></textarea>
         </div>
       </div>
       <div class="panel">
-        <h4 style="margin: 0 0 8px 0">当日销售 <span class="muted" id="salesDateLabel"></span>
-          <span style="margin-left: 10px">
-            <button id="salesRefreshBtn" class="mini-btn" title="重新从数据库加载当日销售">🔄 刷新</button>
-            <button id="delSelBtn" class="mini-btn btn-danger" disabled title="删除勾选的行">删除选中</button>
-          </span>
-        </h4>
-        <div class="table-wrap" style="max-height: 260px" id="salesTableWrap"></div>
-      </div>
-      <div class="panel">
         <h4 style="margin: 0 0 8px 0">销售趋势</h4>
         <div class="muted" style="margin-bottom: 6px">
           👉 用法：选「全部商品 / 某个商品」＋「按天 / 按月」，柱子为净售数量；悬停柱子可看该时段的净售与退款。
@@ -720,7 +720,7 @@ L032,1"></textarea>
               <option value="day">按日（选月）</option>
             </select>
           </div>
-          <div class="field">
+          <div class="field" id="trendMonthField">
             <label>月份（按日时用）</label>
             <input type="month" id="trendMonth" />
           </div>
@@ -836,6 +836,8 @@ L032,1"></textarea>
             <input id="setNameTemplate" style="flex: 1" />
             <button id="saveNameTemplateBtn">保存</button>
           </div>
+          <label>实时预览</label>
+          <span id="nameTemplatePreview" class="muted">（暂无商品可预览）</span>
           <label>可用变量</label>
           <span class="muted">{name} 名称 · {category} 品类 · {series} 系列 · {grade} 等级名 · {code} 编号</span>
           <label>库存预警阈值</label>

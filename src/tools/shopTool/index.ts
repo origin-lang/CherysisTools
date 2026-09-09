@@ -608,7 +608,7 @@ export const shopTool: ToolDefinition = {
             continue;
           }
           const parts = raw
-            .split(/\t|[,;，；]|\s{2,}/)
+            .split(/[,;，；]|\s+/)
             .map((s) => s.trim())
             .filter((s) => s.length > 0);
           if (parts.length === 0) {
@@ -630,6 +630,10 @@ export const shopTool: ToolDefinition = {
           const refund = Math.floor(Number(parts[2] ?? 0));
           if (!Number.isFinite(sold) || !Number.isFinite(refund) || sold < 0 || refund < 0) {
             bad.push(`行${i + 1}: ${raw}`);
+            continue;
+          }
+          if (sold === 0 && refund === 0) {
+            bad.push(`行${i + 1}: ${raw}（卖出和退款都是 0，忽略）`);
             continue;
           }
           const product = byCode.get(code);
@@ -694,6 +698,35 @@ export const shopTool: ToolDefinition = {
         await preOpBackup(ctx.storageDir, log);
         db.deleteSales(ids);
         log(`🗑已删除 ${ids.length} 条销售记录`);
+        refreshSales(date);
+        loadAll();
+        break;
+      }
+      case "updateSalesField": {
+        const id = Number(msg.id);
+        const field = String(msg.field);
+        const date = String(msg.date ?? todayStr());
+        if (field !== "sold_qty" && field !== "refund_qty" && field !== "note") {
+          log("❌不支持的字段：" + field);
+          break;
+        }
+        if (field === "sold_qty" || field === "refund_qty") {
+          const n = Math.floor(Number(msg.value));
+          if (!Number.isFinite(n) || n < 0) {
+            log("❌卖出/退款需为非负整数");
+            break;
+          }
+          const lk = requireMonthUnlocked(date);
+          if (lk) {
+            log(`❌${lk} 已月结锁定，不能改销售记录（去“分析·月报”解锁）`);
+            break;
+          }
+          db.updateSalesField(id, field, n);
+          log(`✏️已改 ${field === "sold_qty" ? "卖出" : "退款"}→ ${n}`);
+        } else {
+          db.updateSalesField(id, "note", String(msg.value ?? ""));
+          log("✏️已改备注");
+        }
         refreshSales(date);
         loadAll();
         break;

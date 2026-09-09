@@ -1,5 +1,30 @@
 // shopTool 前端模块（加载顺序最后 1 个：装配 window.toolClients.shopTool，全部模块已就绪）：事件绑定、初始化与消息分发
 // 拆分自原 src/tools/shopTool/client.js，逻辑未改动
+    function syncTrendMonthField() {
+      const el = $("trendMonthField");
+      if (!el) {
+        return;
+      }
+      const isDay = $("trendGroup").value === "day";
+      el.style.display = isDay ? "" : "none";
+      if (isDay && !$("trendMonth").value) {
+        $("trendMonth").value = monthNow();
+      }
+    }
+
+    function updateNameTemplatePreview() {
+      const el = $("nameTemplatePreview");
+      if (!el) {
+        return;
+      }
+      const p = state.products[0];
+      if (!p) {
+        el.textContent = "（暂无商品可预览）";
+        return;
+      }
+      el.textContent = previewNameTemplate($("setNameTemplate").value, p);
+    }
+
     function bindEvents() {
       $("viewListBtn").onclick = () => {
         viewMode = "list";
@@ -87,6 +112,12 @@
       $("productListView").addEventListener("contextmenu", onProductCtx);
       $("productGalleryView").addEventListener("click", onProductAct);
       $("salesTableWrap").addEventListener("click", onSalesAct);
+      $("salesTableWrap").addEventListener("dblclick", (e) => {
+        const td = e.target.closest("td[data-edit]");
+        if (td) {
+          openSaleEditor(td);
+        }
+      });
       $("settlesTableWrap").addEventListener("click", onSettleAct);
 
       $("salesDate").onchange = () =>
@@ -203,7 +234,10 @@
       };
       $("trendBtn").onclick = requestTrend;
       $("trendProduct").onchange = requestTrend;
-      $("trendGroup").onchange = requestTrend;
+      $("trendGroup").onchange = () => {
+        syncTrendMonthField();
+        requestTrend();
+      };
       $("trendMonth").onchange = requestTrend;
 
       $("settleMonth").onchange = () =>
@@ -281,6 +315,7 @@
           key: "name_template",
           value: $("setNameTemplate").value,
         });
+      $("setNameTemplate").oninput = updateNameTemplatePreview;
       $("saveStockAlertBtn").onclick = () =>
         post({
           type: "saveSettings",
@@ -360,6 +395,7 @@
       $("salesDate").value = nowStr();
       $("trendMonth").value = monthNow();
       $("settleMonth").value = monthNow();
+      syncTrendMonthField();
       bindEvents();
       renderProducts();
       renderLive();
@@ -375,6 +411,7 @@
           state.settings.stock_alert = msg.stockAlert || 0;
           populateFilters();
           maybeShowOnboard();
+          updateNameTemplatePreview();
           break;
         }
         case "rulesLoaded": {

@@ -148,6 +148,7 @@
       $("setNameTemplate").value =
         state.settings.name_template || "{name}{series}{grade}{code}";
       $("setStockAlert").value = Number(state.settings.stock_alert || 0);
+      updateNameTemplatePreview();
       $("clearFilterBtn").style.visibility = hasFilter() ? "visible" : "hidden";
     }
 

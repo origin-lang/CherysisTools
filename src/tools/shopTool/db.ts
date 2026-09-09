@@ -126,6 +126,11 @@ export interface ShopDB {
     note: string;
     mode: "overwrite" | "accumulate" | "skip";
   }): "created" | "updated" | "skipped";
+  updateSalesField(
+    id: number,
+    field: "sold_qty" | "refund_qty" | "note",
+    value: number | string,
+  ): void;
   deleteSales(ids: number[]): void;
   salesTrend(by: "month" | "day", month?: string, productId?: number): Array<{ period: string; sold: number; refund: number }>;
   getSettleMonths(): MonthlySettle[];
@@ -436,6 +441,8 @@ export function getDB(): ShopDB {
     ORDER BY s.date, p.code
   `);
   const salesDel = c.prepare("DELETE FROM sales_record WHERE id = ?");
+  const salesRowUpdate = c.prepare("UPDATE sales_record SET sold_qty = ?, refund_qty = ? WHERE id = ?");
+  const salesRowNote = c.prepare("UPDATE sales_record SET note = ? WHERE id = ?");
   const trendMonth = c.prepare(`
     SELECT substr(date, 1, 7) AS period, SUM(sold_qty) AS sold, SUM(refund_qty) AS refund
     FROM sales_record WHERE (? IS NULL OR product_id = ?)
@@ -665,6 +672,32 @@ export function getDB(): ShopDB {
         aggCache.sale.set(r.product_id, t);
       }
       return "created";
+    },
+    updateSalesField(id, field, value) {
+      const r = saleById.get(id) as any;
+      if (!r) {
+        return;
+      }
+      const pid = Number(r.product_id);
+      if (field === "sold_qty" || field === "refund_qty") {
+        const oldSold = Number(r.sold_qty || 0);
+        const oldRefund = Number(r.refund_qty || 0);
+        const newSold = field === "sold_qty" ? Number(value) : oldSold;
+        const newRefund = field === "refund_qty" ? Number(value) : oldRefund;
+        salesRowUpdate.run(newSold, newRefund, id);
+        if (aggCache.loaded) {
+          const t = aggCache.sale.get(pid) || { sold: 0, refund: 0 };
+          t.sold += newSold - oldSold;
+          t.refund += newRefund - oldRefund;
+          if (t.sold <= 0 && t.refund <= 0) {
+            aggCache.sale.delete(pid);
+          } else {
+            aggCache.sale.set(pid, t);
+          }
+        }
+      } else {
+        salesRowNote.run(String(value ?? ""), id);
+      }
     },
     deleteSales(ids) {
       const tx = c.transaction(() => {

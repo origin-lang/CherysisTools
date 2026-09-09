@@ -25,7 +25,8 @@
               (r) => `<tr class="${selSales.has(r.id) ? "sel" : ""}">
               <td><input type="checkbox" data-s-act="sel" data-id="${r.id}" ${selSales.has(r.id) ? "checked" : ""} /></td>
               <td><b>${esc(r.code)}</b></td><td>${esc(r.name)}</td>
-              <td class="num">${qty(r.sold_qty)}</td><td class="num">${qty(r.refund_qty)}</td>
+              <td class="num" data-edit="1" data-f="sold_qty" data-id="${r.id}" title="双击修改卖出数量">${qty(r.sold_qty)}</td>
+              <td class="num" data-edit="1" data-f="refund_qty" data-id="${r.id}" title="双击修改退款数量">${qty(r.refund_qty)}</td>
               <td class="num ${r.sold_qty - r.refund_qty < 0 ? "num-neg" : ""}">${qty(r.sold_qty - r.refund_qty)}</td>
               <td class="num" title="当天进价快照">¥${money(r.cost_price)}</td><td>${esc(r.note)}</td>
               <td><button class="mini-btn btn-danger" data-s-act="del" data-id="${r.id}" title="删除当日该条销售记录">🗑</button></td>
@@ -119,6 +120,64 @@
         <text x="4" y="${y(0) - 4}" fill="var(--vscode-descriptionForeground)" font-size="10">净售${qty(max)}</text>
         ${bars}
       </svg><div class="muted">净售 = 卖出 − 退款；鼠标悬停柱子看当日明细</div>`;
+    }
+
+    function openSaleEditor(td) {
+      const id = Number(td.dataset.id);
+      const field = td.dataset.f;
+      const orig = td.innerHTML;
+      td.dataset.orig = orig;
+      const row = state.sales.find((r) => r.id === id);
+      const editor = document.createElement("input");
+      editor.type = "number";
+      editor.min = "0";
+      editor.step = "1";
+      editor.value = String(
+        field === "sold_qty" ? (row?.sold_qty ?? 0) : (row?.refund_qty ?? 0),
+      );
+      editor.style.cssText =
+        "width:100%;max-width:70px;box-sizing:border-box;padding:2px 5px";
+      let done = false;
+      const finish = (commit) => {
+        if (done) {
+          return;
+        }
+        done = true;
+        if (commit) {
+          const n = Math.floor(Number(editor.value));
+          if (!Number.isFinite(n) || n < 0) {
+            toast("必须是 ≥0 的整数");
+            td.innerHTML = td.dataset.orig;
+            delete td.dataset.orig;
+            return;
+          }
+          post({
+            type: "updateSalesField",
+            id,
+            field,
+            value: n,
+            date: $("salesDate").value,
+          });
+          toast("已保存");
+        }
+        td.innerHTML = td.dataset.orig;
+        delete td.dataset.orig;
+      };
+      td.innerHTML = "";
+      td.appendChild(editor);
+      editor.onblur = () => finish(true);
+      editor.onkeydown = (e) => {
+        if (e.key === "Enter") {
+          finish(true);
+        } else if (e.key === "Escape") {
+          finish(false);
+        }
+        e.stopPropagation();
+      };
+      setTimeout(() => {
+        editor.focus();
+        editor.select();
+      }, 0);
     }
 
     function onSalesAct(e) {
