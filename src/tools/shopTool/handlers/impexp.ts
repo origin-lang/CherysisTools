@@ -4,6 +4,7 @@ import * as path from "path";
 import * as XLSX from "xlsx";
 import { Handler, HandlerCtx } from "./types.js";
 import { getDB, Product } from "../db.js";
+import { net } from "../salesModel.js";
 import { fileStamp } from "../pricing.js";
 import { PRODUCT_FIELD_ORDER } from "../productFields.js";
 
@@ -20,16 +21,14 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
         return;
       }
       try {
-        const all = db.getProducts();
-        let list = all;
+        const all = db.getProductsWithTotals();
+        let list: typeof all = all;
         if (Array.isArray(msg.codes) && msg.codes.length) {
           const byCode = new Map(all.map((p) => [p.code, p]));
           list = (msg.codes as string[])
             .map((code) => byCode.get(code))
-            .filter((p): p is Product => !!p);
+            .filter((p): p is (typeof all)[number] => !!p);
         }
-        const stockTotals = db.getStockTotals();
-        const saleTotals = db.getSaleTotals();
         const gradeLabel = new Map(
           db.getRules().map((r) => [String(r.grade), r.label || `等级${r.grade}`]),
         );
@@ -45,18 +44,17 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
           cols = [{ key: "code", label: "编号" }];
         }
         const valOf = (p: Product, key: string): any => {
-          const sale = saleTotals.get(p.id) || { sold: 0, refund: 0 };
           switch (key) {
             case "grade":
               return gradeLabel.get(String(p.grade)) || `等级${p.grade}`;
             case "status":
               return p.status === 1 ? "已下架" : "在售";
             case "netTotal":
-              return sale.sold - sale.refund;
+              return net((p as any).soldTotal, (p as any).refundTotal);
             case "stockTotal":
-              return stockTotals.get(p.id) || 0;
+              return (p as any).stockTotal;
             case "soldTotal":
-              return sale.sold;
+              return (p as any).soldTotal;
             case "cost_price":
             case "sale_price":
               return Number((p as any)[key] ?? 0);

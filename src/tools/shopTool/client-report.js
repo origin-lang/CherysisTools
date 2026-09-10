@@ -64,24 +64,12 @@
       </svg>`;
     }
 
-    function calcEndStock() {
-    const list = state.products || [];
-    let s = 0;
-    for (const p of list) {
-      s += (Number(p.stockTotal) || 0) * (Number(p.cost_price) || 0);
-    }
-    return Math.round(s * 100) / 100;
-  }
-
   function renderSettlePanel(payload) {
     const { month, snapshot, settle, prevEndStock } = payload;
     if (!$("settleMonth")) {
       return;
     }
-    const autoEnd =
-      payload.endStockAuto !== undefined && payload.endStockAuto !== null
-        ? Number(payload.endStockAuto)
-        : calcEndStock();
+    const autoEnd = Number(payload.endStockAuto);
     $("settleMonth").value = month;
     const net = snapshot.sold_total - snapshot.refund_total;
     const locked = !!(settle && settle.locked === 1);

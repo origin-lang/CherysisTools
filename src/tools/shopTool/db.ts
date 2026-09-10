@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import Database from "better-sqlite3";
+import { decideUpsert, net } from "./salesModel.js";
 
 export interface Product {
   id: number;
@@ -93,11 +94,9 @@ export const DEFAULT_SEED_RULES: SaleRule[] = [
 
 export interface ShopDB {
   getProducts(): Product[];
-  getProductsByIds(ids: number[]): Array<{ stockTotal: number; soldTotal: number; refundTotal: number } & Product>;
+  getProductsWithTotals(ids?: number[]): Array<{ stockTotal: number; soldTotal: number; refundTotal: number } & Product>;
   getProductByCode(code: string): Product | undefined;
   getProductById(id: number): Product | undefined;
-  getStockTotal(id: number): number;
-  getSaleTotal(id: number): { sold: number; refund: number };
   addProduct(p: Omit<Product, "id" | "created_at">): number;
   updateProductField(id: number, field: string, value: any): void;
   deleteProduct(id: number): void;
@@ -107,10 +106,8 @@ export interface ShopDB {
   addStockIn(s: Omit<StockIn, "id">): number;
   deleteStockIn(id: number): void;
   getStockIns(): StockInRow[];
-  getStockTotals(): Map<number, number>;
   updateStockQty(id: number, qty: number): void;
   sumStockCost(): number;
-  getSaleTotals(): Map<number, { sold: number; refund: number }>;
   getSales(date?: string): SalesRecord[];
   getSalesRange(from: string, to: string): SalesRecord[];
   upsertSale(r: {
@@ -141,29 +138,28 @@ export interface ShopDB {
   replaceLiveStars(codes: string[]): void;
   getLivePlan(): LivePlanRow[];
   replaceLivePlan(plan: LivePlanRow[]): void;
-  getDBFilePath(): string;
   backupDB(destPath: string): Promise<void>;
   restoreDB(srcPath: string, storageDir: string): void;
-  close(): void;
 }
 
 let db: Database.Database | null = null;
 let dbPath: string | null = null;
+let cached: ShopDB | null = null;
 
-// 库存合计 / 销量合计聚合缓存：首次懒加载全量 GROUP BY，之后在各写入路径增量维护，
-// 避免每次「改一个字段」都全表聚合。
+// 销量合计聚合缓存：首次懒加载全量 GROUP BY，之后在各写入路径增量维护，
+// 避免每次「改一个字段」都全表聚合。库存不缓存——直接读 stock_manual 列，口径单一。
 interface AggTotals {
   loaded: boolean;
-  stock: Map<number, number>;
   sale: Map<number, { sold: number; refund: number }>;
 }
-let aggCache: AggTotals = { loaded: false, stock: new Map(), sale: new Map() };
+let aggCache: AggTotals = { loaded: false, sale: new Map() };
 
 function resetAggCache(): void {
-  aggCache = { loaded: false, stock: new Map(), sale: new Map() };
+  aggCache = { loaded: false, sale: new Map() };
 }
 
 export function closeDB(): void {
+  cached = null;
   if (db) {
     try {
       db.close();
@@ -362,9 +358,13 @@ function mapSales(r: any): SalesRecord {
 }
 
 export function getDB(): ShopDB {
+  if (cached !== null) {
+    return cached;
+  }
   const c = core();
+  const productList = c.prepare("SELECT * FROM products ORDER BY code");
   const loadProducts = (): Product[] => {
-    const rows = c.prepare("SELECT * FROM products ORDER BY code").all() as any[];
+    const rows = productList.all() as any[];
     return rows.map(mapProduct);
   };
   const pInsert = c.prepare(`
@@ -393,9 +393,6 @@ export function getDB(): ShopDB {
     JOIN products p ON p.id = s.product_id
     ORDER BY s.date DESC, s.id DESC
   `);
-  const stockGroupStmt = c.prepare(`
-    SELECT product_id, SUM(qty) AS qty FROM stock_in GROUP BY product_id
-  `);
   const saleGroupStmt = c.prepare(`
     SELECT product_id, SUM(sold_qty) AS sold, SUM(refund_qty) AS refund FROM sales_record GROUP BY product_id
   `);
@@ -415,14 +412,9 @@ export function getDB(): ShopDB {
   ]) {
     pFieldStmts.set(f, c.prepare(`UPDATE products SET ${f} = @value WHERE id = @id`));
   }
-  const stockById = c.prepare("SELECT stock_manual AS v FROM products WHERE id = ?");
   const ensureAggLoaded = () => {
     if (aggCache.loaded) {
       return;
-    }
-    const stock = new Map<number, number>();
-    for (const r of stockGroupStmt.all() as any[]) {
-      stock.set(Number(r.product_id), Number(r.qty || 0));
     }
     const sale = new Map<number, { sold: number; refund: number }>();
     for (const r of saleGroupStmt.all() as any[]) {
@@ -431,7 +423,7 @@ export function getDB(): ShopDB {
         refund: Number(r.refund || 0),
       });
     }
-    aggCache = { loaded: true, stock, sale };
+    aggCache = { loaded: true, sale };
   };
   const salesInsert = c.prepare(`
     INSERT INTO sales_record (product_id, date, sold_qty, refund_qty, cost_price, note)
@@ -509,24 +501,29 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
     FROM sales_record WHERE date LIKE ?
   `);
 
-  return {
+  cached = {
     getProducts: loadProducts,
-    getProductsByIds(ids: number[]): Array<{ stockTotal: number; soldTotal: number; refundTotal: number } & Product> {
+    getProductsWithTotals(ids?: number[]): Array<{ stockTotal: number; soldTotal: number; refundTotal: number } & Product> {
       ensureAggLoaded();
       const out: Array<{ stockTotal: number; soldTotal: number; refundTotal: number } & Product> = [];
-      for (const id of ids) {
-        if (!Number.isInteger(id)) {
-          continue;
+      const rows = ids === undefined ? (productList.all() as any[]) : [];
+      if (ids !== undefined) {
+        for (const id of ids) {
+          if (!Number.isInteger(id)) {
+            continue;
+          }
+          const row = sById.get(id) as any;
+          if (row) {
+            rows.push(row);
+          }
         }
-        const p = sById.get(id) as any;
-        if (!p) {
-          continue;
-        }
-        const stockR = stockById.get(id) as any;
-        const t = aggCache.sale.get(Number(id));
+      }
+      for (const row of rows) {
+        const p = mapProduct(row);
+        const t = aggCache.sale.get(p.id);
         out.push({
-          ...mapProduct(p),
-          stockTotal: Number(stockR?.v || 0),
+          ...p,
+          stockTotal: p.stock_manual,
           soldTotal: t?.sold ?? 0,
           refundTotal: t?.refund ?? 0,
         });
@@ -540,14 +537,6 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
     getProductById(id: number): Product | undefined {
       const r = sById.get(id) as any;
       return r ? mapProduct(r) : undefined;
-    },
-    getStockTotal(id: number): number {
-      const r = stockById.get(id) as any;
-      return Number(r?.v || 0);
-    },
-    getSaleTotal(id: number): { sold: number; refund: number } {
-      ensureAggLoaded();
-      return aggCache.sale.get(Number(id)) || { sold: 0, refund: 0 };
     },
     addProduct(p: Omit<Product, "id" | "created_at">): number {
       const info = pInsert.run({ ...p, created_at: nowStr() });
@@ -574,7 +563,6 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
       });
       tx();
       if (aggCache.loaded) {
-        aggCache.stock.delete(id);
         aggCache.sale.delete(id);
       }
     },
@@ -617,12 +605,6 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
     addStockIn(s) {
       const info = stockInInsert.run({ ...s, created_at: nowStr() });
       stockAdjustStmt.run(s.qty, s.product_id);
-      if (aggCache.loaded) {
-        aggCache.stock.set(
-          s.product_id,
-          (aggCache.stock.get(s.product_id) || 0) + s.qty,
-        );
-      }
       return Number(info.lastInsertRowid);
     },
     deleteStockIn(id) {
@@ -630,15 +612,6 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
       stockInDelete.run(id);
       if (r) {
         stockAdjustStmt.run(-Number(r.qty || 0), Number(r.product_id));
-        if (aggCache.loaded) {
-          const key = Number(r.product_id);
-          const next = (aggCache.stock.get(key) || 0) - Number(r.qty || 0);
-          if (next <= 0) {
-            aggCache.stock.delete(key);
-          } else {
-            aggCache.stock.set(key, next);
-          }
-        }
       }
     },
     getStockIns(): StockInRow[] {
@@ -652,23 +625,12 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
         name: r.name,
       }));
     },
-    getStockTotals(): Map<number, number> {
-      const m = new Map<number, number>();
-      for (const r of c.prepare("SELECT id, stock_manual FROM products").all() as any[]) {
-        m.set(Number(r.id), Number(r.stock_manual || 0));
-      }
-      return m;
-    },
     updateStockQty(id, qty) {
       stockSetStmt.run(qty, id);
     },
     sumStockCost(): number {
       const r = stockCostStmt.get() as any;
       return Number(r?.v || 0);
-    },
-    getSaleTotals(): Map<number, { sold: number; refund: number }> {
-      ensureAggLoaded();
-      return new Map(aggCache.sale);
     },
     getSales(date?: string): SalesRecord[] {
       const rows = (date ? salesDateAll.all(date) : salesAll.all()) as any[];
@@ -679,53 +641,30 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
     },
     upsertSale(r): "created" | "updated" | "skipped" {
       const existing = salesByDateProduct.get(r.date, r.product_id) as any;
-      if (existing) {
-        if (r.mode === "skip") {
-          return "skipped";
-        }
-        const oldNet = Number(existing.sold_qty || 0) - Number(existing.refund_qty || 0);
-        const deltaSold = r.sold_qty - existing.sold_qty;
-        const deltaRefund = r.refund_qty - existing.refund_qty;
-        if (r.mode === "accumulate") {
-          salesUpdate.run({
-            sold_qty: existing.sold_qty + r.sold_qty,
-            refund_qty: existing.refund_qty + r.refund_qty,
-            cost_price: r.cost_price,
-            note: r.note,
-            date: r.date,
-            product_id: r.product_id,
-          });
-          const newNet =
-            existing.sold_qty + r.sold_qty - (existing.refund_qty + r.refund_qty);
-          stockAdjustStmt.run(oldNet - newNet, r.product_id);
-        } else {
-          salesUpdate.run({
-            sold_qty: r.sold_qty,
-            refund_qty: r.refund_qty,
-            cost_price: r.cost_price,
-            note: r.note,
-            date: r.date,
-            product_id: r.product_id,
-          });
-          stockAdjustStmt.run(oldNet - (r.sold_qty - r.refund_qty), r.product_id);
-        }
-        if (aggCache.loaded) {
-          const t = aggCache.sale.get(r.product_id) || { sold: 0, refund: 0 };
-          t.sold += deltaSold;
-          t.refund += deltaRefund;
-          aggCache.sale.set(r.product_id, t);
-        }
-        return "updated";
+      const d = decideUpsert(existing, r, r.mode);
+      if (d.action === "skipped") {
+        return "skipped";
       }
-      salesInsert.run(r);
-      stockAdjustStmt.run(-(r.sold_qty - r.refund_qty), r.product_id);
+      if (d.action === "created") {
+        salesInsert.run(r);
+      } else {
+        salesUpdate.run({
+          sold_qty: d.sold_qty,
+          refund_qty: d.refund_qty,
+          cost_price: r.cost_price,
+          note: r.note,
+          date: r.date,
+          product_id: r.product_id,
+        });
+      }
+      stockAdjustStmt.run(d.stockDelta, r.product_id);
       if (aggCache.loaded) {
         const t = aggCache.sale.get(r.product_id) || { sold: 0, refund: 0 };
-        t.sold += r.sold_qty;
-        t.refund += r.refund_qty;
+        t.sold += d.saleDeltaSold;
+        t.refund += d.saleDeltaRefund;
         aggCache.sale.set(r.product_id, t);
       }
-      return "created";
+      return d.action;
     },
     updateSalesField(id, field, value) {
       const r = saleById.get(id) as any;
@@ -740,10 +679,7 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
         const newRefund = field === "refund_qty" ? Number(value) : oldRefund;
         salesRowUpdate.run(newSold, newRefund, id);
         if (r.product_id !== undefined) {
-          stockAdjustStmt.run(
-            oldSold - oldRefund - (newSold - newRefund),
-            pid,
-          );
+          stockAdjustStmt.run(net(oldSold, oldRefund) - net(newSold, newRefund), pid);
         }
         if (aggCache.loaded) {
           const t = aggCache.sale.get(pid) || { sold: 0, refund: 0 };
@@ -765,10 +701,7 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
           const r = saleById.get(id) as any;
           salesDel.run(id);
           if (r) {
-            stockAdjustStmt.run(
-              Number(r.sold_qty || 0) - Number(r.refund_qty || 0),
-              Number(r.product_id),
-            );
+            stockAdjustStmt.run(net(Number(r.sold_qty || 0), Number(r.refund_qty || 0)), Number(r.product_id));
           }
           if (r && aggCache.loaded) {
             const key = Number(r.product_id);
@@ -881,9 +814,6 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
       });
       tx();
     },
-    getDBFilePath(): string {
-      return getDBPath();
-    },
     async backupDB(destPath: string): Promise<void> {
       const c = core();
       const dir = path.dirname(destPath);
@@ -958,8 +888,6 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
         throw err;
       }
     },
-    close() {
-      closeDB();
-    },
   };
+  return cached;
 }

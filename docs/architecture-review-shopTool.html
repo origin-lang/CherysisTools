@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review · shopTool</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 5 5; }
+      .leak { stroke: #dc2626; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .chip { display: inline-block; font-size: 10px; padding: 2px 6px; border-radius: 4px; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+      <header class="space-y-3">
+        <h1 class="font-serif text-3xl font-semibold">shopTool 架构评审</h1>
+        <div class="text-sm text-slate-500">cherysis-tools · <span class="font-mono">src/tools/shopTool</span> · 2026-09-11</div>
+        <div class="text-xs text-slate-500 flex flex-wrap gap-3 pt-1">
+          <span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 border-2 border-slate-600 bg-white"></span> module</span>
+          <span class="inline-flex items-center gap-1"><svg width="22" height="10"><line x1="0" y1="5" x2="22" y2="5" stroke="#64748b" stroke-width="1.5" stroke-dasharray="4 4"/></svg> seam</span>
+          <span class="inline-flex items-center gap-1"><svg width="22" height="10"><line x1="0" y1="5" x2="22" y2="5" stroke="#dc2626" stroke-width="2"/></svg> 跨 seam 泄漏</span>
+          <span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 deep"></span> deep module</span>
+        </div>
+      </header>
+
+      <section id="candidates" class="space-y-10">
+
+        <!-- ============ C1 ============ -->
+        <article class="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
+          <div class="flex items-start justify-between gap-3">
+            <h2 class="font-serif text-xl font-semibold">① 给 DB module 一次性预编译：接口收窄，实现变深</h2>
+            <div class="flex flex-col items-end gap-1 shrink-0">
+              <span class="chip bg-emerald-100 text-emerald-800 border border-emerald-300">Strong</span>
+              <span class="chip bg-slate-100 text-slate-600 border border-slate-200">in-process</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600 space-y-0.5">
+            db.ts:364 · index.ts:162 · handlers/impexp.ts:243 · index.ts:77,92,147
+          </div>
+
+          <div class="grid grid-cols-2 gap-4 items-stretch">
+            <div class="rounded-lg border border-slate-200 p-3 bg-slate-50 space-y-2">
+              <div class="text-xs uppercase tracking-wider text-slate-500">before</div>
+              <div class="flex items-end gap-2 h-56">
+                <div class="w-28 bg-white border-2 border-slate-400 rounded flex flex-col justify-center items-center px-1" style="height:120px">
+                  <div class="text-xs font-semibold">interface</div>
+                  <div class="text-[10px] text-slate-500">41 方法</div>
+                </div>
+                <div class="w-36 bg-slate-200 border-2 border-slate-500 rounded flex flex-col justify-center items-center px-1" style="height:150px">
+                  <div class="text-xs font-semibold">implementation</div>
+                  <div class="text-[10px] text-slate-600">41 方法 + SQL</div>
+                </div>
+              </div>
+              <div class="text-xs text-slate-500">interface ≈ implementation → shallow；<span class="font-mono">getDB()</span> 每次消息重铸 ~59 条 prepared 语句</div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-3 bg-slate-50 space-y-2">
+              <div class="text-xs uppercase tracking-wider text-slate-500">after</div>
+              <div class="flex items-end gap-2 h-56">
+                <div class="w-24 bg-indigo-50 border-2 border-indigo-500 rounded flex flex-col justify-center items-center px-1" style="height:44px">
+                  <div class="text-[10px] font-semibold text-indigo-700">interface</div>
+                  <div class="text-[10px] text-indigo-500">读写 ~8 个深方法</div>
+                </div>
+                <div class="w-40 deep rounded flex flex-col justify-center items-center gap-1 px-1" style="height:210px">
+                  <div class="text-[10px] text-slate-300">prepared 一次 · 缓存 handle</div>
+                  <div class="text-[10px] text-slate-400">getProductsWithTotals</div>
+                  <div class="text-[10px] text-slate-400">executeSaleOps · snapshotMonth</div>
+                  <div class="text-[10px] text-slate-400">backup/prune · importDB 切换</div>
+                  <div class="text-[10px] text-slate-500 line-through">aggCache.stock · getStockTotal · getSaleTotal · getDBFilePath</div>
+                </div>
+              </div>
+              <div class="text-xs text-slate-500">接口收窄，SQL/一致性收进内部；死方法划掉</div>
+            </div>
+          </div>
+
+          <div class="space-y-1 text-sm">
+            <p><span class="font-semibold">Problem</span>：<span class="font-mono">ShopDB</span> 这个 module 是 shallow 的——interface 和 implementation 几乎一样宽，且 <span class="font-mono">getDB()</span> 是工厂不是单例，每条 webview 消息都重铸 ~59 条 prepared 语句（`index.ts:162`），接口没隐藏任何东西。</p>
+            <p><span class="font-semibold">Solution</span>：prepared 语句在 <span class="font-mono">initDB()</span> 一次性编译并缓存，<span class="font-mono">getDB()</span> 退化为返回缓存 handle；删掉只写不读的 <span class="font-mono">aggCache.stock</span> 半边与死方法 <span class="font-mono">getStockTotal / getSaleTotal / getDBFilePath</span>。</p>
+            <ul class="list-disc list-inside space-y-0.5 text-sm">
+              <li><b>深度</b>：接口收缩，SQL 与一致性收进实现</li>
+              <li><b>leverage</b>：prepare 一次，N 条消息零重建</li>
+              <li>删 3 个死方法 + 悬挂缓存半边（含 Phase 4 引入但未接线的死代码）</li>
+              <li>测试可以廉价开内存库 → 是候选④的铺路石</li>
+            </ul>
+          </div>
+        </article>
+
+        <!-- ============ C2 ============ -->
+        <article class="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
+          <div class="flex items-start justify-between gap-3">
+            <h2 class="font-serif text-xl font-semibold">② “当前库存”只有一个 seam：合并两条三重 join</h2>
+            <div class="flex flex-col items-end gap-1 shrink-0">
+              <span class="chip bg-emerald-100 text-emerald-800 border border-emerald-300">Strong</span>
+              <span class="chip bg-slate-100 text-slate-600 border border-slate-200">in-process</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600 space-y-0.5">
+            db.ts:514-535, 655-669 · index.ts:278-285 · client-report.js:67-74
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-3 bg-slate-50">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">before</div>
+              <pre class="mermaid text-xs">
+flowchart LR
+  subgraph L[loadAll · index.ts:278]
+    G1[getProducts] & G2[getStockTotals] & G3[getSaleTotals] --> J1[三轮 merge 在闭包里]
+  end
+  subgraph D[productsDelta]
+    B[getProductsByIds] --> J2[同款再 merge]
+  end
+  J1 --> F[webview]
+  J2 --> F
+  R[client-report.js calcEndStock<br/>再算一遍 endStock] -. 同概念三处表述 .-> J1
+  S[(aggCache.stock 只写不读)] -. 库存另一种口径 .-> G2
+  classDef leak stroke:#dc2626;
+  class R,S leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-3 bg-slate-50">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">after</div>
+              <pre class="mermaid text-xs">
+flowchart LR
+  L[loadAll] --> W
+  D[productsDelta] --> W
+  subgraph deep[DB module 内]
+    W[getProductsWithTotals ids?] --> P[join products + stock + sale]
+  end
+  P --> F[webview]
+  classDef deep fill:#1e293b,color:#e2e8f0;
+  class W,P deep
+              </pre>
+            </div>
+          </div>
+
+          <div class="space-y-1 text-sm">
+            <p><span class="font-semibold">Problem</span>：库存这个领域概念散在三处——<span class="font-mono">stock_manual</span> 列（<span class="font-mono">getStockTotals</span>）、<span class="font-mono">aggCache.stock</span>（死）、前端 <span class="font-mono">calcEndStock()</span> 重算；同一套 products+库存+销量 join 在 <span class="font-mono">loadAll</span> 和 <span class="font-mono">getProductsByIds</span> 各写了一遍。</p>
+            <p><span class="font-semibold">Solution</span>：一个 deep 方法 <span class="font-mono">getProductsWithTotals(ids?)</span> 同时服务全量与差量；删 <span class="font-mono">aggCache.stock</span>；前端 <span class="font-mono">calcEndStock()</span> 直接消费服务端已下发的 <span class="font-mono">endStockAuto</span>，删除重复计算。</p>
+            <ul class="list-disc list-inside space-y-0.5 text-sm">
+              <li><b>locality</b>：库存 bug 只有一个家</li>
+              <li>join 一处实现、两处调用</li>
+              <li>删前端重复计算 + 死缓存半边</li>
+            </ul>
+          </div>
+        </article>
+
+        <!-- ============ C3 ============ -->
+        <article class="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
+          <div class="flex items-start justify-between gap-3">
+            <h2 class="font-serif text-xl font-semibold">③ 字段/定价规则单一来源：parity 检查兜底</h2>
+            <div class="flex flex-col items-end gap-1 shrink-0">
+              <span class="chip bg-amber-100 text-amber-800 border border-amber-300">Worth exploring</span>
+              <span class="chip bg-slate-100 text-slate-600 border border-slate-200">in-process</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600 space-y-0.5">
+            productFields.ts:20-34, 57-108 · pricing.ts · client-core.js:35-49, 94-141, 181-219
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-3 bg-slate-50">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">before · 双份手抄，红虚线即无声漂移</div>
+              <div class="flex items-center justify-between gap-2 py-6">
+                <div class="w-5/12 bg-white border-2 border-slate-400 rounded p-2 text-center">
+                  <div class="text-[10px] font-semibold">productFields.ts</div>
+                  <div class="text-[10px] text-slate-500">13 字段 · norm* 校验<br/>pricing.ts · applyExpr/calcPrice</div>
+                </div>
+                <svg class="w-1/6" viewBox="0 0 80 40"><line x1="0" y1="20" x2="80" y2="20" class="leak" stroke-width="2" stroke-dasharray="6 4"/><text x="40" y="14" text-anchor="middle" font-size="9" fill="#dc2626">注释互相提示</text></svg>
+                <div class="w-5/12 bg-white border-2 border-slate-400 rounded p-2 text-center">
+                  <div class="text-[10px] font-semibold">client-core.js</div>
+                  <div class="text-[10px] text-slate-500">FIELD_SPECS · sanitize<br/>applyExpr · calcPrice</div>
+                </div>
+              </div>
+              <div class="text-xs text-slate-500">改一次 grade 范围或尾数策略，另一边无声不同步</div>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-3 bg-slate-50">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">after · 一个 source + 校验 seam</div>
+              <div class="flex items-center justify-between gap-2 py-6">
+                <div class="w-5/12 deep rounded p-2 text-center">
+                  <div class="text-[10px] text-slate-200 font-semibold">规则唯一来源</div>
+                  <div class="text-[10px] text-slate-400">productFields + pricing</div>
+                </div>
+                <svg class="w-1/6" viewBox="0 0 80 40"><line x1="0" y1="20" x2="80" y2="20" class="seam" stroke="#64748b" stroke-width="2"/><text x="40" y="14" text-anchor="middle" font-size="9" fill="#64748b">parity 校验 / gen</text></svg>
+                <div class="w-5/12 bg-white border-2 border-indigo-300 rounded p-2 text-center">
+                  <div class="text-[10px] font-semibold text-indigo-700">前端运行时副本</div>
+                  <div class="text-[10px] text-slate-500">FIELD_SPECS + 定价<br/>主前端仍可直接读</div>
+                </div>
+              </div>
+              <div class="text-xs text-slate-500">漂移变成「测试失败」，不再是静默错账</div>
+            </div>
+          </div>
+
+          <div class="space-y-1 text-sm">
+            <p><span class="font-semibold">Problem</span>：<span class="font-mono">PRODUCT_FIELDS ≡ FIELD_SPECS</span> 13 条逐字重复、<span class="font-mono">norm*</span> 与 <span class="font-mono">sanitizeProductField</span>、<span class="font-mono">applyExpr/calcPrice/todayStr/monthOf</span> 全部双份；TS 由 tsc 编译、JS 运行时原样下发，两边永远不可能共享代码，也没有任何同步机制。</p>
+            <p><span class="font-semibold">Solution</span>：规则以 TS 为唯一来源，前端等价副本靠一个 parity 测试兜底（读两个源文件断言 13 字段与定价/尾数逻辑等价，挂进现成 test 脚本），重一点可 build 时从 TS 生成 JS 副本。</p>
+            <ul class="list-disc list-inside space-y-0.5 text-sm">
+              <li>漂移变成测试失败，不再无声</li>
+              <li>校验/定价规则 <b>locality</b></li>
+              <li>一次改动，两端自动对齐</li>
+            </ul>
+          </div>
+        </article>
+
+        <!-- ============ C4 ============ -->
+        <article class="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
+          <div class="flex items-start justify-between gap-3">
+            <h2 class="font-serif text-xl font-semibold">④ 把“日报 upsert 语义”抽成纯 seam（salesModel）</h2>
+            <div class="flex flex-col items-end gap-1 shrink-0">
+              <span class="chip bg-amber-100 text-amber-800 border border-amber-300">Worth exploring</span>
+              <span class="chip bg-slate-100 text-slate-600 border border-slate-200">local-substitutable</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600 space-y-0.5">
+            db.ts:680-729 · sales.ts:48,78,71-171 · product.ts:345-513
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-3 bg-slate-50">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">before · 钱规则锁在闭包里</div>
+              <pre class="mermaid text-xs">
+flowchart TD
+  S[pasteSales] --> U[db.upsertSale]
+  I[importProducts] --> U
+  U --> M[mode 矩阵在 factory 闭包]
+  U --> N[net = sold - refund 散在 ≥6 处]
+  T[想测试] -.只能.- C[构造 HandlerCtx + sqlite]
+  classDef leak stroke:#dc2626;
+  class T leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-3 bg-slate-50">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">after · 纯 seam，测它只需普通对象</div>
+              <pre class="mermaid text-xs">
+flowchart LR
+  S[pasteSales] --> D[salesModel.decide]
+  I[importProducts] --> D
+  D --> O[db.executeSaleOps]
+  D --> N[net() 只有一个]
+  T[测试] -.直接.- D
+  classDef seam stroke:#64748b,stroke-dasharray:5 5;
+  class D seam
+              </pre>
+            </div>
+          </div>
+
+          <div class="space-y-1 text-sm">
+            <p><span class="font-semibold">Problem</span>：最值钱的行为——<span class="font-mono">overwrite/accumulate/skip</span> 决策 + 库存 delta + 进价快照——全部锁在 <span class="font-mono">getDB()</span> 的闭包里（db.ts:680-729），<span class="font-mono">pasteSales</span> 里又解析一遍模式字符串（sales.ts:48,78）；要测它必须先造 HandlerCtx + sqlite。</p>
+            <p><span class="font-semibold">Solution</span>：抽纯函数模块 <span class="font-mono">salesModel</span>：输入原始行/记录 → 输出决定好的操作序列（mode 矩阵、net→库存 delta、快照进价），db 只负责执行结果；六处 <span class="font-mono">sold − refund</span> 收编进一个 <span class="font-mono">net()</span>。</p>
+            <ul class="list-disc list-inside space-y-0.5 text-sm">
+              <li>钱相关的规则终于有 <b>seam</b></li>
+              <li>测试只需普通对象，无需 vscode/sqlite</li>
+              <li><span class="font-mono">net()</span> 一个函数收编六处重算</li>
+              <li>deletion test 通过：闭包变纯函数</li>
+            </ul>
+          </div>
+        </article>
+
+        <!-- ============ C5 ============ -->
+        <article class="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
+          <div class="flex items-start justify-between gap-3">
+            <h2 class="font-serif text-xl font-semibold">⑤ client-*.js 全局作用域 → 显式模块注册表</h2>
+            <div class="flex flex-col items-end gap-1 shrink-0">
+              <span class="chip bg-slate-100 text-slate-700 border border-slate-300">Speculative</span>
+              <span class="chip bg-slate-100 text-slate-600 border border-slate-200">in-process</span>
+            </div>
+          </div>
+          <div class="font-mono text-sm text-slate-600 space-y-0.5">
+            client-product.js (1213) · client-main.js (790) · client-core.js (448) · client-live.js · client-sales.js · client-report.js · index.ts:135-142
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 p-3 bg-slate-50">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">before · 六文件共享顶层 var 作用域</div>
+              <pre class="mermaid text-xs">
+flowchart TD
+  C[client-core.js<br/>ensureCovers · canonicalCode]
+  P[client-product.js<br/>renderProducts ↑ · stateProduct]
+  M[client-main.js → renderProducts]
+  L[client-live.js → stateProduct]
+  R[client-report.js → hasFilter]
+  C --> P
+  M --> P
+  L --> P
+  R --> P
+  X[加载顺序契约<br/>数组+头注释+loader 三处手抄] -.约束.- P
+  classDef leak stroke:#dc2626;
+  class X leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 p-3 bg-slate-50">
+              <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">after · 一个 hub，显式依赖</div>
+              <pre class="mermaid text-xs">
+flowchart LR
+  G[core: ensureCovers · debounce]
+  P[product: renderProducts · stateProduct]
+  S[sales · settle · live]
+  M[main: init · onMessage]
+  H[(sel 注册表)<br/>声明导出 + 依赖]
+  G --> H
+  P --> H
+  S --> H
+  M --> H
+  classDef hub fill:#1e293b,color:#e2e8f0;
+  class H hub
+              </pre>
+            </div>
+          </div>
+
+          <div class="space-y-1 text-sm">
+            <p><span class="font-semibold">Problem</span>：所有 <span class="font-mono">client-*.js</span> 在同一个顶层作用域声明 <span class="font-mono">var/function</span>，“谁定义、谁调用”只能靠文件头的「加载顺序第 N 个」注释 + grep 反推；加载顺序本身是三处手抄契约（index.ts 数组、头注释、webview loader）。</p>
+            <p><span class="font-semibold">Solution</span>：每个文件显式 declare 自己导出的符号（小型注册表 <span class="font-mono">sel.register({...})</span>），入口 <span class="font-mono">main.js</span> 只负责 init/wire 一次，契约收敛成一张表。</p>
+            <ul class="list-disc list-inside space-y-0.5 text-sm">
+              <li><b>AI 可导航</b>：依赖图一眼可查</li>
+              <li>契约从三处手抄变一张注册表</li>
+              <li>成本：动 6 个文件 + loader，纯 JS 无 bundler 约束</li>
+            </ul>
+          </div>
+        </article>
+
+      </section>
+
+      <!-- ============ TOP RECOMMENDATION ============ -->
+      <section id="top-recommendation" class="border-2 border-indigo-400 rounded-xl p-6 bg-indigo-50 space-y-2">
+        <h2 class="font-serif text-xl font-semibold">先做 ① —— 一次性预编译 + 修剪 DB interface</h2>
+        <p class="text-sm">最小的低风险一步：给 DB module 一次编译/缓存，并清掉死幅面（含 Phase 4 遗留死代码），为 ④ 的纯 seam 测试铺路（廉价内存库 → 直接测钱规则）。② 可紧随其后共享同一次重构窗口。汇报详见<a href="#candidates" class="text-indigo-600 underline">候选卡</a>。</p>
+      </section>
+
+    </main>
+  </body>
+</html>

@@ -84,6 +84,8 @@ export function settleHandlers(h: HandlerCtx): Record<string, Handler> {
         month,
         snapshot: db.snapshotMonth(month),
         settle: db.getSettle(month) ?? null,
+        prevEndStock: Number(db.getSettle(prevMonth(month))?.end_stock || 0),
+        endStockAuto: round2(db.sumStockCost()),
       });
     },
 
@@ -97,6 +99,8 @@ export function settleHandlers(h: HandlerCtx): Record<string, Handler> {
         month,
         snapshot: db.snapshotMonth(month),
         settle: db.getSettle(month) ?? null,
+        prevEndStock: Number(db.getSettle(prevMonth(month))?.end_stock || 0),
+        endStockAuto: round2(db.sumStockCost()),
       });
     },
 

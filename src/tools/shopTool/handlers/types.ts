@@ -12,7 +12,6 @@ export interface HandlerCtx {
   log: (s: string) => void;
   post: (m: any) => void;
   getSetting: (key: string) => string;
-  imageDir: () => string;
   /** 商品封面 base64 按需下发缓存（image/getCover 读写，product 删除时作废） */
   coverCache: Map<string, string>;
   invalidateCover: (code: string) => void;

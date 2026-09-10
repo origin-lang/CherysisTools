@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { ToolDefinition } from "../../core/toolRegistry.js";
 import { ToolContext } from "../../core/toolContext.js";
-import { getDB, initDB, Product, ShopDB } from "./db.js";
+import { getDB, initDB, ShopDB } from "./db.js";
 import { canonicalCode, fileStamp } from "./pricing.js";
 import { coverThumbCachePaths } from "./images.js";
 import { Handler, HandlerCtx } from "./handlers/types.js";
@@ -274,16 +274,11 @@ export const shopTool: ToolDefinition = {
     };
 
     const loadAll = () => {
-      const products: Product[] = state.current.getProducts();
-      const stockMap = state.current.getStockTotals();
-      const saleMap = state.current.getSaleTotals();
-      const payload = products.map((p) => ({
-        ...p,
-        stockTotal: stockMap.get(p.id) ?? 0,
-        soldTotal: saleMap.get(p.id)?.sold ?? 0,
-        refundTotal: saleMap.get(p.id)?.refund ?? 0,
-      }));
-      ctx.postToWebview({ type: "productsLoaded", products: payload, stockAlert: stockAlert() });
+      ctx.postToWebview({
+        type: "productsLoaded",
+        products: state.current.getProductsWithTotals(),
+        stockAlert: stockAlert(),
+      });
       ctx.postToWebview({ type: "rulesLoaded", rules: state.current.getRules() });
       ctx.postToWebview({
         type: "settingsLoaded",
@@ -302,7 +297,7 @@ export const shopTool: ToolDefinition = {
     const postProductsDelta = (ids: number[], removed: number[] = []) => {
       ctx.postToWebview({
         type: "productsDelta",
-        products: state.current.getProductsByIds(ids),
+        products: state.current.getProductsWithTotals(ids),
         removed,
       });
     };
@@ -320,7 +315,6 @@ export const shopTool: ToolDefinition = {
       log,
       post: (m) => ctx.postToWebview(m),
       getSetting,
-      imageDir,
       coverCache,
       invalidateCover,
       removeImageFolder,

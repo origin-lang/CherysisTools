@@ -2,6 +2,7 @@ import { Handler, HandlerCtx } from "./types.js";
 import { Product } from "../db.js";
 import { monthOf, todayStr } from "../pricing.js";
 import { splitCells, isHeaderRow, codeFromCell } from "../rowParse.js";
+import { resolveUpsertMode } from "../salesModel.js";
 
 // 销售域：按日期加载/单条增改/粘贴批量/删除/单元格改值/趋势
 export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
@@ -45,7 +46,7 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
         log("❌卖出/退款需为非负整数，且至少一个 > 0");
         return;
       }
-      const mode = msg.mode === "overwrite" ? "overwrite" : msg.mode === "skip" ? "skip" : "accumulate";
+      const mode = resolveUpsertMode(msg.mode);
       const res = db.upsertSale({
         product_id: productId,
         date,
@@ -75,7 +76,7 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
         log(`❌${lk} 已月结锁定，不能改销售记录`);
         return;
       }
-      const mode = msg.mode === "overwrite" ? "overwrite" : msg.mode === "skip" ? "skip" : "accumulate";
+      const mode = resolveUpsertMode(msg.mode);
       const lines = String(msg.text ?? "").split(/\r?\n/);
       const products = db.getProducts();
       const byCode = new Map<string, Product>();
