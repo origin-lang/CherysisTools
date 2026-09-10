@@ -1,0 +1,271 @@
+import * as vscode from "vscode";
+import * as fs from "fs";
+import * as path from "path";
+import * as XLSX from "xlsx";
+import { Handler, HandlerCtx } from "./types.js";
+import { getDB, Product } from "../db.js";
+import { fileStamp } from "../pricing.js";
+import { PRODUCT_FIELD_ORDER } from "../productFields.js";
+
+// 导入导出域：商品/销售/月报/排品清单导出、数据库备份与恢复、文件定位
+export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
+  const { db, log, post } = h;
+  const ctx = h.ctx;
+
+  return {
+    async exportProducts(msg) {
+      const dir = await ctx.selectFolder("选择导出目录");
+      if (!dir) {
+        post({ type: "exportCancelled" });
+        return;
+      }
+      try {
+        const all = db.getProducts();
+        let list = all;
+        if (Array.isArray(msg.codes) && msg.codes.length) {
+          const byCode = new Map(all.map((p) => [p.code, p]));
+          list = (msg.codes as string[])
+            .map((code) => byCode.get(code))
+            .filter((p): p is Product => !!p);
+        }
+        const stockTotals = db.getStockTotals();
+        const saleTotals = db.getSaleTotals();
+        const gradeLabel = new Map(
+          db.getRules().map((r) => [String(r.grade), r.label || `等级${r.grade}`]),
+        );
+        let rawVis: unknown;
+        try {
+          rawVis = JSON.parse(String(h.getSetting("col_visible_list") || "[]"));
+        } catch {
+          rawVis = [];
+        }
+        const vis = new Set<string>(Array.isArray(rawVis) ? (rawVis as string[]) : []);
+        let cols = PRODUCT_FIELD_ORDER.filter((f) => vis.has(f.key));
+        if (cols.length === 0) {
+          cols = [{ key: "code", label: "编号" }];
+        }
+        const valOf = (p: Product, key: string): any => {
+          const sale = saleTotals.get(p.id) || { sold: 0, refund: 0 };
+          switch (key) {
+            case "grade":
+              return gradeLabel.get(String(p.grade)) || `等级${p.grade}`;
+            case "status":
+              return p.status === 1 ? "已下架" : "在售";
+            case "netTotal":
+              return sale.sold - sale.refund;
+            case "stockTotal":
+              return stockTotals.get(p.id) || 0;
+            case "soldTotal":
+              return sale.sold;
+            case "cost_price":
+            case "sale_price":
+              return Number((p as any)[key] ?? 0);
+            default:
+              return (p as any)[key] ?? "";
+          }
+        };
+        const aoa: any[][] = [cols.map((c) => c.label)];
+        for (const p of list) {
+          aoa.push(cols.map((c) => valOf(p, c.key)));
+        }
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "商品清单");
+        const outFile = path.join(dir, `商品清单_${fileStamp()}.xlsx`);
+        await fs.promises.writeFile(outFile, XLSX.write(wb, { bookType: "xlsx", type: "buffer" }));
+        log(`✅商品清单已导出（${list.length}条）：${outFile}`);
+        post({
+          type: "exportDone",
+          kind: "products",
+          path: outFile,
+          count: list.length,
+          filtered: msg.filtered ? 1 : 0,
+        });
+      } catch (err: any) {
+        log(`❌导出商品清单失败：${err.message}`);
+        post({ type: "dbOpError", message: `导出商品失败：${err.message}` });
+      }
+    },
+
+    async exportSales(msg) {
+      const dir = await ctx.selectFolder("选择导出目录");
+      if (!dir) {
+        post({ type: "exportCancelled" });
+        return;
+      }
+      try {
+        const from = String(msg.dateFrom || "");
+        const to = String(msg.dateTo || "");
+        const rows = from && to ? db.getSalesRange(from, to) : [];
+        const aoa: any[][] = [
+          ["日期", "编号", "名称", "销量", "退款", "净售", "成本", "备注"],
+        ];
+        let sold = 0;
+        let refund = 0;
+        for (const r of rows) {
+          sold += r.sold_qty;
+          refund += r.refund_qty;
+          aoa.push([
+            r.date,
+            r.code ?? "",
+            r.name ?? "",
+            r.sold_qty,
+            r.refund_qty,
+            r.sold_qty - r.refund_qty,
+            r.cost_price,
+            r.note || "",
+          ]);
+        }
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "销售流水");
+        const outFile = path.join(dir, `销售流水_${from}_${to}.xlsx`);
+        await fs.promises.writeFile(outFile, XLSX.write(wb, { bookType: "xlsx", type: "buffer" }));
+        log(`✅销售流水已导出（${rows.length}条，${from} ~ ${to}）：${outFile}`);
+        post({
+          type: "exportDone",
+          kind: "sales",
+          path: outFile,
+          count: rows.length,
+        });
+      } catch (err: any) {
+        log(`❌导出销售流水失败：${err.message}`);
+        post({ type: "dbOpError", message: `导出销售失败：${err.message}` });
+      }
+    },
+
+    async exportSettles() {
+      const dir = await ctx.selectFolder("选择导出目录");
+      if (!dir) {
+        post({ type: "exportCancelled" });
+        return;
+      }
+      try {
+        const settles = db.getSettleMonths();
+        const aoa: any[][] = [
+          ["月份", "到账收入", "本月进货支出", "杂项支出", "期初库存", "期末库存", "净利润", "净售件数", "已锁定", "更新时间"],
+        ];
+        for (const s of settles) {
+          aoa.push([
+            s.month,
+            s.income_amount,
+            s.purchase_cost ?? 0,
+            s.extra_expense,
+            s.start_stock ?? 0,
+            s.end_stock ?? 0,
+            s.profit,
+            (s.sold_total ?? 0) - (s.refund_total ?? 0),
+            s.locked === 1 ? "是" : "否",
+            s.updated_at,
+          ]);
+        }
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "月度结算");
+        const outFile = path.join(dir, `月度结算_${fileStamp()}.xlsx`);
+        await fs.promises.writeFile(outFile, XLSX.write(wb, { bookType: "xlsx", type: "buffer" }));
+        log(`✅月度结算已导出（${settles.length}个月）：${outFile}`);
+        post({
+          type: "exportDone",
+          kind: "settles",
+          path: outFile,
+          count: settles.length,
+        });
+      } catch (err: any) {
+        log(`❌导出月度结算失败：${err.message}`);
+        post({ type: "dbOpError", message: `导出月报失败：${err.message}` });
+      }
+    },
+
+    async exportLivePlan() {
+      const dir = await ctx.selectFolder("选择导出目录");
+      if (!dir) {
+        post({ type: "exportCancelled" });
+        return;
+      }
+      try {
+        const plan = db
+          .getLivePlan()
+          .filter((r) => r.code)
+          .sort((a, b) => a.group_no - b.group_no || a.slot_no - b.slot_no);
+        const aoa: any[][] = [["组号", "号数", "编号", "名称"]];
+        for (const r of plan) {
+          const p = db.getProductByCode(r.code);
+          aoa.push([
+            r.group_no,
+            (r.group_no - 1) * 9 + r.slot_no,
+            r.code,
+            p ? p.name : "",
+          ]);
+        }
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "排品清单");
+        const outFile = path.join(dir, `排品清单_${fileStamp()}.xlsx`);
+        await fs.promises.writeFile(outFile, XLSX.write(wb, { bookType: "xlsx", type: "buffer" }));
+        log(`✅排品清单已导出（${plan.length}款）：${outFile}`);
+        post({
+          type: "exportDone",
+          kind: "live",
+          path: outFile,
+          count: plan.length,
+        });
+      } catch (err: any) {
+        log(`❌导出排品清单失败：${err.message}`);
+        post({ type: "dbOpError", message: `导出排品失败：${err.message}` });
+      }
+    },
+
+    async exportDB() {
+      const dir = await ctx.selectFolder("选择数据库备份目录");
+      if (!dir) {
+        return;
+      }
+      const outFile = path.join(dir, `商品数据_${fileStamp()}.db`);
+      try {
+        await db.backupDB(outFile);
+        log(`✅数据库已备份：${outFile}`);
+        post({ type: "toast", text: "数据库备份完成" });
+      } catch (err: any) {
+        log(`❌备份数据库失败：${err.message}`);
+        post({ type: "toast", text: `备份失败：${err.message}` });
+      }
+    },
+
+    async importDB() {
+      const fp = await ctx.selectFile({ 数据库: ["db"] });
+      if (!fp) {
+        return;
+      }
+      try {
+        await h.preOpBackup();
+        db.restoreDB(fp, ctx.storageDir);
+        h.setDB(getDB());
+        log("✅数据库已恢复，数据已替换为所选备份");
+        post({ type: "toast", text: "数据库恢复完成" });
+        h.loadAll();
+        h.postLiveState();
+      } catch (err: any) {
+        log(`❌恢复数据库失败：${err.message}`);
+        post({ type: "toast", text: `恢复失败：${err.message}` });
+        try {
+          h.setDB(getDB());
+          h.loadAll();
+        } catch {
+          /* 忽略 */
+        }
+      }
+    },
+
+    async revealFile(msg) {
+      try {
+        const fp = String(msg.path ?? "");
+        if (fp) {
+          await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(fp));
+        }
+      } catch (err: any) {
+        log(`❌定位文件失败：${err.message}`);
+      }
+    },
+  };
+}
