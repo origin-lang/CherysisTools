@@ -25,24 +25,51 @@ function cellValue(p, key) {
   }
 }
 
+const TEXT_FILTER_FIELDS = new Set([
+  "code",
+  "name",
+  "cost_price",
+  "sale_price",
+  "purchase_link",
+  "stockTotal",
+  "soldTotal",
+  "netTotal",
+]);
+
 function filteredProducts() {
-  const status = $("filterStatus")?.value || "all";
-  const cat = $("filterCat")?.value || "";
-  const series = $("filterSeries")?.value || "";
+  const st = filters.f_status || "";
+  const kw = String(filters.keyword || "")
+    .trim()
+    .toLowerCase();
   return state.products
-    .filter((p) =>
-      status === "all"
-        ? true
-        : status === "on"
-          ? p.status === 0
-          : p.status === 1,
-    )
-    .filter((p) => !cat || p.category === cat)
-    .filter((p) => !series || p.series === series)
     .filter((p) => {
-      const kw = String(filters.keyword || "")
-        .trim()
-        .toLowerCase();
+      if (st === "on") {
+        return p.status === 0;
+      }
+      if (st === "off") {
+        return p.status === 1;
+      }
+      return true;
+    })
+    .filter((p) => {
+      for (const key of ["category", "series", "grade"]) {
+        const v = filters["f_" + key];
+        if (v && cellValue(p, key) !== v) {
+          return false;
+        }
+      }
+      return true;
+    })
+    .filter((p) => {
+      for (const key of TEXT_FILTER_FIELDS) {
+        const v = filters["f_" + key];
+        if (v && !cellValue(p, key).toLowerCase().includes(String(v).toLowerCase())) {
+          return false;
+        }
+      }
+      return true;
+    })
+    .filter((p) => {
       if (!kw) {
         return true;
       }
@@ -138,9 +165,6 @@ function openLightbox(product) {
 function filterSig(list) {
   return JSON.stringify({
     len: list.length,
-    status: $("filterStatus")?.value || "all",
-    cat: $("filterCat")?.value || "",
-    series: $("filterSeries")?.value || "",
     filters,
     sortKey,
     sortDir,
@@ -202,6 +226,45 @@ function renderProducts() {
   ensureCovers(pd.page);
 }
 
+function distinctOptions(key, display) {
+  const seen = new Set();
+  const opts = [];
+  for (const p of state.products) {
+    const v = display ? display(p) : p[key];
+    if (v && !seen.has(v)) {
+      seen.add(v);
+      opts.push(v);
+    }
+  }
+  return opts.sort((a, b) => String(a).localeCompare(String(b), "zh-Hans-CN"));
+}
+
+function filterControl(key) {
+  const cur = filters["f_" + key] || "";
+  const opts = (items) =>
+    items
+      .map(
+        (v) =>
+          `<option value="${esc(String(v))}" ${cur === v ? "selected" : ""}>${esc(String(v))}</option>`,
+      )
+      .join("");
+  switch (key) {
+    case "category":
+    case "series":
+    case "grade":
+      return `<select class="filter-cell" data-col-f="${key}" title="筛选${key === "grade" ? "等级" : key === "series" ? "系列" : "品类"}"><option value="">全部</option>${opts(
+        distinctOptions(
+          key,
+          key === "grade" ? displayGrade : undefined,
+        ),
+      )}</select>`;
+    case "status":
+      return `<select class="filter-cell" data-col-f="status" title="筛选状态"><option value="">全部状态</option><option value="on" ${cur === "on" ? "selected" : ""}>在售</option><option value="off" ${cur === "off" ? "selected" : ""}>已下架</option></select>`;
+    default:
+      return `<input class="filter-cell" data-col-f="${key}" title="筛选${key}" placeholder="筛选" value="${esc(String(cur))}" />`;
+  }
+}
+
 function renderList(list) {
   const vis = PRODUCT_FIELDS.filter((f) => visList.has(f.key));
   const plIdx = vis.findIndex((f) => f.key === "purchase_link");
@@ -209,17 +272,17 @@ function renderList(list) {
   const headCols = [];
   for (let i = 0; i < vis.length; i++) {
     if (i === imgAt) {
-      headCols.push(`<th>图片</th>`);
+      headCols.push(`<th><span class="th-label">图片</span></th>`);
     }
     const f = vis[i];
     headCols.push(
-      `<th data-sort="${f.key}">${f.label}${sortKey === f.key ? (sortDir === 1 ? " ▲" : " ▼") : ""}</th>`,
+      `<th><span class="th-label" data-sort="${f.key}">${f.label}${sortKey === f.key ? (sortDir === 1 ? " ▲" : " ▼") : ""}</span>${filterControl(f.key)}</th>`,
     );
   }
   if (imgAt >= vis.length) {
-    headCols.push(`<th>图片</th>`);
+    headCols.push(`<th><span class="th-label">图片</span></th>`);
   }
-  headCols.push(`<th>操作</th>`);
+  headCols.push(`<th><span class="th-label">操作</span></th>`);
   const body = list
     .map((p) => {
       const net = p.soldTotal - p.refundTotal;
@@ -327,17 +390,49 @@ function renderList(list) {
                <th style="width:30px"><input type="checkbox" id="selectAllProducts" ${list.length === 0 ? "disabled" : ""} ${allSelected ? "checked" : ""} title="全选 / 取消全选" /></th>
                ${headCols.join("")}
              </tr></thead><tbody>${body}</tbody></table></div>
-             <div class="muted" style="margin-top:4px">双击单元格编辑（回车或点击别处即保存）；右键行/表格复制</div>`;
+             <div class="muted" style="margin-top:4px">表头下小框可筛选对应列；双击单元格编辑（回车或点击别处即保存）；右键行/表格复制</div>`;
   bindBatchOps();
+  bindColFilters();
+}
+
+function bindColFilters() {
+  document.querySelectorAll("[data-col-f]").forEach((el) => {
+    const key = el.dataset.colF;
+    const apply = () => {
+      const v = el.value;
+      if (String(v).trim()) {
+        filters["f_" + key] = v;
+      } else {
+        delete filters["f_" + key];
+      }
+      syncClearFilterBtn();
+      if (el.tagName === "SELECT") {
+        renderProducts();
+        return;
+      }
+      const pos =
+        typeof el.selectionStart === "number" ? el.selectionStart : el.value.length;
+      renderProducts();
+      const nf = document.querySelector(`[data-col-f="${key}"]`);
+      if (nf) {
+        nf.focus();
+        try {
+          nf.setSelectionRange(pos, pos);
+        } catch {
+          /* 忽略 */
+        }
+      }
+    };
+    if (el.tagName === "SELECT") {
+      el.onchange = apply;
+    } else {
+      el.oninput = apply;
+    }
+  });
 }
 
 function hasFilter() {
-  return (
-    Object.values(filters).some((v) => String(v).trim().length > 0) ||
-    ($("filterStatus")?.value || "all") !== "all" ||
-    !!($("filterCat")?.value || "") ||
-    !!($("filterSeries")?.value || "")
-  );
+  return Object.values(filters).some((v) => String(v).trim().length > 0);
 }
 
 function syncClearFilterBtn() {
@@ -553,7 +648,7 @@ function openInlineEditor(td) {
       } else {
         val = editor.value;
       }
-      if (field === "cost_price" || field === "sale_price") {
+      if (field === "cost_price" || field === "sale_price" || field === "stockTotal") {
         const n = Number(val);
         if (val !== "" && (!Number.isFinite(n) || n < 0)) {
           toast("必须是 ≥0 的数字");
@@ -562,12 +657,16 @@ function openInlineEditor(td) {
         }
         val = Number(val);
       }
-      post({
-        type: "updateProductField",
-        id: pid,
-        field,
-        value: field === "grade" ? Number(val) : val,
-      });
+      if (field === "stockTotal") {
+        post({ type: "setStockQty", id: pid, qty: val });
+      } else {
+        post({
+          type: "updateProductField",
+          id: pid,
+          field,
+          value: field === "grade" ? Number(val) : val,
+        });
+      }
       toast("已保存");
     }
     td.innerHTML = td.dataset.orig;
@@ -590,6 +689,12 @@ function openInlineEditor(td) {
     editor.min = "0";
     editor.step = "0.01";
     editor.value = product[field];
+  } else if (field === "stockTotal") {
+    editor = document.createElement("input");
+    editor.type = "number";
+    editor.min = "0";
+    editor.step = "1";
+    editor.value = product.stockTotal || 0;
   } else {
     editor = document.createElement("input");
     editor.value = cellValue(product, field);
@@ -638,26 +743,6 @@ function populateFilters() {
       .join("");
   trendSel.value = curP;
   fillCatList();
-  const fillSel = (selId, valOf) => {
-    const sel = $(selId);
-    if (!sel) {
-      return;
-    }
-    const cur = sel.value;
-    const opts = [
-      ...new Set(
-        state.products
-          .map((p) => p[valOf])
-          .filter((v) => v && String(v).trim()),
-      ),
-    ].sort((a, b) => String(a).localeCompare(String(b), "zh-Hans-CN"));
-    sel.innerHTML =
-      `<option value="">${selId === "filterCat" ? "全部品类" : "全部系列"}</option>` +
-      opts.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join("");
-    sel.value = cur;
-  };
-  fillSel("filterCat", "category");
-  fillSel("filterSeries", "series");
 }
 
 function openNewProduct() {
@@ -762,7 +847,7 @@ function openImportProducts() {
           · 分隔：Tab / 空格 / 逗号；只贴「编号」也能建（其余走默认）<br />
           · 名称里不要带空格（空格按列分隔）<br />
           · 库存、销量、状态是自动统计列，不用填、也不导入<br />
-          · 已有编号：跳过不动
+          · 已有编号：覆盖更新（只更新这行列里填了的列，没填的不动；库存/销量/状态仍不导入）
         </p>
         <textarea id="ipText" placeholder="示例：
 ${placeholder}"></textarea>
@@ -807,10 +892,13 @@ function openStockIn(product) {
 }
 
 function checkGroupHtml(prefix, set) {
-  return PRODUCT_FIELDS.map(
-    (f) =>
-      `<label>${f.label}</label><input type="checkbox" data-g="${prefix}" data-cfk="${f.key}" ${set.has(f.key) ? "checked" : ""} />`,
-  ).join("");
+  return PRODUCT_FIELDS.map((f) => {
+    const locked = f.key === "code";
+    return (
+      `<label class="${locked ? "muted" : ""}">${f.label}${locked ? "（固定）" : ""}</label>` +
+      `<input type="checkbox" data-g="${prefix}" data-cfk="${f.key}" ${locked || set.has(f.key) ? "checked" : ""} ${locked ? "disabled" : ""} />`
+    );
+  }).join("");
 }
 
 function openColSet() {
@@ -841,11 +929,16 @@ function openColSet() {
   };
   $("csListNone").onclick = () => {
     toggle.clear();
+    toggle.add("code");
     recalc();
   };
   mask.querySelectorAll('[data-g="cur"]').forEach((cb) => {
-    cb.onchange = () =>
+    cb.onchange = () => {
+      if (cb.disabled || cb.dataset.cfk === "code") {
+        return;
+      }
       cb.checked ? toggle.add(cb.dataset.cfk) : toggle.delete(cb.dataset.cfk);
+    };
   });
   $("csReset").onclick = async () => {
     if (await confirmBox(`复原默认：${keyName}显示全部字段？`)) {
@@ -855,6 +948,7 @@ function openColSet() {
   };
   $("csCancel").onclick = closeModal;
   $("csSave").onclick = () => {
+    toggle.add("code");
     if (isList) {
       visList = new Set(toggle);
     } else {
@@ -1006,7 +1100,7 @@ function onProductAct(e) {
     }
     return;
   }
-  const th = e.target.closest("th[data-sort]");
+  const th = e.target.closest("[data-sort]");
   if (th) {
     const k = th.dataset.sort;
     if (sortKey === k) {

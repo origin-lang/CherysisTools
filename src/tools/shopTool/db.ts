@@ -16,6 +16,7 @@ export interface Product {
   status: number;
   remark: string;
   created_at: string;
+  stock_manual: number;
 }
 
 export interface SaleRule {
@@ -57,6 +58,9 @@ export interface MonthlySettle {
   locked: number;
   created_at: string;
   updated_at: string;
+  purchase_cost?: number;
+  end_stock?: number;
+  start_stock?: number;
 }
 
 export interface SettleSnapshot {
@@ -114,6 +118,8 @@ export interface ShopDB {
   getStockGroups(): StockGroupRow[];
   getSaleGroups(): SaleGroupRow[];
   getStockTotals(): Map<number, number>;
+  updateStockQty(id: number, qty: number): void;
+  sumStockCost(): number;
   getSaleTotals(): Map<number, { sold: number; refund: number }>;
   getSales(date?: string): SalesRecord[];
   getSalesRange(from: string, to: string): SalesRecord[];
@@ -213,7 +219,8 @@ export function initDB(storageDir: string): boolean {
       purchase_link TEXT NOT NULL DEFAULT '',
       status INTEGER NOT NULL DEFAULT 0,
       remark TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL DEFAULT ''
+      created_at TEXT NOT NULL DEFAULT '',
+      stock_manual REAL NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS sale_rules (
       grade INTEGER PRIMARY KEY,
@@ -269,6 +276,26 @@ export function initDB(storageDir: string): boolean {
       PRIMARY KEY (group_no, slot_no)
     );
   `);
+  const settleCols = (db.prepare("PRAGMA table_info(monthly_settle)").all() as any[]).map(
+    (r) => r.name,
+  );
+  for (const col of ["purchase_cost", "end_stock", "start_stock"]) {
+    if (!settleCols.includes(col)) {
+      db.exec(`ALTER TABLE monthly_settle ADD COLUMN ${col} REAL NOT NULL DEFAULT 0`);
+    }
+  }
+  const prodCols = (db.prepare("PRAGMA table_info(products)").all() as any[]).map(
+    (r) => r.name,
+  );
+  if (!prodCols.includes("stock_manual")) {
+    db.exec("ALTER TABLE products ADD COLUMN stock_manual REAL NOT NULL DEFAULT 0");
+    db.exec(`
+      UPDATE products SET stock_manual = MAX(0,
+        (SELECT IFNULL(SUM(s.qty), 0) FROM stock_in s WHERE s.product_id = products.id)
+        - (SELECT IFNULL(SUM(r.sold_qty - r.refund_qty), 0) FROM sales_record r WHERE r.product_id = products.id)
+      )
+    `);
+  }
   if (isNew) {
     const ins = db.prepare(
       "INSERT OR IGNORE INTO sale_rules (grade, label, expr, tail_mode, tail_value) VALUES (@grade, @label, @expr, @tail_mode, @tail_value)",
@@ -326,6 +353,7 @@ function mapProduct(r: any): Product {
     status: r.status,
     remark: r.remark,
     created_at: r.created_at,
+    stock_manual: Number(r.stock_manual ?? 0),
   };
 }
 
@@ -356,8 +384,8 @@ export function getDB(): ShopDB {
     return list;
   };
   const pInsert = c.prepare(`
-    INSERT INTO products (code, name, category, series, grade, cost_price, sale_price, price_manual, purchase_link, status, remark, created_at)
-    VALUES (@code, @name, @category, @series, @grade, @cost_price, @sale_price, @price_manual, @purchase_link, @status, @remark, @created_at)
+    INSERT INTO products (code, name, category, series, grade, cost_price, sale_price, price_manual, purchase_link, status, remark, created_at, stock_manual)
+    VALUES (@code, @name, @category, @series, @grade, @cost_price, @sale_price, @price_manual, @purchase_link, @status, @remark, @created_at, @stock_manual)
   `);
   const pDelete = c.prepare("DELETE FROM products WHERE id = ?");
   const sByCode = c.prepare("SELECT * FROM products WHERE code = ?");
@@ -368,6 +396,11 @@ export function getDB(): ShopDB {
   `);
   const stockInDelete = c.prepare("DELETE FROM stock_in WHERE id = ?");
   const stockInGet = c.prepare("SELECT * FROM stock_in WHERE id = ?");
+  const stockAdjustStmt = c.prepare(
+    "UPDATE products SET stock_manual = MAX(0, stock_manual + ?) WHERE id = ?",
+  );
+  const stockSetStmt = c.prepare("UPDATE products SET stock_manual = ? WHERE id = ?");
+  const stockCostStmt = c.prepare("SELECT SUM(stock_manual * cost_price) AS v FROM products");
   const productSalesDel = c.prepare("DELETE FROM sales_record WHERE product_id = ?");
   const productStockDel = c.prepare("DELETE FROM stock_in WHERE product_id = ?");
   const saleById = c.prepare("SELECT * FROM sales_record WHERE id = ?");
@@ -462,13 +495,14 @@ export function getDB(): ShopDB {
   const monthList = c.prepare("SELECT * FROM monthly_settle ORDER BY month");
   const monthGet = c.prepare("SELECT * FROM monthly_settle WHERE month = ?");
   const monthInsert = c.prepare(`
-    INSERT INTO monthly_settle (month, income_amount, extra_expense, goods_cost, sold_total, refund_total, profit, locked, created_at, updated_at)
-    VALUES (@month, @income_amount, @extra_expense, @goods_cost, @sold_total, @refund_total, @profit, @locked, @created_at, @updated_at)
+    INSERT INTO monthly_settle (month, income_amount, extra_expense, goods_cost, sold_total, refund_total, profit, locked, purchase_cost, end_stock, start_stock, created_at, updated_at)
+    VALUES (@month, @income_amount, @extra_expense, @goods_cost, @sold_total, @refund_total, @profit, @locked, @purchase_cost, @end_stock, @start_stock, @created_at, @updated_at)
   `);
   const monthUpdate = c.prepare(`
     UPDATE monthly_settle SET income_amount = @income_amount, extra_expense = @extra_expense,
       goods_cost = @goods_cost, sold_total = @sold_total, refund_total = @refund_total,
-      profit = @profit, locked = @locked, updated_at = @updated_at WHERE month = @month
+      profit = @profit, locked = @locked, purchase_cost = @purchase_cost,
+      end_stock = @end_stock, start_stock = @start_stock, updated_at = @updated_at WHERE month = @month
   `);
   const monthDelete = c.prepare("DELETE FROM monthly_settle WHERE month = ?");
   const monthLock = c.prepare("UPDATE monthly_settle SET locked = ?, updated_at = ? WHERE month = ?");
@@ -569,6 +603,7 @@ export function getDB(): ShopDB {
     },
     addStockIn(s) {
       const info = stockInInsert.run({ ...s, created_at: nowStr() });
+      stockAdjustStmt.run(s.qty, s.product_id);
       if (aggCache.loaded) {
         aggCache.stock.set(
           s.product_id,
@@ -580,13 +615,16 @@ export function getDB(): ShopDB {
     deleteStockIn(id) {
       const r = stockInGet.get(id) as any;
       stockInDelete.run(id);
-      if (r && aggCache.loaded) {
-        const key = Number(r.product_id);
-        const next = (aggCache.stock.get(key) || 0) - Number(r.qty || 0);
-        if (next <= 0) {
-          aggCache.stock.delete(key);
-        } else {
-          aggCache.stock.set(key, next);
+      if (r) {
+        stockAdjustStmt.run(-Number(r.qty || 0), Number(r.product_id));
+        if (aggCache.loaded) {
+          const key = Number(r.product_id);
+          const next = (aggCache.stock.get(key) || 0) - Number(r.qty || 0);
+          if (next <= 0) {
+            aggCache.stock.delete(key);
+          } else {
+            aggCache.stock.set(key, next);
+          }
         }
       }
     },
@@ -615,8 +653,18 @@ export function getDB(): ShopDB {
       }));
     },
     getStockTotals(): Map<number, number> {
-      ensureAggLoaded();
-      return new Map(aggCache.stock);
+      const m = new Map<number, number>();
+      for (const r of c.prepare("SELECT id, stock_manual FROM products").all() as any[]) {
+        m.set(Number(r.id), Number(r.stock_manual || 0));
+      }
+      return m;
+    },
+    updateStockQty(id, qty) {
+      stockSetStmt.run(qty, id);
+    },
+    sumStockCost(): number {
+      const r = stockCostStmt.get() as any;
+      return Number(r?.v || 0);
     },
     getSaleTotals(): Map<number, { sold: number; refund: number }> {
       ensureAggLoaded();
@@ -635,6 +683,7 @@ export function getDB(): ShopDB {
         if (r.mode === "skip") {
           return "skipped";
         }
+        const oldNet = Number(existing.sold_qty || 0) - Number(existing.refund_qty || 0);
         const deltaSold = r.sold_qty - existing.sold_qty;
         const deltaRefund = r.refund_qty - existing.refund_qty;
         if (r.mode === "accumulate") {
@@ -646,6 +695,9 @@ export function getDB(): ShopDB {
             date: r.date,
             product_id: r.product_id,
           });
+          const newNet =
+            existing.sold_qty + r.sold_qty - (existing.refund_qty + r.refund_qty);
+          stockAdjustStmt.run(oldNet - newNet, r.product_id);
         } else {
           salesUpdate.run({
             sold_qty: r.sold_qty,
@@ -655,6 +707,7 @@ export function getDB(): ShopDB {
             date: r.date,
             product_id: r.product_id,
           });
+          stockAdjustStmt.run(oldNet - (r.sold_qty - r.refund_qty), r.product_id);
         }
         if (aggCache.loaded) {
           const t = aggCache.sale.get(r.product_id) || { sold: 0, refund: 0 };
@@ -665,6 +718,7 @@ export function getDB(): ShopDB {
         return "updated";
       }
       salesInsert.run(r);
+      stockAdjustStmt.run(-(r.sold_qty - r.refund_qty), r.product_id);
       if (aggCache.loaded) {
         const t = aggCache.sale.get(r.product_id) || { sold: 0, refund: 0 };
         t.sold += r.sold_qty;
@@ -685,6 +739,12 @@ export function getDB(): ShopDB {
         const newSold = field === "sold_qty" ? Number(value) : oldSold;
         const newRefund = field === "refund_qty" ? Number(value) : oldRefund;
         salesRowUpdate.run(newSold, newRefund, id);
+        if (r.product_id !== undefined) {
+          stockAdjustStmt.run(
+            oldSold - oldRefund - (newSold - newRefund),
+            pid,
+          );
+        }
         if (aggCache.loaded) {
           const t = aggCache.sale.get(pid) || { sold: 0, refund: 0 };
           t.sold += newSold - oldSold;
@@ -704,6 +764,12 @@ export function getDB(): ShopDB {
         for (const id of ids) {
           const r = saleById.get(id) as any;
           salesDel.run(id);
+          if (r) {
+            stockAdjustStmt.run(
+              Number(r.sold_qty || 0) - Number(r.refund_qty || 0),
+              Number(r.product_id),
+            );
+          }
           if (r && aggCache.loaded) {
             const key = Number(r.product_id);
             const t = aggCache.sale.get(key) || { sold: 0, refund: 0 };

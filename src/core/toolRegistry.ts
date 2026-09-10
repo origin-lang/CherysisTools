@@ -106,6 +106,7 @@ class ToolRegistry {
         panel,
         context.extensionUri,
         storageDir,
+        context.globalStorageUri.fsPath,
       );
 
       switch (msg.type) {

@@ -77,18 +77,6 @@
           }
         });
       }
-      $("filterStatus").onchange = () => {
-        syncClearFilterBtn();
-        renderProducts();
-      };
-      $("filterCat").onchange = () => {
-        syncClearFilterBtn();
-        renderProducts();
-      };
-      $("filterSeries").onchange = () => {
-        syncClearFilterBtn();
-        renderProducts();
-      };
       $("keywordSearch").oninput = () => {
         filters.keyword = $("keywordSearch").value;
         syncClearFilterBtn();
@@ -104,18 +92,6 @@
         const kw = $("keywordSearch");
         if (kw) {
           kw.value = "";
-        }
-        const st = $("filterStatus");
-        if (st) {
-          st.value = "all";
-        }
-        const cat = $("filterCat");
-        if (cat) {
-          cat.value = "";
-        }
-        const ser = $("filterSeries");
-        if (ser) {
-          ser.value = "";
         }
         syncClearFilterBtn();
         renderProducts();
@@ -280,7 +256,10 @@
           type: "saveSettle",
           month: $("settleMonth").value || monthNow(),
           incomeAmount: Number($("settleIncome").value || 0),
+          purchaseCost: Number($("settlePurchase").value || 0),
           extraExpense: Number($("settleExpense").value || 0),
+          endStock: Number($("settleEndStock").value || 0),
+          startStock: Number(state.settlePrevEnd || 0),
         });
       $("settleLockBtn").onclick = () =>
         post({ type: "lockSettle", month: $("settleMonth").value });
@@ -454,6 +433,7 @@
             if (Array.isArray(arr) && arr.length) {
               visList = new Set(arr);
             }
+            visList.add("code");
           } catch {
             /* 保持默认 */
           }
@@ -462,6 +442,7 @@
             if (Array.isArray(arr) && arr.length) {
               visGallery = new Set(arr);
             }
+            visGallery.add("code");
           } catch {
             /* 保持默认 */
           }
@@ -492,7 +473,7 @@
         }
         case "productsImported": {
           $("pasteHint").textContent = "";
-          toast(`商品导入完成：新增${msg.created}，跳过${msg.skipped}`);
+          toast(`商品导入完成：新增${msg.created}，更新${msg.updated}${msg.skipped ? `，无变更${msg.skipped}` : ""}`);
           maybeShowOnboard();
           break;
         }

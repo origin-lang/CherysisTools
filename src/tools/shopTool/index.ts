@@ -26,12 +26,19 @@ import {
 import { renderLiveGrid } from "./liveGrid.js";
 import * as XLSX from "xlsx";
 
-// 自动备份：每日首次启动自动留档（shop_auto_*），破坏性操作前追加留档（shop_pre_*）。
-// 两类各自独立配额剪除，只保留最近 N 份，不无限累积。
+// 自动备份：每日首次启动自动留档（shop_auto_*），破坏性操作前追加留档（shop_pre_*）；两类各自独立配额剪除，只保留最新 N 份，不无限累积。
 const AUTO_BACKUP_KEEP = 14;
 const PRE_BACKUP_KEEP = 20;
 let lastAutoBackupCheckDate = "";
 const backupDir = (storageDir: string): string => path.join(storageDir, "backups");
+
+function prevMonth(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  if (!y || !m) {
+    return "";
+  }
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+}
 
 // 商品字段的固定显示顺序（与前端 client-core.js PRODUCT_FIELDS 保持一致）
 const PRODUCT_FIELD_ORDER: Array<{ key: string; label: string }> = [
@@ -87,7 +94,18 @@ function pruneBackups(storageDir: string, prefix: string, keep: number): void {
   }
 }
 
-async function maybeAutoBackup(storageDir: string, log: (s: string) => void): Promise<void> {
+function backupTargetDirs(storageDir: string, defaultStorageDir: string): string[] {
+  const set = new Set<string>();
+  if (storageDir) {
+    set.add(storageDir);
+  }
+  if (defaultStorageDir) {
+    set.add(defaultStorageDir);
+  }
+  return Array.from(set);
+}
+
+async function maybeAutoBackup(storageDir: string, defaultStorageDir: string, log: (s: string) => void): Promise<void> {
   const now = new Date();
   const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
   if (lastAutoBackupCheckDate === stamp) {
@@ -98,28 +116,50 @@ async function maybeAutoBackup(storageDir: string, log: (s: string) => void): Pr
     if (String(getDB().getSetting("auto_backup_date") || "") === stamp) {
       return;
     }
-    const file = backupToDir(storageDir, "shop_auto");
-    if (!file) {
-      log("⚠️每日自动备份失败");
-      return;
+    const okFiles: string[] = [];
+    const failDirs: string[] = [];
+    for (const dir of backupTargetDirs(storageDir, defaultStorageDir)) {
+      const file = await backupToDir(dir, "shop_auto");
+      if (file) {
+        okFiles.push(file);
+        pruneBackups(dir, "shop_auto_", AUTO_BACKUP_KEEP);
+      } else {
+        failDirs.push(dir);
+      }
     }
-    getDB().setSetting("auto_backup_date", stamp);
-    pruneBackups(storageDir, "shop_auto_", AUTO_BACKUP_KEEP);
-    log(`✅每日自动备份完成：${file}`);
+    if (okFiles.length > 0) {
+      getDB().setSetting("auto_backup_date", stamp);
+    }
+    if (okFiles.length > 0 && failDirs.length === 0) {
+      log(`✅每日自动备份完成（${okFiles.length} 份）${okFiles.join(" | ")}`);
+    } else if (okFiles.length > 0) {
+      log(`⚠️每日自动备份部分成功（${failDirs.length} 个目录失败）${okFiles.join(" | ")}`);
+    } else {
+      log("⚠️每日自动备份失败");
+    }
   } catch (err: any) {
     log(`⚠️每日自动备份失败：${err.message}`);
   }
 }
 
-async function preOpBackup(storageDir: string, log: (s: string) => void): Promise<void> {
+async function preOpBackup(storageDir: string, defaultStorageDir: string, log: (s: string) => void): Promise<void> {
+  const okFiles: string[] = [];
   try {
-    const file = backupToDir(storageDir, "shop_pre");
-    if (file) {
-      pruneBackups(storageDir, "shop_pre_", PRE_BACKUP_KEEP);
-      log(`🛡️操作前已自动留档：${file}`);
+    for (const dir of backupTargetDirs(storageDir, defaultStorageDir)) {
+      const file = await backupToDir(dir, "shop_pre");
+      if (file) {
+        okFiles.push(file);
+        pruneBackups(dir, "shop_pre_", PRE_BACKUP_KEEP);
+      }
     }
   } catch (err: any) {
     log(`⚠️操作前自动留档失败：${err.message}`);
+    return;
+  }
+  if (okFiles.length > 0) {
+    log(`🛡️操作前已自动留档（${okFiles.length} 份）${okFiles.join(" | ")}`);
+  } else {
+    log("⚠️操作前自动留档失败");
   }
 }
 
@@ -160,7 +200,7 @@ export const shopTool: ToolDefinition = {
     }
     let db = getDB();
 
-    await maybeAutoBackup(ctx.storageDir, log);
+    await maybeAutoBackup(ctx.storageDir, ctx.defaultStorageDir, log);
 
     if (!codeMigrated) {
       codeMigrated = true;
@@ -372,6 +412,7 @@ export const shopTool: ToolDefinition = {
           purchase_link: String(msg.purchaseLink ?? "").trim(),
           status: 0,
           remark: String(msg.remark ?? "").trim(),
+          stock_manual: 0,
         });
         const initialStock = Math.floor(Number(msg.initialStock ?? 0));
         if (initialStock > 0) {
@@ -461,11 +502,28 @@ export const shopTool: ToolDefinition = {
         loadAll();
         break;
       }
+      case "setStockQty": {
+        const sid = Number(msg.id);
+        const product = db.getProductById(sid);
+        if (!product) {
+          log("❌商品不存在");
+          break;
+        }
+        const qty = Number(msg.qty);
+        if (!Number.isFinite(qty) || qty < 0) {
+            log("❌库存需为 ≥ 0 的数字");
+          break;
+        }
+        db.updateStockQty(sid, qty);
+        log(`🔢清点 ${product.code} 库存 = ${qty}`);
+        loadAll();
+        break;
+      }
       case "deleteProduct": {
         const id = Number(msg.id);
         const p = db.getProductById(id);
         if (p) {
-          await preOpBackup(ctx.storageDir, log);
+          await preOpBackup(ctx.storageDir, ctx.defaultStorageDir, log);
         }
         if (p) {
           // 先删图片文件夹（删不掉也不阻塞删商品，但会打印完整路径），再删商品
@@ -507,7 +565,7 @@ export const shopTool: ToolDefinition = {
           log("⚠没有选中要删除的商品");
           break;
         }
-        await preOpBackup(ctx.storageDir, log);
+        await preOpBackup(ctx.storageDir, ctx.defaultStorageDir, log);
         let n = 0;
         const deleted: string[] = [];
         for (const id of ids) {
@@ -595,6 +653,7 @@ export const shopTool: ToolDefinition = {
       }
       case "delStockIn": {
         const id = Number(msg.id);
+        await preOpBackup(ctx.storageDir, ctx.defaultStorageDir, log);
         db.deleteStockIn(id);
         log("🗑已删除入库记录");
         ctx.postToWebview({ type: "stockInsLoaded", rows: db.getStockIns() });
@@ -760,7 +819,7 @@ export const shopTool: ToolDefinition = {
           log(`❌${lk} 已月结锁定，不能删除销售记录`);
           break;
         }
-        await preOpBackup(ctx.storageDir, log);
+        await preOpBackup(ctx.storageDir, ctx.defaultStorageDir, log);
         db.deleteSales(ids);
         log(`🗑已删除 ${ids.length} 条销售记录`);
         refreshSales(date);
@@ -807,7 +866,14 @@ export const shopTool: ToolDefinition = {
         const month = String(msg.month ?? todayStr().slice(0, 7));
         const snapshot = db.snapshotMonth(month);
         const settle = db.getSettle(month);
-        ctx.postToWebview({ type: "monthBuilt", month, snapshot, settle: settle ?? null });
+        ctx.postToWebview({
+          type: "monthBuilt",
+          month,
+          snapshot,
+          settle: settle ?? null,
+          prevEndStock: Number(db.getSettle(prevMonth(month))?.end_stock || 0),
+          endStockAuto: round2(db.sumStockCost()),
+        });
         break;
       }
       case "saveSettle": {
@@ -818,17 +884,24 @@ export const shopTool: ToolDefinition = {
           break;
         }
         const income = Number(msg.incomeAmount ?? 0);
+        const purchase = Number(msg.purchaseCost ?? 0);
         const extra = Number(msg.extraExpense ?? 0);
-        if (!Number.isFinite(income) || !Number.isFinite(extra) || income < 0 || extra < 0) {
-          log("❌到账收入与其他支出需为非负数字");
+        const startStock = Number(msg.startStock ?? 0);
+        const endStock = round2(db.sumStockCost());
+        const vals = [income, purchase, extra, startStock];
+        if (!vals.every(Number.isFinite) || vals.some((v) => v < 0)) {
+            log("❌到账/进货/杂项/期初需为非负数");
           break;
         }
         const snap = db.snapshotMonth(month);
-        const profit = round2(income - snap.goods_cost - extra);
+        const profit = round2(income - purchase - extra + endStock - startStock);
         db.saveSettle({
           month,
           income_amount: income,
           extra_expense: extra,
+          purchase_cost: purchase,
+          end_stock: endStock,
+          start_stock: startStock,
           goods_cost: round2(snap.goods_cost),
           sold_total: snap.sold_total,
           refund_total: snap.refund_total,
@@ -836,13 +909,15 @@ export const shopTool: ToolDefinition = {
           locked: 0,
         });
         log(
-          `🖊已保存 ${month} 月报：到账¥${income} 支出¥${extra} 货成本¥${round2(snap.goods_cost)} 利润¥${profit}`,
+          `🖊已保存 ${month} 月报：到账¥${income} 进货¥${purchase} 杂项¥${extra} 期初¥${startStock} 期末¥${endStock} 净利润¥${profit}`,
         );
         ctx.postToWebview({
           type: "monthBuilt",
           month,
           snapshot: snap,
           settle: db.getSettle(month),
+          prevEndStock: Number(db.getSettle(prevMonth(month))?.end_stock || 0),
+          endStockAuto: round2(db.sumStockCost()),
         });
         ctx.postToWebview({ type: "settlesLoaded", settles: db.getSettleMonths() });
         break;
@@ -863,6 +938,7 @@ export const shopTool: ToolDefinition = {
       }
       case "deleteSettle": {
         const month = String(msg.month ?? "");
+        await preOpBackup(ctx.storageDir, ctx.defaultStorageDir, log);
         db.deleteSettle(month);
         log(`🗑已删除 ${month} 月报`);
         ctx.postToWebview({ type: "settlesLoaded", settles: db.getSettleMonths() });
@@ -998,7 +1074,7 @@ export const shopTool: ToolDefinition = {
           break;
         }
         const files = listImageFiles(folder);
-        await preOpBackup(ctx.storageDir, log);
+        await preOpBackup(ctx.storageDir, ctx.defaultStorageDir, log);
         for (const f of files) {
           try {
             fs.unlinkSync(path.join(folder, f));
@@ -1049,7 +1125,7 @@ export const shopTool: ToolDefinition = {
           log(`⚠️${code} 没有第 ${index + 1} 张图片`);
           break;
         }
-        await preOpBackup(ctx.storageDir, log);
+        await preOpBackup(ctx.storageDir, ctx.defaultStorageDir, log);
         try {
           fs.unlinkSync(fp);
         } catch (err: any) {
@@ -1077,8 +1153,10 @@ export const shopTool: ToolDefinition = {
         break;
       }
       case "importProducts": {
+        await preOpBackup(ctx.storageDir, ctx.defaultStorageDir, log);
         const black: string[] = [];
         let created = 0;
+        let updated = 0;
         let skipped = 0;
         // 导入列 = “编号” + 当前可见列∩可写字段（派生列不参与导入；默认可见=旧 8 列格式）
         const IMPORT_WRITABLE = new Set([
@@ -1090,19 +1168,30 @@ export const shopTool: ToolDefinition = {
           "sale_price",
           "purchase_link",
         ]);
-        let rawVis: unknown;
-        try {
-          rawVis = JSON.parse(String(getSetting("col_visible_list") || "[]"));
-        } catch {
-          rawVis = [];
+        const rawVisSetting = String(getSetting("col_visible_list") || "");
+        let rawVis: unknown = [];
+        let hasVisConfig = false;
+        if (rawVisSetting) {
+          hasVisConfig = true;
+          try {
+            rawVis = JSON.parse(rawVisSetting);
+          } catch {
+            rawVis = [];
+          }
         }
         const visSet = new Set<string>(Array.isArray(rawVis) ? (rawVis as string[]) : []);
-        // 没配置/全隐藏时兜底为完整可写列（=旧 8 列格式），避免第一次用时只导得进编号
+        // 只读列（编号）始终参与定位，但只取它自己的字段；导入列 = 可见∩可写
         let importable = IMPORTABLE_FIELD_ORDER.filter((f) =>
           visSet.has(f.key),
         );
         if (importable.length === 0) {
-          importable = IMPORTABLE_FIELD_ORDER;
+          if (!hasVisConfig) {
+            // 从未配置时兜底为完整可写列（=旧 8 列格式），避免第一次用时只导得进编号
+            importable = IMPORTABLE_FIELD_ORDER;
+          } else {
+            // 用户故意只保留编号 → 不导入任何可写字段，只定位/更新编号本身
+            importable = [];
+          }
         }
         const importFields = ["code"].concat(
           importable.map((f) => f.key),
@@ -1135,7 +1224,70 @@ export const shopTool: ToolDefinition = {
           }
           const exist = db.getProductByCode(code);
           if (exist) {
-            skipped++;
+            const has = (key: string) => {
+              const idx = importFields.indexOf(key);
+              return idx >= 0 && idx < parts.length;
+            };
+            const getv = (key: string) => {
+              const idx = importFields.indexOf(key);
+              return idx >= 0 ? String(parts[idx] ?? "") : "";
+            };
+            const real = (rawv: string): number | null => {
+              const v = Number(rawv);
+              return Number.isFinite(v) ? v : null;
+            };
+            let touched = 0;
+            for (const key of ["name", "category", "series", "purchase_link"]) {
+              if (has(key)) {
+                db.updateProductField(exist.id, key, getv(key));
+                touched++;
+              }
+            }
+            const gradeRaw = has("grade") ? real(getv("grade")) : null;
+            const costRaw = has("cost_price") ? real(getv("cost_price")) : null;
+            const saleRaw = has("sale_price") ? real(getv("sale_price")) : null;
+            const gradeOk = gradeRaw !== null && gradeRaw >= 0 && gradeRaw <= 99;
+            const costOk = costRaw !== null && costRaw >= 0;
+            const gradeChange = gradeOk && gradeRaw !== exist.grade;
+            const costChange = costOk && costRaw !== exist.cost_price;
+            const effGrade = gradeOk ? (gradeRaw as number) : exist.grade;
+            const effCost = costOk ? (costRaw as number) : exist.cost_price;
+            if (gradeChange) {
+              db.updateProductField(exist.id, "grade", gradeRaw);
+              touched++;
+            }
+            if (costChange) {
+              db.updateProductField(exist.id, "cost_price", costRaw);
+              touched++;
+            }
+            // 售价：填了 >0 → 手动价；否则非自定义且（售价列可见 或 等级/进价有变）→ 按规则重算
+            const manualSale = saleRaw !== null && saleRaw > 0 ? saleRaw : null;
+            if (manualSale !== null) {
+              db.updateProductField(exist.id, "sale_price", manualSale);
+              db.updateProductField(exist.id, "price_manual", 1);
+              touched++;
+            } else if (
+              effGrade !== 0 &&
+              (gradeChange ||
+                costChange ||
+                (importFields.includes("sale_price") && exist.price_manual !== 1))
+            ) {
+              if (db.ensureRule(effGrade)) {
+                log(`ℹ️等级 ${effGrade} 无规则，已自动创建默认规则（cost*1.5 → +0.88）`);
+              }
+              const rule = db.getRules().find((r) => r.grade === effGrade);
+              const next = calcPrice(effCost, rule);
+              if (exist.sale_price !== next || exist.price_manual !== 0) {
+                touched++;
+              }
+              db.updateProductField(exist.id, "sale_price", next);
+              db.updateProductField(exist.id, "price_manual", 0);
+            }
+            if (touched > 0) {
+              updated++;
+            } else {
+              skipped++;
+            }
             continue;
           }
           const get = (key: string) => {
@@ -1161,7 +1313,7 @@ export const shopTool: ToolDefinition = {
             : db.getRules().find((r) => r.grade === grade);
           db.addProduct({
             code,
-            name,
+            name: name || code,
             category,
             series,
             grade,
@@ -1171,17 +1323,19 @@ export const shopTool: ToolDefinition = {
             purchase_link: link,
             status: 0,
             remark: "",
+            stock_manual: 0,
           });
           created++;
         }
         log(
-          `📥商品导入：新增 ${created} 个，跳过(编号已存在) ${skipped} 个` +
+          `📥商品导入：新增 ${created} 个，更新 ${updated} 个（编号已存在）` +
+            (skipped ? `，无变更 ${skipped} 个` : "") +
             (black.length ? `，无法解析 ${black.length} 行` : ""),
         );
         for (const b of black) {
           log(`  ⚠️${b}`);
         }
-        ctx.postToWebview({ type: "productsImported", ok: true, created, skipped, bad: black });
+        ctx.postToWebview({ type: "productsImported", ok: true, created, updated, skipped, bad: black });
         loadAll();
         break;
       }
@@ -1211,7 +1365,7 @@ export const shopTool: ToolDefinition = {
       case "toggleLiveStar": {
         const code = canonicalCode(String(msg.code ?? ""));
         if (!code) {
-          log("❌编号格式错误");
+            log("❌编号格式错误");
           break;
         }
         const set = new Set(db.getLiveStars());
@@ -1487,17 +1641,18 @@ list = (msg.codes as string[])
         try {
           const settles = db.getSettleMonths();
           const aoa: any[][] = [
-            ["月份", "收入", "额外支出", "货品成本", "累计售出", "累计退款", "利润", "已锁定", "更新时间"],
+            ["月份", "到账收入", "本月进货支出", "杂项支出", "期初库存", "期末库存", "净利润", "净售件数", "已锁定", "更新时间"],
           ];
           for (const s of settles) {
             aoa.push([
               s.month,
               s.income_amount,
+              s.purchase_cost ?? 0,
               s.extra_expense,
-              s.goods_cost,
-              s.sold_total,
-              s.refund_total,
+              s.start_stock ?? 0,
+              s.end_stock ?? 0,
               s.profit,
+              (s.sold_total ?? 0) - (s.refund_total ?? 0),
               s.locked === 1 ? "是" : "否",
               s.updated_at,
             ]);
@@ -1581,7 +1736,7 @@ list = (msg.codes as string[])
           break;
         }
         try {
-          await preOpBackup(ctx.storageDir, log);
+          await preOpBackup(ctx.storageDir, ctx.defaultStorageDir, log);
           db.restoreDB(fp, ctx.storageDir);
           db = getDB();
           log("✅数据库已恢复，数据已替换为所选备份");
@@ -1622,3 +1777,4 @@ list = (msg.codes as string[])
     }
   },
 };
+

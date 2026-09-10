@@ -15,6 +15,8 @@ export interface ToolContext {
   extensionUri: vscode.Uri;
   /** 扩展全局存储目录，用于存放跨工作区共享的数据(如SQLite) */
   storageDir: string;
+  /** VS Code 全局存储目录（C盘默认位置），storageDir 未配置时两者相同，用于双目录异地备份 */
+  defaultStorageDir: string;
   postToWebview(msg: any): void;
   log(text: string): void;
   selectFolder(title?: string): Promise<string | undefined>;
@@ -29,11 +31,13 @@ export function createToolContext(
   panel: vscode.WebviewPanel,
   extensionUri: vscode.Uri,
   storageDir: string,
+  defaultStorageDir: string,
 ): ToolContext {
   return {
     panel,
     extensionUri,
     storageDir,
+    defaultStorageDir,
     postToWebview(msg: any) {
       panel.webview.postMessage(msg);
     },

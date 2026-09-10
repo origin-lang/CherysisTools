@@ -9,14 +9,16 @@
       el.innerHTML =
         s.length === 0
           ? `<p class="muted">（还没有月报，去上面输入月份点「生成/刷新月报」）</p>`
-          : `<table class="data-table"><thead><tr><th>月份</th><th>到账收入</th><th>货成本</th><th>其他支出</th><th>利润</th><th>净售</th><th>状态</th><th>操作</th></tr></thead>
+          : `<table class="data-table"><thead><tr><th>月份</th><th>到账</th><th>进货支出</th><th>杂项</th><th>期初库存</th><th>期末库存</th><th>净利润</th><th>净售</th><th>状态</th><th>操作</th></tr></thead>
           <tbody>${s
             .map(
               (x) => `<tr>
               <td><b>${esc(x.month)}</b></td>
               <td class="num">¥${money(x.income_amount)}</td>
-              <td class="num">¥${money(x.goods_cost)}</td>
+              <td class="num">¥${money(x.purchase_cost ?? 0)}</td>
               <td class="num">¥${money(x.extra_expense)}</td>
+              <td class="num">¥${money(x.start_stock ?? 0)}</td>
+              <td class="num">¥${money(x.end_stock ?? 0)}</td>
               <td class="num ${x.profit >= 0 ? "profit-pos" : "profit-neg"}">¥${money(x.profit)}</td>
               <td class="num">${qty(x.sold_total - x.refund_total)}</td>
               <td>${x.locked === 1 ? '<span class="badge badge-off">已锁定</span>' : '<span class="badge badge-on">草稿</span>'}</td>
@@ -62,32 +64,61 @@
       </svg>`;
     }
 
-    function renderSettlePanel(payload) {
-      const { month, snapshot, settle } = payload;
-      if (!$("settleMonth")) {
-        return;
-      }
-      $("settleMonth").value = month;
-      const net = snapshot.sold_total - snapshot.refund_total;
-      const locked = !!(settle && settle.locked === 1);
-      $("settleStats").innerHTML =
-        `<div class="stat-line">本月销售：卖出 <b>${qty(snapshot.sold_total)}</b> 件，退款 <b>${qty(snapshot.refund_total)}</b> 件，净售 <b>${qty(net)}</b> 件</div>
-         <div class="stat-line">货成本（Σ净售 × 进价快照）：<b>¥${money(snapshot.goods_cost)}</b></div>`;
-      const incomeInput = $("settleIncome");
-      const expInput = $("settleExpense");
-      incomeInput.value = settle ? Number(settle.income_amount).toFixed(2) : "";
-      expInput.value = settle ? Number(settle.extra_expense).toFixed(2) : "";
-      const upd = () => {
-        const income = Number(incomeInput.value || 0);
-        const exp = Number(expInput.value || 0);
-        const profit = income - snapshot.goods_cost - exp;
-        const cl = profit >= 0 ? "profit-pos" : "profit-neg";
-        $("settleProfit").innerHTML =
-          `<div class="stat-line">本月利润 = 到账 ¥${money(income)} − 货成本 ¥${money(snapshot.goods_cost)} − 支出 ¥${money(exp)} = <span class="num-big ${cl}">¥${money(profit)}</span></div>`;
-      };
-      upd();
-      incomeInput.oninput = upd;
-      expInput.oninput = upd;
+    function calcEndStock() {
+    const list = state.products || [];
+    let s = 0;
+    for (const p of list) {
+      s += (Number(p.stockTotal) || 0) * (Number(p.cost_price) || 0);
+    }
+    return Math.round(s * 100) / 100;
+  }
+
+  function renderSettlePanel(payload) {
+    const { month, snapshot, settle, prevEndStock } = payload;
+    if (!$("settleMonth")) {
+      return;
+    }
+    const autoEnd =
+      payload.endStockAuto !== undefined && payload.endStockAuto !== null
+        ? Number(payload.endStockAuto)
+        : calcEndStock();
+    $("settleMonth").value = month;
+    const net = snapshot.sold_total - snapshot.refund_total;
+    const locked = !!(settle && settle.locked === 1);
+    const startStock =
+      settle && settle.start_stock !== null
+        ? Number(settle.start_stock)
+        : Number(prevEndStock || 0);
+    state.settlePrevEnd = startStock;
+    $("settleStats").innerHTML =
+      `<div class="stat-line">本月销售：卖出 <b>${qty(snapshot.sold_total)}</b> 件，退款 <b>${qty(snapshot.refund_total)}</b> 件，净售 <b>${qty(net)}</b> 件</div>
+         <div class="stat-line">期初库存（上月结存，自动）：<b>¥${money(startStock)}</b></div>`;
+    const incomeInput = $("settleIncome");
+    const purchaseInput = $("settlePurchase");
+    const expInput = $("settleExpense");
+    const endInput = $("settleEndStock");
+    incomeInput.value = settle ? Number(settle.income_amount).toFixed(2) : "";
+    purchaseInput.value = settle ? Number(settle.purchase_cost ?? 0).toFixed(2) : "";
+    expInput.value = settle ? Number(settle.extra_expense).toFixed(2) : "";
+    endInput.value = autoEnd.toFixed(2);
+    const upd = () => {
+      const income = Number(incomeInput.value || 0);
+      const purchase = Number(purchaseInput.value || 0);
+      const exp = Number(expInput.value || 0);
+      const end = autoEnd;
+      const cash = income - purchase - exp;
+      const asset = income - purchase + end - exp;
+      const profit = income - purchase + end - startStock - exp;
+      const cl = profit >= 0 ? "profit-pos" : "profit-neg";
+      $("settleProfit").innerHTML =
+        `<div class="stat-line muted">现金流（钱袋子）：到账 ¥${money(income)} − 进货 ¥${money(purchase)} − 杂项 ¥${money(exp)} = <b>¥${money(cash)}</b></div>
+           <div class="stat-line muted">净资产口径（含库存）：到账 − 进货 + 期末 − 杂项 = <b>¥${money(asset)}</b></div>
+           <div class="stat-line">净利润（结转期初）= 到账 − 进货 + 期末 − 期初 − 杂项 = <span class="num-big ${cl}">¥${money(profit)}</span></div>`;
+    };
+    upd();
+    incomeInput.oninput = upd;
+    purchaseInput.oninput = upd;
+    expInput.oninput = upd;
       $("settleSaveBtn").disabled = locked;
       $("settleSaveBtn").textContent = locked ? "已锁定，不能改" : "保存月报";
       $("settleDeleteBtn").disabled = locked;

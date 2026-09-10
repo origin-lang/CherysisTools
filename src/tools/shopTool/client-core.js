@@ -52,6 +52,7 @@ window.toolClients = window.toolClients || {};
       "cost_price",
       "sale_price",
       "purchase_link",
+      "stockTotal",
     ]);
     var visList = new Set(PRODUCT_FIELDS.map((f) => f.key));
     var visGallery = new Set(PRODUCT_FIELDS.map((f) => f.key));

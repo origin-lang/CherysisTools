@@ -125,6 +125,18 @@
       .data-table th:hover {
         background: var(--vscode-list-hoverBackground);
       }
+      .data-table .th-label {
+        display: inline-block;
+      }
+      .data-table .filter-cell {
+        display: block;
+        width: calc(100% - 2px);
+        min-width: 44px;
+        margin-top: 3px;
+        padding: 2px 4px;
+        font-size: 11px;
+        box-sizing: border-box;
+      }
       .data-table td.num {
         text-align: right;
       }
@@ -642,13 +654,6 @@
         <input id="keywordSearch" placeholder="🔍 编号 / 名称 / 品类 / 系列" style="width: 170px" />
         <button id="viewListBtn" class="btn-teal">列表</button>
         <button id="viewGalleryBtn">画册</button>
-        <select id="filterStatus">
-          <option value="all">全部状态</option>
-          <option value="on">在售</option>
-          <option value="off">已下架</option>
-        </select>
-        <select id="filterCat"><option value="">全部品类</option></select>
-        <select id="filterSeries"><option value="">全部系列</option></select>
         <button id="newProductBtn" class="btn-teal">＋ 新建商品</button>
         <button id="colSetBtn">字段显示</button>
         <button id="importProductBtn" title="粘贴商品表格批量导入">导入商品</button>
@@ -781,8 +786,16 @@ L032,1"></textarea>
             <input id="settleIncome" type="number" min="0" step="0.01" style="width: 170px" />
           </div>
           <div class="field">
-            <label>其他支出 ¥（运费/佣金/杂支）</label>
+            <label>本月进货支出 ¥（小荷包转出数）</label>
+            <input id="settlePurchase" type="number" min="0" step="0.01" style="width: 170px" />
+          </div>
+          <div class="field">
+            <label>杂项支出 ¥（快递、氧化袋等）</label>
             <input id="settleExpense" type="number" min="0" step="0.01" style="width: 170px" />
+          </div>
+          <div class="field">
+            <label>期末库存金额 ¥（自动＝各品库存 × 进价之和）</label>
+            <input id="settleEndStock" type="text" readonly style="width: 170px" />
           </div>
         </div>
         <div class="rows" style="margin-top: 8px">
