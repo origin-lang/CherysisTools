@@ -437,6 +437,42 @@
           updateNameTemplatePreview();
           break;
         }
+        case "productsDelta": {
+          const removed = new Set(
+            Array.isArray(msg.removed) ? msg.removed.map(Number) : [],
+          );
+          const incoming = Array.isArray(msg.products) ? msg.products : [];
+          let changed = false;
+          if (removed.size > 0) {
+            const kept = state.products.filter((p) => {
+              if (removed.has(p.id)) {
+                state.selectedProducts.delete(p.id);
+                changed = true;
+                return false;
+              }
+              return true;
+            });
+            if (changed) {
+              state.products = kept;
+            }
+          }
+          for (const p of incoming) {
+            const idx = state.products.findIndex((x) => x.id === p.id);
+            if (idx === -1) {
+              state.products.push(p);
+              changed = true;
+            } else if (
+              JSON.stringify(state.products[idx]) !== JSON.stringify(p)
+            ) {
+              state.products[idx] = p;
+              changed = true;
+            }
+          }
+          if (changed) {
+            renderProducts();
+          }
+          break;
+        }
         case "rulesLoaded": {
           state.rules = msg.rules || [];
           renderRules();
@@ -517,14 +553,18 @@
           delete state.coverPending[msg.code];
           coverInFlight = Math.max(0, coverInFlight - 1);
           pumpCovers();
-          requestCoverRender();
+          if (!patchCoverRow(msg.code, msg.data || "")) {
+            requestCoverRender();
+          }
           renderLivePreviews();
           break;
         }
         case "coverInvalidated": {
           delete state.coverCache[msg.code];
           delete state.coverPending[msg.code];
-          requestCoverRender();
+          if (!patchCoverRow(msg.code, "")) {
+            requestCoverRender();
+          }
           renderLivePreviews();
           break;
         }
@@ -670,6 +710,40 @@
           break;
         }
       }
+    }
+
+    function coverRowEl(code) {
+      if (viewMode !== "list") {
+        return null;
+      }
+      const p = state.products.find((x) => x.code === code);
+      if (!p) {
+        return null;
+      }
+      return document.querySelector(`#productListView tr[data-id="${p.id}"]`);
+    }
+
+    // 封面到达/失效时只替换对应行的图片节点，避免每次重绘整张商品表
+    function patchCoverRow(code, data) {
+      const tr = coverRowEl(code);
+      if (!tr) {
+        return false;
+      }
+      const old = tr.querySelector('[data-p-act="img"]');
+      if (!old) {
+        return false;
+      }
+      const node = document.createElement(data ? "img" : "span");
+      node.className = data ? "thumb" : "thumb placeholder";
+      node.setAttribute("data-p-act", "img");
+      node.setAttribute("data-id", String(old.dataset.id ?? ""));
+      if (data) {
+        node.src = data;
+      } else {
+        node.textContent = "无图";
+      }
+      old.replaceWith(node);
+      return true;
     }
 
     function openLightboxMenu(e, code, idx, dataUrl, loading) {

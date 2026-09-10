@@ -19,6 +19,8 @@ export interface HandlerCtx {
   removeImageFolder: (code: string) => boolean;
   /** 全量刷新前端（初始加载/恢复数据库后使用） */
   loadAll: () => void;
+  /** 差量下发更动/删除的商品行（替代高频操作后的全量刷新） */
+  postProductsDelta: (ids: number[], removed?: number[]) => void;
   refreshSales: (date: string) => void;
   postStockIns: () => void;
   postLiveState: () => void;

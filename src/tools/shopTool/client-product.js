@@ -361,7 +361,7 @@ function renderList(list) {
               <button class="mini-btn" data-p-act="stockin" data-id="${p.id}" title="补货入库">📦</button>
               <button class="mini-btn btn-danger" data-p-act="del" data-id="${p.id}" title="删除(含记录)">🗑</button>
             </td>`);
-      return `<tr class="${off ? "off " : ""}${low ? "lowstock " : ""}${isActive ? "active" : ""}">${tds.join("")}</tr>`;
+      return `<tr class="${off ? "off " : ""}${low ? "lowstock " : ""}${isActive ? "active" : ""}" data-id="${p.id}">${tds.join("")}</tr>`;
     })
     .join("");
   const selectedCount = state.selectedProducts.size;
@@ -422,7 +422,7 @@ function bindColFilters() {
     if (el.tagName === "SELECT") {
       el.onchange = apply;
     } else {
-      el.oninput = apply;
+      el.oninput = debounce(apply, 150);
     }
   });
 }

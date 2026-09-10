@@ -193,7 +193,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       db.updateStockQty(sid, qty.value);
       const display = qty.value;
       log(`🔢清点 ${product.code} 库存 = ${display}`);
-      h.loadAll();
+      h.postProductsDelta([sid]);
     },
 
     async deleteProduct(msg) {
@@ -210,7 +210,8 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       db.deleteProduct(id);
       log(`🗑已删除 ${p ? p.code : id}（含其销售记录与入库记录）`);
       h.refreshSales(todayStr());
-      h.loadAll();
+      h.postProductsDelta([], [id]);
+      h.postLiveState();
     },
 
     setStatus(msg) {
@@ -219,7 +220,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       db.updateProductField(id, "status", status);
       const p = db.getProductById(id);
       log(status === 1 ? `🔻已下架 ${p?.code ?? id}` : `🔺已上架 ${p?.code ?? id}`);
-      h.loadAll();
+      h.postProductsDelta([id]);
     },
 
     saveRules(msg) {
@@ -267,7 +268,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         db.updateProductField(id, "status", status);
       }
       log(`✅已${status === 1 ? "下架" : "上架"} ${ids.length} 个商品`);
-      h.loadAll();
+      h.postProductsDelta(ids);
     },
 
     async deleteProducts(msg) {
@@ -299,7 +300,8 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       }
       log(`✅删除商品 ${n} 个${deleted.length ? `：${deleted.slice(0, 8).join("、")}${deleted.length > 8 ? " 等" : ""}` : ""}`);
       h.refreshSales(todayStr());
-      h.loadAll();
+      h.postProductsDelta([], ids);
+      h.postLiveState();
     },
 
     addStockIn(msg) {
@@ -321,7 +323,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         remark: String(msg.remark ?? "补货入库"),
       });
       log(`📦已入库 ${p.code} +${qty}`);
-      h.loadAll();
+      h.postProductsDelta([p.id]);
     },
 
     loadStockIns() {
@@ -330,11 +332,14 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
 
     async delStockIn(msg) {
       const id = Number(msg.id);
+      const row = db.getStockIns().find((r) => r.id === id);
       await h.preOpBackup();
       db.deleteStockIn(id);
       log("🗑已删除入库记录");
       h.postStockIns();
-      h.loadAll();
+      if (row) {
+        h.postProductsDelta([row.product_id]);
+      }
     },
 
     async importProducts(msg) {

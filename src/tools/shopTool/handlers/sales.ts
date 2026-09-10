@@ -65,7 +65,7 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
             : `⏭已跳过 ${p.code}（当天已有记录）`,
       );
       h.refreshSales(date);
-      h.loadAll();
+      h.postProductsDelta([productId]);
     },
 
     pasteSales(msg) {
@@ -88,6 +88,7 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
       const missing = new Set<string>();
       const bad: string[] = [];
       const seen = new Set<string>();
+      const touchedIds = new Set<number>();
       for (let i = 0; i < lines.length; i++) {
         const raw = lines[i].trim();
         if (!raw) {
@@ -136,8 +137,10 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
         });
         if (res === "created") {
           created++;
+          touchedIds.add(product.id);
         } else if (res === "updated") {
           updated++;
+          touchedIds.add(product.id);
         } else {
           skipped++;
         }
@@ -163,7 +166,7 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
         badLines: bad,
       });
       h.refreshSales(date);
-      h.loadAll();
+      h.postProductsDelta([...touchedIds]);
     },
 
     async deleteSales(msg) {

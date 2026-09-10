@@ -93,8 +93,11 @@ export const DEFAULT_SEED_RULES: SaleRule[] = [
 
 export interface ShopDB {
   getProducts(): Product[];
+  getProductsByIds(ids: number[]): Array<{ stockTotal: number; soldTotal: number; refundTotal: number } & Product>;
   getProductByCode(code: string): Product | undefined;
   getProductById(id: number): Product | undefined;
+  getStockTotal(id: number): number;
+  getSaleTotal(id: number): { sold: number; refund: number };
   addProduct(p: Omit<Product, "id" | "created_at">): number;
   updateProductField(id: number, field: string, value: any): void;
   deleteProduct(id: number): void;
@@ -412,6 +415,7 @@ export function getDB(): ShopDB {
   ]) {
     pFieldStmts.set(f, c.prepare(`UPDATE products SET ${f} = @value WHERE id = @id`));
   }
+  const stockById = c.prepare("SELECT stock_manual AS v FROM products WHERE id = ?");
   const ensureAggLoaded = () => {
     if (aggCache.loaded) {
       return;
@@ -507,6 +511,28 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
 
   return {
     getProducts: loadProducts,
+    getProductsByIds(ids: number[]): Array<{ stockTotal: number; soldTotal: number; refundTotal: number } & Product> {
+      ensureAggLoaded();
+      const out: Array<{ stockTotal: number; soldTotal: number; refundTotal: number } & Product> = [];
+      for (const id of ids) {
+        if (!Number.isInteger(id)) {
+          continue;
+        }
+        const p = sById.get(id) as any;
+        if (!p) {
+          continue;
+        }
+        const stockR = stockById.get(id) as any;
+        const t = aggCache.sale.get(Number(id));
+        out.push({
+          ...mapProduct(p),
+          stockTotal: Number(stockR?.v || 0),
+          soldTotal: t?.sold ?? 0,
+          refundTotal: t?.refund ?? 0,
+        });
+      }
+      return out;
+    },
     getProductByCode(code: string): Product | undefined {
       const r = sByCode.get(code) as any;
       return r ? mapProduct(r) : undefined;
@@ -514,6 +540,14 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
     getProductById(id: number): Product | undefined {
       const r = sById.get(id) as any;
       return r ? mapProduct(r) : undefined;
+    },
+    getStockTotal(id: number): number {
+      const r = stockById.get(id) as any;
+      return Number(r?.v || 0);
+    },
+    getSaleTotal(id: number): { sold: number; refund: number } {
+      ensureAggLoaded();
+      return aggCache.sale.get(Number(id)) || { sold: 0, refund: 0 };
     },
     addProduct(p: Omit<Product, "id" | "created_at">): number {
       const info = pInsert.run({ ...p, created_at: nowStr() });

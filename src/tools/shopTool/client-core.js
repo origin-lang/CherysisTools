@@ -319,6 +319,14 @@ window.toolClients = window.toolClients || {};
       });
     }
 
+    function debounce(fn, ms) {
+      let t = null;
+      return function (...args) {
+        clearTimeout(t);
+        t = setTimeout(() => fn.apply(this, args), ms);
+      };
+    }
+
     function pumpCovers() {
       while (coverInFlight < COVER_CONCURRENCY && coverQueue.length > 0) {
         const code = coverQueue.shift();

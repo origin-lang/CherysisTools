@@ -299,6 +299,14 @@ export const shopTool: ToolDefinition = {
       postLiveState();
     };
 
+    const postProductsDelta = (ids: number[], removed: number[] = []) => {
+      ctx.postToWebview({
+        type: "productsDelta",
+        products: state.current.getProductsByIds(ids),
+        removed,
+      });
+    };
+
     // 各域 handler 共享的运行上下文：h.db 为 getter，始终指向当前连接，
     // importDB 恢复旧库后经 setDB 整体切换，读写错误或不一致都落在同一处。
     const h: HandlerCtx = {
@@ -317,6 +325,7 @@ export const shopTool: ToolDefinition = {
       invalidateCover,
       removeImageFolder,
       loadAll,
+      postProductsDelta,
       refreshSales: (date) =>
         ctx.postToWebview({
           type: "salesLoaded",
