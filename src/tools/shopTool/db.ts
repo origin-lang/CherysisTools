@@ -75,17 +75,6 @@ export interface LivePlanRow {
   code: string;
 }
 
-export interface StockGroupRow {
-  product_id: number;
-  qty: number;
-}
-
-export interface SaleGroupRow {
-  product_id: number;
-  sold: number;
-  refund: number;
-}
-
 export interface StockInRow {
   id: number;
   product_id: number;
@@ -115,8 +104,6 @@ export interface ShopDB {
   addStockIn(s: Omit<StockIn, "id">): number;
   deleteStockIn(id: number): void;
   getStockIns(): StockInRow[];
-  getStockGroups(): StockGroupRow[];
-  getSaleGroups(): SaleGroupRow[];
   getStockTotals(): Map<number, number>;
   updateStockQty(id: number, qty: number): void;
   sumStockCost(): number;
@@ -373,15 +360,9 @@ function mapSales(r: any): SalesRecord {
 
 export function getDB(): ShopDB {
   const c = core();
-  const cachedProducts = new Map<number, Product>();
   const loadProducts = (): Product[] => {
     const rows = c.prepare("SELECT * FROM products ORDER BY code").all() as any[];
-    const list = rows.map(mapProduct);
-    cachedProducts.clear();
-    for (const p of list) {
-      cachedProducts.set(p.id, p);
-    }
-    return list;
+    return rows.map(mapProduct);
   };
   const pInsert = c.prepare(`
     INSERT INTO products (code, name, category, series, grade, cost_price, sale_price, price_manual, purchase_link, status, remark, created_at, stock_manual)
@@ -513,9 +494,7 @@ export function getDB(): ShopDB {
   `);
   const liveStarsList = c.prepare("SELECT code FROM live_star ORDER BY code");
   const liveStarsDel = c.prepare("DELETE FROM live_star");
-  const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_at) VALUES (@code, @created_at)");
-  const liveStarsByCode = c.prepare("SELECT code FROM live_star WHERE code = ?");
-  const liveStarsOneDel = c.prepare("DELETE FROM live_star WHERE code = ?");
+const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_at) VALUES (@code, @created_at)");
   const livePlanList = c.prepare("SELECT group_no, slot_no, code FROM live_plan ORDER BY group_no, slot_no");
   const livePlanDel = c.prepare("DELETE FROM live_plan");
   const livePlanIns = c.prepare("INSERT OR REPLACE INTO live_plan (group_no, slot_no, code) VALUES (@group_no, @slot_no, @code)");
@@ -637,19 +616,6 @@ export function getDB(): ShopDB {
         remark: r.remark,
         code: r.code,
         name: r.name,
-      }));
-    },
-    getStockGroups(): StockGroupRow[] {
-      return (stockGroupStmt.all() as any[]).map((r) => ({
-        product_id: r.product_id,
-        qty: Number(r.qty || 0),
-      }));
-    },
-    getSaleGroups(): SaleGroupRow[] {
-      return (saleGroupStmt.all() as any[]).map((r) => ({
-        product_id: r.product_id,
-        sold: Number(r.sold || 0),
-        refund: Number(r.refund || 0),
       }));
     },
     getStockTotals(): Map<number, number> {

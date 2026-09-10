@@ -125,6 +125,9 @@ const IMPORTABLE_FIELD_ORDER = PRODUCT_FIELD_ORDER.filter((f) =>
   ["name", "category", "series", "grade", "cost_price", "sale_price", "purchase_link"].includes(f.key),
 );
 
+// 导入/粘贴时的表头关键词：首列命中即视为表头行整行跳过（pasteSales 与 importProducts 共用）
+const HEADER_FIRST_COLUMN_RE = /^(编号|名称|商品|code|id|品类|类别|分类|系列|等级|成本|进价|售价|数量|库存|状态|采购|备注)/i;
+
 async function backupToDir(storageDir: string, prefix: string): Promise<string | null> {
   try {
     fs.mkdirSync(backupDir(storageDir), { recursive: true });
@@ -842,10 +845,7 @@ export const shopTool: ToolDefinition = {
           if (parts.length === 0) {
             continue;
           }
-          if (i === 0 && /^(编号|商品|编号|code)/i.test(parts[0])) {
-            continue;
-          }
-          if (/^(编号|名称|商品|code|id|品类|类别|分类|系列|等级|成本|进价|售价|数量|库存|状态|采购|备注)/i.test(parts[0])) {
+          if (HEADER_FIRST_COLUMN_RE.test(parts[0])) {
             continue;
           }
           const token = parts[0];
@@ -1313,10 +1313,7 @@ export const shopTool: ToolDefinition = {
           if (parts.length === 0) {
             continue;
           }
-          if (i === 0 && /编号|商品|编号|code/i.test(parts[0])) {
-            continue;
-          }
-          if (/^(编号|名称|商品|code|id|品类|类别|分类|系列|等级|成本|进价|售价|数量|库存|状态|采购|备注)/i.test(parts[0])) {
+          if (HEADER_FIRST_COLUMN_RE.test(parts[0])) {
             continue;
           }
           const rawCode = parts[0];
