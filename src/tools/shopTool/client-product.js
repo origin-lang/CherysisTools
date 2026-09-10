@@ -30,7 +30,6 @@ const TEXT_FILTER_FIELDS = new Set([
   "name",
   "cost_price",
   "sale_price",
-  "purchase_link",
   "stockTotal",
   "soldTotal",
   "netTotal",
@@ -38,9 +37,6 @@ const TEXT_FILTER_FIELDS = new Set([
 
 function filteredProducts() {
   const st = filters.f_status || "";
-  const kw = String(filters.keyword || "")
-    .trim()
-    .toLowerCase();
   return state.products
     .filter((p) => {
       if (st === "on") {
@@ -68,18 +64,6 @@ function filteredProducts() {
         }
       }
       return true;
-    })
-    .filter((p) => {
-      if (!kw) {
-        return true;
-      }
-      const kwDigits = kw.replace(/\D/g, "");
-      const codeDigits = p.code.replace(/\D/g, "");
-      const hay = `${p.code} ${p.name} ${p.category} ${p.series}`.toLowerCase();
-      return (
-        hay.includes(kw) ||
-        (kwDigits.length > 0 && codeDigits.includes(kwDigits))
-      );
     })
     .sort((a, b) => {
       let r = 0;
@@ -239,7 +223,20 @@ function distinctOptions(key, display) {
   return opts.sort((a, b) => String(a).localeCompare(String(b), "zh-Hans-CN"));
 }
 
+const NO_FILTER_FIELDS = new Set([
+  "cost_price",
+  "sale_price",
+  "stockTotal",
+  "soldTotal",
+  "netTotal",
+  "status",
+  "purchase_link",
+]);
+
 function filterControl(key) {
+  if (NO_FILTER_FIELDS.has(key)) {
+    return "";
+  }
   const cur = filters["f_" + key] || "";
   const opts = (items) =>
     items
@@ -258,8 +255,6 @@ function filterControl(key) {
           key === "grade" ? displayGrade : undefined,
         ),
       )}</select>`;
-    case "status":
-      return `<select class="filter-cell" data-col-f="status" title="筛选状态"><option value="">全部状态</option><option value="on" ${cur === "on" ? "selected" : ""}>在售</option><option value="off" ${cur === "off" ? "selected" : ""}>已下架</option></select>`;
     default:
       return `<input class="filter-cell" data-col-f="${key}" title="筛选${key}" placeholder="筛选" value="${esc(String(cur))}" />`;
   }
@@ -295,6 +290,7 @@ function renderList(list) {
       const starred = state.liveStars && state.liveStars.has(p.code);
       const tds = [];
       const isSelected = state.selectedProducts.has(p.id);
+      const isActive = p.id === state.activeProductId;
       tds.push(
         `<td><input type="checkbox" class="product-checkbox" data-id="${p.id}" ${isSelected ? "checked" : ""} title="选择 #${p.code}" /></td>`,
       );
@@ -365,7 +361,7 @@ function renderList(list) {
               <button class="mini-btn" data-p-act="stockin" data-id="${p.id}" title="补货入库">📦</button>
               <button class="mini-btn btn-danger" data-p-act="del" data-id="${p.id}" title="删除(含记录)">🗑</button>
             </td>`);
-      return `<tr class="${off ? "off" : ""} ${low ? "lowstock" : ""}">${tds.join("")}</tr>`;
+      return `<tr class="${off ? "off " : ""}${low ? "lowstock " : ""}${isActive ? "active" : ""}">${tds.join("")}</tr>`;
     })
     .join("");
   const selectedCount = state.selectedProducts.size;
@@ -390,7 +386,7 @@ function renderList(list) {
                <th style="width:30px"><input type="checkbox" id="selectAllProducts" ${list.length === 0 ? "disabled" : ""} ${allSelected ? "checked" : ""} title="全选 / 取消全选" /></th>
                ${headCols.join("")}
              </tr></thead><tbody>${body}</tbody></table></div>
-             <div class="muted" style="margin-top:4px">表头下小框可筛选对应列；双击单元格编辑（回车或点击别处即保存）；右键行/表格复制</div>`;
+             <div class="muted" style="margin-top:4px">表头下小框可筛选对应列；双击单元格编辑（回车或点击别处即保存）；点击行可高亮定位；右键行可复制/删除整行</div>`;
   bindBatchOps();
   bindColFilters();
 }
@@ -642,30 +638,25 @@ function openInlineEditor(td) {
     }
     done = true;
     if (commit) {
-      let val;
-      if (field === "grade") {
-        val = editor.value;
-      } else {
-        val = editor.value;
-      }
-      if (field === "cost_price" || field === "sale_price" || field === "stockTotal") {
-        const n = Number(val);
-        if (val !== "" && (!Number.isFinite(n) || n < 0)) {
-          toast("必须是 ≥0 的数字");
-          td.innerHTML = td.dataset.orig;
-          return;
-        }
-        val = Number(val);
+      const res = sanitizeProductField(field, editor.value);
+      if (!res.ok) {
+        toast(res.msg);
+        td.innerHTML = td.dataset.orig;
+        return;
       }
       if (field === "stockTotal") {
-        post({ type: "setStockQty", id: pid, qty: val });
+        post({ type: "setStockQty", id: pid, qty: res.value });
       } else {
         post({
           type: "updateProductField",
           id: pid,
           field,
-          value: field === "grade" ? Number(val) : val,
+          value: field === "grade" ? Number(res.value) : res.value,
         });
+        if (res.truncated) {
+          toast("已保存（超出长度已截断）");
+          return;
+        }
       }
       toast("已保存");
     }
@@ -752,9 +743,9 @@ function openNewProduct() {
         <h3>＋ 新建商品</h3>
         <div class="form-grid">
           <label>编号 *</label><input id="npCode" placeholder="L001 或 L076，自动补零到 3 位" />
-          <label>名称 *</label><input id="npName" placeholder="如：铜合金锆石手链 四叶花" />
-          <label>品类</label><input id="npCategory" list="shopCatList" placeholder="手链 / 项链 / 耳环 / 戒指 / 手镯…可自定义" />
-          <label>系列</label><input id="npSeries" placeholder="A类 / B类 / C类…（平台链接系列，可空）" />
+          <label>名称 *</label><input id="npName" maxlength="100" placeholder="如：铜合金锆石手链 四叶花" />
+          <label>品类</label><input id="npCategory" list="shopCatList" maxlength="50" placeholder="手链 / 项链 / 耳环 / 戒指 / 手镯…可自定义" />
+          <label>系列</label><input id="npSeries" maxlength="50" placeholder="A类 / B类 / C类…（平台链接系列，可空）" />
           <label>等级</label><select id="npGrade"><option value="0">自定义（售价手动定）</option>${selGrades
             .split(",")
             .map((g) => `<option value="${g}">${gradeLabel(g)}</option>`)
@@ -762,9 +753,9 @@ function openNewProduct() {
           <label>进价 ¥</label><input id="npCost" type="number" min="0" step="0.01" value="0" />
           <label>售价 ¥（留空=按等级自动算）</label><input id="npSale" type="number" min="0" step="0.01" />
           <label></label><span class="computed" id="npPreview">售价将自动计算</span>
-          <label>期初库存</label><input id="npStock" type="number" min="0" value="0" />
-          <label>采购链接</label><input id="npLink" placeholder="下次进货去这里" />
-          <label>备注</label><input id="npRemark" />
+          <label>期初库存</label><input id="npStock" type="number" min="0" step="1" value="0" />
+          <label>采购链接</label><input id="npLink" maxlength="500" placeholder="下次进货去这里" />
+          <label>备注</label><input id="npRemark" maxlength="200" />
         </div>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
           <button id="npCancel">取消</button>
@@ -788,8 +779,53 @@ function openNewProduct() {
   upd();
   $("npCancel").onclick = closeModal;
   $("npSave").onclick = () => {
-    if (!$("npCode").value.trim() || !$("npName").value.trim()) {
-      toast("编号和名称必填");
+    const codeRaw = canonicalCode($("npCode").value);
+    if (!codeRaw) {
+      toast("编号格式不对（L+数字，最多 4 位）");
+      $("npCode").focus();
+      return;
+    }
+    const name = sanitizeProductField("name", $("npName").value);
+    if (!name.ok) {
+      toast(name.msg);
+      $("npName").focus();
+      return;
+    }
+    const category = sanitizeProductField("category", $("npCategory").value);
+    if (!category.ok) {
+      toast(category.msg);
+      $("npCategory").focus();
+      return;
+    }
+    const series = sanitizeProductField("series", $("npSeries").value);
+    if (!series.ok) {
+      toast(series.msg);
+      $("npSeries").focus();
+      return;
+    }
+    const link = sanitizeProductField("purchase_link", $("npLink").value);
+    if (!link.ok) {
+      toast(link.msg);
+      $("npLink").focus();
+      return;
+    }
+    const remark = sanitizeProductField("remark", $("npRemark").value);
+    const cost = sanitizeProductField("cost_price", $("npCost").value);
+    if (!cost.ok) {
+      toast(cost.msg);
+      $("npCost").focus();
+      return;
+    }
+    const sale = sanitizeProductField("sale_price", $("npSale").value);
+    if (!sale.ok) {
+      toast(sale.msg);
+      $("npSale").focus();
+      return;
+    }
+    const stock = sanitizeProductField("stockTotal", $("npStock").value);
+    if (!stock.ok) {
+      toast(stock.msg);
+      $("npStock").focus();
       return;
     }
     const npGrade = Number($("npGrade").value);
@@ -799,16 +835,16 @@ function openNewProduct() {
     }
     post({
       type: "addProduct",
-      code: $("npCode").value,
-      name: $("npName").value,
-      category: $("npCategory").value,
-      series: $("npSeries").value,
+      code: codeRaw,
+      name: name.value,
+      category: category.value,
+      series: series.value,
       grade: npGrade,
-      costPrice: Number($("npCost").value || 0),
-      salePrice: Number($("npSale").value || 0),
-      initialStock: Number($("npStock").value || 0),
-      purchaseLink: $("npLink").value,
-      remark: $("npRemark").value,
+      costPrice: cost.value,
+      salePrice: sale.value,
+      initialStock: stock.value,
+      purchaseLink: link.value,
+      remark: remark.value,
     });
     closeModal();
   };
@@ -982,7 +1018,9 @@ function openContextMenu(e, p) {
     (p.status === 0
       ? `<div class="ctx-item" data-pctx="off">下架（置灰不删除）</div>`
       : `<div class="ctx-item" data-pctx="on">上架恢复出售</div>`) +
-    `<div class="ctx-item" data-pctx="clearimg">清空图片文件夹…</div>`;
+    `<div class="ctx-item" data-pctx="clearimg">清空图片文件夹…</div>` +
+    `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
+    `<div class="ctx-item ctx-danger" data-pctx="delrow">🗑 删除整行（含记录）…</div>`;
   menu.style.left = Math.min(e.clientX, window.innerWidth - 140) + "px";
   menu.style.top = Math.min(e.clientY, window.innerHeight - 60) + "px";
   document.body.appendChild(menu);
@@ -1030,6 +1068,16 @@ function openContextMenu(e, p) {
     );
     close();
   };
+  menu.querySelector('[data-pctx="delrow"]').onclick = () => {
+    confirmBox(
+      `确认删除 ${p.code} ${p.name} 这整行？\n将同时删除它的销售记录和入库记录，且不可恢复！`,
+    ).then((ok) => {
+      if (ok) {
+        post({ type: "deleteProduct", id: p.id });
+      }
+    });
+    close();
+  };
   setTimeout(() => {
     const onDown = (ev) => {
       if (!menu.contains(ev.target)) {
@@ -1058,7 +1106,18 @@ function onProductCtx(e) {
   if (!p) {
     return;
   }
+  setActiveProductRow(p.id, td.closest("tr"));
   openContextMenu(e, p);
+}
+
+function setActiveProductRow(id, tr) {
+  state.activeProductId = id;
+  document
+    .querySelectorAll("#productListView tr.active")
+    .forEach((r) => r.classList.remove("active"));
+  if (tr) {
+    tr.classList.add("active");
+  }
 }
 
 function openCoverMenu(e, p) {
@@ -1099,6 +1158,10 @@ function onProductAct(e) {
       renderProducts();
     }
     return;
+  }
+  const dataTd = e.target.closest("td[data-pid]");
+  if (dataTd) {
+    setActiveProductRow(Number(dataTd.dataset.pid), dataTd.closest("tr"));
   }
   const th = e.target.closest("[data-sort]");
   if (th) {

@@ -111,6 +111,12 @@
       .data-table tbody tr {
         transition: none;
       }
+      .data-table tbody tr:hover td {
+        background: var(--vscode-list-hoverBackground);
+      }
+      .data-table tbody tr.active td {
+        background: var(--vscode-list-activeSelectionBackground);
+      }
       .data-table tbody tr.sel td {
         background: rgba(35, 168, 132, 0.16);
       }
@@ -651,9 +657,13 @@
         </div>
       </div>
       <div class="toolbar">
-        <input id="keywordSearch" placeholder="🔍 编号 / 名称 / 品类 / 系列" style="width: 170px" />
         <button id="viewListBtn" class="btn-teal">列表</button>
         <button id="viewGalleryBtn">画册</button>
+        <select id="filterStatus" title="按状态筛选（表头上方）">
+          <option value="">全部状态</option>
+          <option value="on">在售</option>
+          <option value="off">已下架</option>
+        </select>
         <button id="newProductBtn" class="btn-teal">＋ 新建商品</button>
         <button id="colSetBtn">字段显示</button>
         <button id="importProductBtn" title="粘贴商品表格批量导入">导入商品</button>

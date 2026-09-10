@@ -26,6 +26,7 @@ window.toolClients = window.toolClients || {};
       livePlan: [],
       liveOutDir: "",
       selectedProducts: new Set(),
+      activeProductId: null,
     };
 
     var PRESET_CATEGORIES = ["手链", "项链", "耳环", "戒指", "手镯"];
@@ -81,6 +82,59 @@ window.toolClients = window.toolClients || {};
     var money = (n) =>
       (Math.round(Number(n || 0) * 100) / 100).toLocaleString("zh-CN");
     var qty = (n) => String(Math.floor(Number(n || 0)));
+
+    var sanitizeProductField = (field, raw) => {
+      const VALIDATIONS = {
+        name: { max: 100, noSpace: true, required: true },
+        category: { max: 50, noSpace: true },
+        series: { max: 50, noSpace: true },
+        purchase_link: { max: 500, noSpace: true },
+        remark: { max: 200 },
+      };
+      const spec = VALIDATIONS[field];
+      if (spec) {
+        let s = String(raw ?? "").trim();
+        if (spec.required && !s) {
+          return { ok: false, msg: "名称不能为空" };
+        }
+        if (spec.noSpace && /\s/.test(s)) {
+          return { ok: false, msg: `${field === "purchase_link" ? "采购链接" : field === "category" ? "品类" : field === "series" ? "系列" : "名称"}不能包含空格` };
+        }
+        const truncated = s.length > spec.max;
+        if (truncated) {
+          s = s.slice(0, spec.max);
+        }
+        return { ok: true, value: s, truncated };
+      }
+      if (field === "grade") {
+        const n = Number(raw);
+        if (n === 0) {
+          return { ok: true, value: 0 };
+        }
+        if (!Number.isInteger(n) || n < 1 || n > 99) {
+          return { ok: false, msg: "等级需为 0（自定义）或 1-99 的整数" };
+        }
+        return { ok: true, value: n };
+      }
+      if (field === "cost_price" || field === "sale_price") {
+        if (raw === "" || raw === null || raw === undefined) {
+          return { ok: true, value: 0 };
+        }
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n < 0) {
+          return { ok: false, msg: `${field === "cost_price" ? "进价" : "售价"}需为 ≥0 的数字` };
+        }
+        return { ok: true, value: Math.round(n * 100) / 100 };
+      }
+      if (field === "stockTotal") {
+        const n = Number(raw);
+        if (!Number.isInteger(n) || n < 0) {
+          return { ok: false, msg: "库存需为非负整数" };
+        }
+        return { ok: true, value: n };
+      }
+      return { ok: true, value: raw };
+    };
 
     function nowStr() {
       const d = new Date();

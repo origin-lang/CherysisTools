@@ -40,6 +40,71 @@ function prevMonth(month: string): string {
   return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
 }
 
+// 字段规整：name 必填无空格；category/series/purchase_link 无空格；文字超长截断；金额 round2；库存整数。
+// 与前端 sanitizeProductField（client-core.js）同规则，这里是入库前最后一道拦截。
+function normText(
+  field: "name" | "category" | "series" | "purchase_link" | "remark",
+  raw: unknown,
+  opts?: { required?: boolean },
+): { ok: boolean; msg: string; value: string; truncated: boolean } {
+  const MAX: Record<string, number> = {
+    name: 100,
+    category: 50,
+    series: 50,
+    purchase_link: 500,
+    remark: 200,
+  };
+  const NO_SPACE = new Set(["name", "category", "series", "purchase_link"]);
+  const label: Record<string, string> = {
+    name: "名称",
+    category: "品类",
+    series: "系列",
+    purchase_link: "采购链接",
+    remark: "备注",
+  };
+  let s = String(raw ?? "").trim();
+  if (opts?.required && !s) {
+    return { ok: false, msg: `${label[field]}不能为空`, value: s, truncated: false };
+  }
+  if (NO_SPACE.has(field) && /\s/.test(s)) {
+    return { ok: false, msg: `${label[field]}不能包含空格`, value: s, truncated: false };
+  }
+  const truncated = s.length > MAX[field];
+  if (truncated) {
+    s = s.slice(0, MAX[field]);
+  }
+  return { ok: true, msg: "", value: s, truncated };
+}
+
+function normMoney(field: "cost_price" | "sale_price", raw: unknown): { ok: boolean; msg: string; value: number } {
+  const n = Number(raw ?? 0);
+  const label = field === "cost_price" ? "进价" : "售价";
+  if (!Number.isFinite(n) || n < 0) {
+    return { ok: false, msg: `${label}需为 ≥0 的数字`, value: 0 };
+  }
+  return { ok: true, msg: "", value: round2(n) };
+}
+
+function normGrade(raw: unknown): { ok: boolean; msg: string; value: number } {
+  const n = Number(raw ?? 1);
+  if (n === 0) {
+    return { ok: true, msg: "", value: 0 };
+  }
+  if (!Number.isInteger(n) || n < 1 || n > 99) {
+    return { ok: false, msg: "等级需为 0（自定义）或 1-99 的整数", value: n };
+  }
+  return { ok: true, msg: "", value: n };
+}
+
+function normInt(field: string, raw: unknown): { ok: boolean; msg: string; value: number } {
+  const n = Number(raw ?? 0);
+  const label = field === "stockTotal" ? "库存" : field;
+  if (!Number.isInteger(n) || n < 0) {
+    return { ok: false, msg: `${label}需为非负整数`, value: n };
+  }
+  return { ok: true, msg: "", value: n };
+}
+
 // 商品字段的固定显示顺序（与前端 client-core.js PRODUCT_FIELDS 保持一致）
 const PRODUCT_FIELD_ORDER: Array<{ key: string; label: string }> = [
   { key: "code", label: "编号" },
@@ -385,45 +450,72 @@ export const shopTool: ToolDefinition = {
           log(`❌编号 ${code} 已存在`);
           break;
         }
-        const cost = Number(msg.costPrice ?? 0);
-        if (cost < 0) {
-          log("❌进价不能为负");
+        const nameR = normText("name", msg.name, { required: true });
+        if (!nameR.ok) {
+          log(`❌${nameR.msg}`);
           break;
         }
-        const grade = Number(msg.grade ?? 1);
-        const custom = grade === 0;
-        if (!custom && db.ensureRule(grade)) {
-          log(`ℹ️等级 ${grade} 无规则，已自动创建默认规则（cost*1.5 → +0.88）`);
+        const categoryR = normText("category", msg.category);
+        const seriesR = normText("series", msg.series);
+        const linkR = normText("purchase_link", msg.purchaseLink);
+        const remarkR = normText("remark", msg.remark);
+        for (const r of [categoryR, seriesR, linkR]) {
+          if (!r.ok) {
+            log(`❌${r.msg}`);
+            break;
+          }
         }
-        const manualSale = Math.max(0, Number(msg.salePrice ?? 0));
-        const rule = custom
-          ? undefined
-          : db.getRules().find((r) => r.grade === grade);
-        const isManual = custom || manualSale > 0;
+        if (!categoryR.ok || !seriesR.ok || !linkR.ok) {
+          break;
+        }
+        const cost = normMoney("cost_price", msg.costPrice);
+        if (!cost.ok) {
+          log(`❌${cost.msg}`);
+          break;
+        }
+        const sale = normMoney("sale_price", msg.salePrice);
+        if (!sale.ok) {
+          log(`❌${sale.msg}`);
+          break;
+        }
+        const grade = normGrade(msg.grade ?? 1);
+        if (!grade.ok) {
+          log(`❌${grade.msg}`);
+          break;
+        }
+        const initialStock = normInt("stockTotal", msg.initialStock);
+        if (!initialStock.ok) {
+          log(`❌${initialStock.msg}`);
+          break;
+        }
+        const custom = grade.value === 0;
+        if (!custom && db.ensureRule(grade.value)) {
+          log(`ℹ️等级 ${grade.value} 无规则，已自动创建默认规则（cost*1.5 → +0.88）`);
+        }
+        const isManual = custom || sale.value > 0;
         const pid = db.addProduct({
           code,
-          name: String(msg.name ?? "").trim(),
-          category: String(msg.category ?? "").trim(),
-          series: String(msg.series ?? "").trim(),
-          grade,
-          cost_price: cost,
-          sale_price: isManual ? manualSale : calcPrice(cost, rule),
+          name: nameR.value,
+          category: categoryR.value,
+          series: seriesR.value,
+          grade: grade.value,
+          cost_price: cost.value,
+          sale_price: isManual ? sale.value : calcPrice(cost.value, custom ? undefined : db.getRules().find((r) => r.grade === grade.value)),
           price_manual: isManual ? 1 : 0,
-          purchase_link: String(msg.purchaseLink ?? "").trim(),
+          purchase_link: linkR.value,
           status: 0,
-          remark: String(msg.remark ?? "").trim(),
+          remark: remarkR.value,
           stock_manual: 0,
         });
-        const initialStock = Math.floor(Number(msg.initialStock ?? 0));
-        if (initialStock > 0) {
+        if (initialStock.value > 0) {
           db.addStockIn({
             product_id: pid,
-            qty: initialStock,
+            qty: initialStock.value,
             date: todayStr(),
             remark: "期初入库",
           });
         }
-        log(`✅已新建 ${code} ${String(msg.name ?? "")}（库存 +${initialStock}）`);
+        log(`✅已新建 ${code} ${nameR.value}（库存 +${initialStock.value}）`);
         ctx.postToWebview({ type: "toast", text: `✅已新建 ${code}` });
         loadAll();
         break;
@@ -448,46 +540,58 @@ export const shopTool: ToolDefinition = {
             break;
           }
           db.updateProductField(id, "code", code);
-        } else if (field === "grade" || field === "cost_price") {
-          const grade = field === "grade" ? Number(msg.value) : product.grade;
-          const cost = field === "cost_price" ? Number(msg.value) : product.cost_price;
-          if (cost < 0) {
-            log("❌进价不能为负");
+        } else if (field === "name" || field === "category" || field === "series" || field === "purchase_link" || field === "remark") {
+          const r = normText(field, msg.value, field === "name" ? { required: true } : undefined);
+          if (!r.ok) {
+            log(`❌${r.msg}`);
             break;
           }
-          if (field === "grade") {
-            if (grade === 0) {
-              // 切成「自定义」：售价固定不动，不再跟随规则
-              db.updateProductField(id, "grade", 0);
-              db.updateProductField(id, "price_manual", 1);
-            } else {
-              if (db.ensureRule(grade)) {
-                log(`ℹ️等级 ${grade} 无规则，已自动创建默认规则（cost*1.5 → +0.88）`);
-              }
-              // 主动选回某个等级 = 明确要跟随该等级规则，立即按规则重算
-              db.updateProductField(id, "grade", grade);
-              db.updateProductField(id, "price_manual", 0);
-              const rule = db.getRules().find((r) => r.grade === grade);
-              db.updateProductField(id, "sale_price", calcPrice(cost, rule));
-            }
+          db.updateProductField(id, field, r.value);
+          if (r.truncated) {
+            log(`‼${product.code} 的${field === "name" ? "名称" : field === "category" ? "品类" : field === "series" ? "系列" : field === "purchase_link" ? "采购链接" : "备注"}超长，已截断`);
+          }
+        } else if (field === "grade") {
+          const grade = normGrade(msg.value);
+          if (!grade.ok) {
+            log(`❌${grade.msg}`);
+            break;
+          }
+          if (grade.value === 0) {
+            // 切成「自定义」：售价固定不动，不再跟随规则
+            db.updateProductField(id, "grade", 0);
+            db.updateProductField(id, "price_manual", 1);
           } else {
-            db.updateProductField(id, "cost_price", cost);
-            if (product.price_manual === 1) {
-              log(`⚠️${product.code} 售价是「自定义」，改进价不会重算售价；想跟随规则请把等级改回 ${product.grade || "对应等级"}`);
-            } else {
-              const rule = db.getRules().find((r) => r.grade === product.grade);
-              db.updateProductField(id, "sale_price", calcPrice(cost, rule));
+            if (db.ensureRule(grade.value)) {
+              log(`ℹ️等级 ${grade.value} 无规则，已自动创建默认规则（cost*1.5 → +0.88）`);
             }
+            // 主动选回某个等级 = 明确要跟随该等级规则，立即按规则重算
+            db.updateProductField(id, "grade", grade.value);
+            db.updateProductField(id, "price_manual", 0);
+            const rule = db.getRules().find((r) => r.grade === grade.value);
+            db.updateProductField(id, "sale_price", calcPrice(product.cost_price, rule));
+          }
+        } else if (field === "cost_price") {
+          const cost = normMoney("cost_price", msg.value);
+          if (!cost.ok) {
+            log(`❌${cost.msg}`);
+            break;
+          }
+          db.updateProductField(id, "cost_price", cost.value);
+          if (product.price_manual === 1) {
+            log(`⚠️${product.code} 售价是「自定义」，改进价不会重算售价；想跟随规则请把等级改回 ${product.grade || "对应等级"}`);
+          } else {
+            const rule = db.getRules().find((r) => r.grade === product.grade);
+            db.updateProductField(id, "sale_price", calcPrice(cost.value, rule));
           }
         } else if (field === "sale_price") {
-          const v = Number(msg.value);
-          if (!Number.isFinite(v) || v < 0) {
-            log("❌售价不能为负");
+          const sale = normMoney("sale_price", msg.value);
+          if (!sale.ok) {
+            log(`❌${sale.msg}`);
             break;
           }
-          if (v > 0) {
+          if (sale.value > 0) {
             // 手动填售价 → 转「自定义」（等级列会显示“自定义”）
-            db.updateProductField(id, "sale_price", v);
+            db.updateProductField(id, "sale_price", sale.value);
             db.updateProductField(id, "price_manual", 1);
           } else {
             // 清空售价 → 回归规则，立即按当前进价重算
@@ -509,12 +613,12 @@ export const shopTool: ToolDefinition = {
           log("❌商品不存在");
           break;
         }
-        const qty = Number(msg.qty);
-        if (!Number.isFinite(qty) || qty < 0) {
-            log("❌库存需为 ≥ 0 的数字");
+        const qty = normInt("stockTotal", msg.qty);
+        if (!qty.ok) {
+          log(`❌${qty.msg}`);
           break;
         }
-        db.updateStockQty(sid, qty);
+        db.updateStockQty(sid, qty.value);
         log(`🔢清点 ${product.code} 库存 = ${qty}`);
         loadAll();
         break;
@@ -1239,7 +1343,7 @@ export const shopTool: ToolDefinition = {
             let touched = 0;
             for (const key of ["name", "category", "series", "purchase_link"]) {
               if (has(key)) {
-                db.updateProductField(exist.id, key, getv(key));
+                db.updateProductField(exist.id, key, normText(key as "name" | "category" | "series" | "purchase_link", getv(key)).value);
                 touched++;
               }
             }
@@ -1249,19 +1353,19 @@ export const shopTool: ToolDefinition = {
             const gradeOk = gradeRaw !== null && gradeRaw >= 0 && gradeRaw <= 99;
             const costOk = costRaw !== null && costRaw >= 0;
             const gradeChange = gradeOk && gradeRaw !== exist.grade;
-            const costChange = costOk && costRaw !== exist.cost_price;
+            const costChange = costOk && round2(costRaw as number) !== exist.cost_price;
             const effGrade = gradeOk ? (gradeRaw as number) : exist.grade;
-            const effCost = costOk ? (costRaw as number) : exist.cost_price;
+            const effCost = costOk ? round2(costRaw as number) : exist.cost_price;
             if (gradeChange) {
               db.updateProductField(exist.id, "grade", gradeRaw);
               touched++;
             }
             if (costChange) {
-              db.updateProductField(exist.id, "cost_price", costRaw);
+              db.updateProductField(exist.id, "cost_price", round2(costRaw as number));
               touched++;
             }
             // 售价：填了 >0 → 手动价；否则非自定义且（售价列可见 或 等级/进价有变）→ 按规则重算
-            const manualSale = saleRaw !== null && saleRaw > 0 ? saleRaw : null;
+            const manualSale = saleRaw !== null && saleRaw > 0 ? round2(saleRaw) : null;
             if (manualSale !== null) {
               db.updateProductField(exist.id, "sale_price", manualSale);
               db.updateProductField(exist.id, "price_manual", 1);
@@ -1294,16 +1398,16 @@ export const shopTool: ToolDefinition = {
             const idx = importFields.indexOf(key);
             return idx >= 0 ? String(parts[idx] ?? "") : "";
           };
-          const name = get("name");
-          const category = get("category");
-          const series = get("series");
+          const name = normText("name", get("name")).value || code;
+          const category = normText("category", get("category")).value;
+          const series = normText("series", get("series")).value;
           const gradeRaw = Math.floor(Number(get("grade") || 1));
           const grade = Number.isFinite(gradeRaw) && gradeRaw >= 0 && gradeRaw <= 99 ? gradeRaw : 1;
           const costRaw = Number(get("cost_price") || 0);
-          const cost = Number.isFinite(costRaw) && costRaw >= 0 ? costRaw : 0;
+          const cost = Number.isFinite(costRaw) && costRaw >= 0 ? round2(costRaw) : 0;
           const saleRaw = Number(get("sale_price") || 0);
-          const link = get("purchase_link");
-          const manual = Number.isFinite(saleRaw) && saleRaw > 0 ? saleRaw : 0;
+          const link = normText("purchase_link", get("purchase_link")).value;
+          const manual = Number.isFinite(saleRaw) && saleRaw > 0 ? round2(saleRaw) : 0;
           const custom = grade === 0;
           if (!custom && db.ensureRule(grade)) {
             log(`ℹ️等级 ${grade} 无规则，已自动创建默认规则（cost*1.5 → +0.88）`);

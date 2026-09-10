@@ -77,21 +77,26 @@
           }
         });
       }
-      $("keywordSearch").oninput = () => {
-        filters.keyword = $("keywordSearch").value;
-        syncClearFilterBtn();
-        renderProducts();
-      };
       $("newProductBtn").onclick = openNewProduct;
       $("colSetBtn").onclick = openColSet;
       $("importProductBtn").onclick = openImportProducts;
+      $("filterStatus").onchange = () => {
+        const v = $("filterStatus").value;
+        if (v) {
+          filters.f_status = v;
+        } else {
+          delete filters.f_status;
+        }
+        syncClearFilterBtn();
+        renderProducts();
+      };
       $("clearFilterBtn").onclick = () => {
         for (const k of Object.keys(filters)) {
           delete filters[k];
         }
-        const kw = $("keywordSearch");
-        if (kw) {
-          kw.value = "";
+        const fs = $("filterStatus");
+        if (fs) {
+          fs.value = "";
         }
         syncClearFilterBtn();
         renderProducts();
@@ -164,12 +169,24 @@
           $("quickCode").select();
           return;
         }
+        const sold = Number($("quickSold").value || 0);
+        const refund = Number($("quickRefund").value || 0);
+        if (
+          !Number.isInteger(sold) ||
+          !Number.isInteger(refund) ||
+          sold < 0 ||
+          refund < 0 ||
+          (sold === 0 && refund === 0)
+        ) {
+          toast("卖出/退款需为非负整数，且至少一个 > 0");
+          return;
+        }
         post({
           type: "saveSale",
           date: $("salesDate").value || nowStr(),
           productId: p.id,
-          sold: Number($("quickSold").value || 0),
-          refund: Number($("quickRefund").value || 0),
+          sold,
+          refund,
           note: $("quickNote").value,
           mode: $("dupMode").value,
         });
