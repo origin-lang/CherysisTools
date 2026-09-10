@@ -30,20 +30,28 @@ window.toolClients = window.toolClients || {};
     };
 
     var PRESET_CATEGORIES = ["手链", "项链", "耳环", "戒指", "手镯"];
-    var PRODUCT_FIELDS = [
+    // 商品字段规格主表：顺序/标签/文本长度/空格/必填/数值类型，一处定义。
+    // 与后端 src/tools/shopTool/productFields.ts 保持一致。
+    var FIELD_SPECS = [
       { key: "code", label: "编号" },
-      { key: "name", label: "名称" },
-      { key: "category", label: "品类" },
-      { key: "series", label: "系列" },
-      { key: "grade", label: "等级" },
-      { key: "cost_price", label: "进价" },
-      { key: "sale_price", label: "售价" },
-      { key: "stockTotal", label: "库存" },
-      { key: "soldTotal", label: "累计售出" },
-      { key: "netTotal", label: "累计净售" },
+      { key: "name", label: "名称", max: 100, noSpace: true, required: true },
+      { key: "category", label: "品类", max: 50, noSpace: true },
+      { key: "series", label: "系列", max: 50, noSpace: true },
+      { key: "grade", label: "等级", kind: "grade" },
+      { key: "cost_price", label: "进价", kind: "money" },
+      { key: "sale_price", label: "售价", kind: "money" },
+      { key: "stockTotal", label: "库存", kind: "int" },
+      { key: "soldTotal", label: "累计售出", kind: "int" },
+      { key: "netTotal", label: "累计净售", kind: "int" },
       { key: "status", label: "状态" },
-      { key: "purchase_link", label: "采购链接" },
+      { key: "purchase_link", label: "采购链接", max: 500, noSpace: true },
+      { key: "remark", label: "备注", max: 200, hidden: true },
     ];
+    // 列显示字段（隐藏列不参与渲染）
+    var PRODUCT_FIELDS = FIELD_SPECS.filter((f) => !f.hidden).map((f) => ({
+      key: f.key,
+      label: f.label,
+    }));
     var EDITABLE_FIELDS = new Set([
       "code",
       "name",
@@ -84,29 +92,11 @@ window.toolClients = window.toolClients || {};
     var qty = (n) => String(Math.floor(Number(n || 0)));
 
     var sanitizeProductField = (field, raw) => {
-      const VALIDATIONS = {
-        name: { max: 100, noSpace: true, required: true },
-        category: { max: 50, noSpace: true },
-        series: { max: 50, noSpace: true },
-        purchase_link: { max: 500, noSpace: true },
-        remark: { max: 200 },
-      };
-      const spec = VALIDATIONS[field];
-      if (spec) {
-        let s = String(raw ?? "").trim();
-        if (spec.required && !s) {
-          return { ok: false, msg: "名称不能为空" };
-        }
-        if (spec.noSpace && /\s/.test(s)) {
-          return { ok: false, msg: `${field === "purchase_link" ? "采购链接" : field === "category" ? "品类" : field === "series" ? "系列" : "名称"}不能包含空格` };
-        }
-        const truncated = s.length > spec.max;
-        if (truncated) {
-          s = s.slice(0, spec.max);
-        }
-        return { ok: true, value: s, truncated };
+      const spec = FIELD_SPECS.find((f) => f.key === field);
+      if (!spec) {
+        return { ok: true, value: raw };
       }
-      if (field === "grade") {
+      if (spec.kind === "grade") {
         const n = Number(raw);
         if (n === 0) {
           return { ok: true, value: 0 };
@@ -116,22 +106,36 @@ window.toolClients = window.toolClients || {};
         }
         return { ok: true, value: n };
       }
-      if (field === "cost_price" || field === "sale_price") {
+      if (spec.kind === "money") {
         if (raw === "" || raw === null || raw === undefined) {
           return { ok: true, value: 0 };
         }
         const n = Number(raw);
         if (!Number.isFinite(n) || n < 0) {
-          return { ok: false, msg: `${field === "cost_price" ? "进价" : "售价"}需为 ≥0 的数字` };
+          return { ok: false, msg: `${spec.label}需为 ≥0 的数字` };
         }
         return { ok: true, value: Math.round(n * 100) / 100 };
       }
-      if (field === "stockTotal") {
+      if (spec.kind === "int") {
         const n = Number(raw);
         if (!Number.isInteger(n) || n < 0) {
-          return { ok: false, msg: "库存需为非负整数" };
+          return { ok: false, msg: `${spec.label}需为非负整数` };
         }
         return { ok: true, value: n };
+      }
+      if (spec.max !== undefined || spec.noSpace || spec.required) {
+        let s = String(raw ?? "").trim();
+        if (spec.required && !s) {
+          return { ok: false, msg: `${spec.label}不能为空` };
+        }
+        if (spec.noSpace && /\s/.test(s)) {
+          return { ok: false, msg: `${spec.label}不能包含空格` };
+        }
+        const truncated = s.length > spec.max;
+        if (truncated) {
+          s = s.slice(0, spec.max);
+        }
+        return { ok: true, value: s, truncated };
       }
       return { ok: true, value: raw };
     };

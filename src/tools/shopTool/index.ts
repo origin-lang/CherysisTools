@@ -6,7 +6,6 @@ import { readImageToBase64 } from "../../core/utils.js";
 import { getDB, initDB, LivePlanRow, Product, SaleRule } from "./db.js";
 import {
   canonicalCode,
-  extractCodeToken,
   round2,
   applyExpr,
   calcPrice,
@@ -15,6 +14,15 @@ import {
   fileStamp,
   normalizeRule,
 } from "./pricing.js";
+import {
+  PRODUCT_FIELD_ORDER,
+  IMPORTABLE_FIELD_ORDER,
+  normText,
+  normMoney,
+  normGrade,
+  normInt,
+} from "./productFields.js";
+import { splitCells, isHeaderRow, codeFromCell } from "./rowParse.js";
 import {
   UPLOAD_FILTER,
   listImageFiles,
@@ -39,94 +47,6 @@ function prevMonth(month: string): string {
   }
   return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
 }
-
-// 字段规整：name 必填无空格；category/series/purchase_link 无空格；文字超长截断；金额 round2；库存整数。
-// 与前端 sanitizeProductField（client-core.js）同规则，这里是入库前最后一道拦截。
-function normText(
-  field: "name" | "category" | "series" | "purchase_link" | "remark",
-  raw: unknown,
-  opts?: { required?: boolean },
-): { ok: boolean; msg: string; value: string; truncated: boolean } {
-  const MAX: Record<string, number> = {
-    name: 100,
-    category: 50,
-    series: 50,
-    purchase_link: 500,
-    remark: 200,
-  };
-  const NO_SPACE = new Set(["name", "category", "series", "purchase_link"]);
-  const label: Record<string, string> = {
-    name: "名称",
-    category: "品类",
-    series: "系列",
-    purchase_link: "采购链接",
-    remark: "备注",
-  };
-  let s = String(raw ?? "").trim();
-  if (opts?.required && !s) {
-    return { ok: false, msg: `${label[field]}不能为空`, value: s, truncated: false };
-  }
-  if (NO_SPACE.has(field) && /\s/.test(s)) {
-    return { ok: false, msg: `${label[field]}不能包含空格`, value: s, truncated: false };
-  }
-  const truncated = s.length > MAX[field];
-  if (truncated) {
-    s = s.slice(0, MAX[field]);
-  }
-  return { ok: true, msg: "", value: s, truncated };
-}
-
-function normMoney(field: "cost_price" | "sale_price", raw: unknown): { ok: boolean; msg: string; value: number } {
-  const n = Number(raw ?? 0);
-  const label = field === "cost_price" ? "进价" : "售价";
-  if (!Number.isFinite(n) || n < 0) {
-    return { ok: false, msg: `${label}需为 ≥0 的数字`, value: 0 };
-  }
-  return { ok: true, msg: "", value: round2(n) };
-}
-
-function normGrade(raw: unknown): { ok: boolean; msg: string; value: number } {
-  const n = Number(raw ?? 1);
-  if (n === 0) {
-    return { ok: true, msg: "", value: 0 };
-  }
-  if (!Number.isInteger(n) || n < 1 || n > 99) {
-    return { ok: false, msg: "等级需为 0（自定义）或 1-99 的整数", value: n };
-  }
-  return { ok: true, msg: "", value: n };
-}
-
-function normInt(field: string, raw: unknown): { ok: boolean; msg: string; value: number } {
-  const n = Number(raw ?? 0);
-  const label = field === "stockTotal" ? "库存" : field;
-  if (!Number.isInteger(n) || n < 0) {
-    return { ok: false, msg: `${label}需为非负整数`, value: n };
-  }
-  return { ok: true, msg: "", value: n };
-}
-
-// 商品字段的固定显示顺序（与前端 client-core.js PRODUCT_FIELDS 保持一致）
-const PRODUCT_FIELD_ORDER: Array<{ key: string; label: string }> = [
-  { key: "code", label: "编号" },
-  { key: "name", label: "名称" },
-  { key: "category", label: "品类" },
-  { key: "series", label: "系列" },
-  { key: "grade", label: "等级" },
-  { key: "cost_price", label: "进价" },
-  { key: "sale_price", label: "售价" },
-  { key: "stockTotal", label: "库存" },
-  { key: "soldTotal", label: "累计售出" },
-  { key: "netTotal", label: "累计净售" },
-  { key: "status", label: "状态" },
-  { key: "purchase_link", label: "采购链接" },
-];
-// 可写字段子集（派生列不参与导入/导出写回）
-const IMPORTABLE_FIELD_ORDER = PRODUCT_FIELD_ORDER.filter((f) =>
-  ["name", "category", "series", "grade", "cost_price", "sale_price", "purchase_link"].includes(f.key),
-);
-
-// 导入/粘贴时的表头关键词：首列命中即视为表头行整行跳过（pasteSales 与 importProducts 共用）
-const HEADER_FIRST_COLUMN_RE = /^(编号|名称|商品|code|id|品类|类别|分类|系列|等级|成本|进价|售价|数量|库存|状态|采购|备注)/i;
 
 async function backupToDir(storageDir: string, prefix: string): Promise<string | null> {
   try {
@@ -838,18 +758,14 @@ export const shopTool: ToolDefinition = {
           if (!raw) {
             continue;
           }
-          const parts = raw
-            .split(/[,;，；]|\s+/)
-            .map((s) => s.trim())
-            .filter((s) => s.length > 0);
+          const parts = splitCells(raw);
           if (parts.length === 0) {
             continue;
           }
-          if (HEADER_FIRST_COLUMN_RE.test(parts[0])) {
+          if (isHeaderRow(parts)) {
             continue;
           }
-          const token = parts[0];
-          const code = extractCodeToken(token);
+          const code = codeFromCell(parts[0]);
           if (!code) {
             bad.push(`行${i + 1}: ${raw}`);
             continue;
@@ -1306,19 +1222,14 @@ export const shopTool: ToolDefinition = {
           if (!raw) {
             continue;
           }
-          const parts = raw
-            .split(/[,;，；\s]+/)
-            .map((s) => s.trim())
-            .filter((s) => s.length > 0);
+          const parts = splitCells(raw);
           if (parts.length === 0) {
             continue;
           }
-          if (HEADER_FIRST_COLUMN_RE.test(parts[0])) {
+          if (isHeaderRow(parts)) {
             continue;
           }
-          const rawCode = parts[0];
-          const mT = rawCode.match(/[Ll](\d{1,4})/);
-          const code = canonicalCode(mT ? `L${mT[1]}` : rawCode);
+          const code = codeFromCell(parts[0]);
           if (!code) {
             black.push(`行${i + 1}: ${raw}`);
             continue;
