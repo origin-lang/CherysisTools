@@ -29,7 +29,6 @@ window.toolClients = window.toolClients || {};
       livePlan: [],
       liveOutDir: "",
       selectedProducts: new Set(),
-      activeProductId: null,
       canUndo: false,
       canRedo: false,
     };

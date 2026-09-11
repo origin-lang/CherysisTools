@@ -231,6 +231,7 @@ const NO_FILTER_FIELDS = new Set([
   "netTotal",
   "status",
   "purchase_link",
+  "remark",
 ]);
 
 function filterControl(key) {
@@ -290,7 +291,6 @@ function renderList(list) {
       const starred = state.liveStars && state.liveStars.has(p.code);
       const tds = [];
       const isSelected = state.selectedProducts.has(p.id);
-      const isActive = p.id === state.activeProductId;
       tds.push(
         `<td><input type="checkbox" class="product-checkbox" data-id="${p.id}" ${isSelected ? "checked" : ""} title="选择 #${p.code}" /></td>`,
       );
@@ -364,7 +364,7 @@ function renderList(list) {
               <button class="mini-btn" data-p-act="stockin" data-id="${p.id}" title="补货入库">📦</button>
               <button class="mini-btn btn-danger" data-p-act="del" data-id="${p.id}" title="删除(含记录)">🗑</button>
             </td>`);
-      return `<tr class="${off ? "off " : ""}${low ? "lowstock " : ""}${isActive ? "active" : ""}" data-id="${p.id}">${tds.join("")}</tr>`;
+      return `<tr class="${off ? "off " : ""}${low ? "lowstock " : ""}" data-id="${p.id}">${tds.join("")}</tr>`;
     })
     .join("");
   const selectedCount = state.selectedProducts.size;
@@ -994,7 +994,7 @@ function openImportProducts() {
     const cols = ["编号"].concat(impKeys().map((f) => f.label));
     $("ipColDesc").innerHTML = `列顺序＝<b>${cols.join("、")}</b><br />` +
       "· 分隔：Tab / 空格 / 逗号；名称里不要带空格（空格按列分隔）<br />" +
-      "· 库存、销量、状态(在售/已下架)只在“状态”列可导入，其他派生列不导入" +
+      "· 库存/累计售出/累计净售是自动统计列，导入不参与；状态列可导入（填 在售/已下架 或 1/0）；备注不导入" +
       (cols.length <= 2 ? "<br />· 只贴编号也能建（其余走默认）" : "");
     $("ipModeHint").textContent = hiHint[mode] || "";
     $("ipText").placeholder =
@@ -1324,18 +1324,7 @@ function onProductCtx(e) {
   if (!p) {
     return;
   }
-  setActiveProductRow(p.id, td.closest("tr"));
   openContextMenu(e, p);
-}
-
-function setActiveProductRow(id, tr) {
-  state.activeProductId = id;
-  document
-    .querySelectorAll("#productListView tr.active")
-    .forEach((r) => r.classList.remove("active"));
-  if (tr) {
-    tr.classList.add("active");
-  }
 }
 
 function openCoverMenu(e, p) {
