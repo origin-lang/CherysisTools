@@ -61,8 +61,13 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
             : null;
         if (want) {
           want.add("code");
+          const wantImage = want.has("_image");
           cols = PRODUCT_FIELD_ORDER.filter((f) => want.has(f.key));
-          db.setSetting("export_fields", JSON.stringify(cols.map((c) => c.key)));
+          const savedFields = cols.map((c) => c.key);
+          if (wantImage) {
+            savedFields.push("_image");
+          }
+          db.setSetting("export_fields", JSON.stringify(savedFields));
         } else {
           let rawVis: unknown;
           try {
@@ -95,7 +100,10 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
               return (p as any)[key] ?? "";
           }
         };
-        const withImages = !!msg.withImages;
+        const withImages = !!(
+          Array.isArray(msg.fields) &&
+          (msg.fields as string[]).includes("_image")
+        );
         const outFile = path.join(dir, `商品清单_${fileStamp()}.xlsx`);
         if (withImages) {
           const imageDir = String(h.getSetting("image_dir") || "").trim();
@@ -106,31 +114,52 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
           const wb = new Workbook();
           const ws = wb.addWorksheet("商品清单");
           displayCols.forEach((c, ci) => {
-            ws.getCell(1, ci + 1).value = c.label;
+            const cell = ws.getCell(1, ci + 1);
+            cell.value = c.label;
+            cell.font = { bold: true };
+            cell.alignment = { horizontal: "center", vertical: "middle" };
           });
           displayCols.forEach((_, i) => {
-            ws.getColumn(i + 1).width = i === imgColIdx ? 14 : 13;
+            ws.getColumn(i + 1).width = i === imgColIdx ? 16 : 13;
           });
+          const codeColIdx = displayCols.findIndex((c) => c.key === "code");
           for (let i = 0; i < list.length; i++) {
             const p = list[i];
             const rowIndex = i + 2;
             for (let c = 0; c < displayCols.length; c++) {
               if (displayCols[c].key !== "_image") {
-                ws.getCell(rowIndex, c + 1).value = valOf(p, displayCols[c].key);
+                const cell = ws.getCell(rowIndex, c + 1);
+                cell.value = valOf(p, displayCols[c].key);
+                cell.alignment =
+                  c === codeColIdx
+                    ? { horizontal: "center", vertical: "middle" }
+                    : { vertical: "middle" };
               }
             }
-            ws.getRow(rowIndex).height = 84;
             const fp = firstImageFile(imageDir, p.code);
             if (!fp) {
+              ws.getRow(rowIndex).height = 22;
               continue;
             }
             try {
               const { buffer, extension } = await readImageForExcel(fp);
+              const meta = await sharp(buffer).metadata();
+              const sw = meta.width || 88;
+              const sh = meta.height || 88;
+              const box = 88;
+              let dw = box;
+              let dh = box;
+              if (sw >= sh) {
+                dh = Math.max(1, Math.round((sh / sw) * box));
+              } else {
+                dw = Math.max(1, Math.round((sw / sh) * box));
+              }
               const imgId = wb.addImage({ buffer: buffer as any, extension });
               ws.addImage(imgId, {
                 tl: { col: imgColIdx, row: rowIndex - 1 },
-                ext: { width: 80, height: 80 },
+                ext: { width: dw, height: dh },
               });
+              ws.getRow(rowIndex).height = Math.ceil((dh * 72) / 96) + 6;
             } catch {
               /* 该行图片缺失或损坏则留空 */
             }

@@ -1141,8 +1141,7 @@ function openExportProducts() {
     <textarea id="eoCodes" placeholder="示例：L001，L002  L003、L005；逗号/空格/Tab/换行分隔，编号可省略 L（如 7）" style="display:none;width:100%;box-sizing:border-box;min-height:72px;margin-bottom:6px"></textarea>
     <p class="muted" id="eoScopeDesc" style="margin-bottom:8px"></p>
     <div class="io-chips">
-      <label class="io-chip" title="每行内嵌该商品第 1 张图（Excel 锚定显示，文件会大一些）"><input type="checkbox" id="eoWithImg" />带图</label>
-      <span style="display:inline-block;width:1px;height:14px;background:#888;vertical-align:middle;margin:0 6px;opacity:.35"></span>
+      <label class="io-chip" title="图片列：在采购链接前插入每行首张图"><input type="checkbox" data-io-e="_image" ${checked.has("_image") ? "checked" : ""} />图片</label>
       <label class="io-chip" title="编号固定第 1 列"><input type="checkbox" data-io-e="code" checked disabled />编号</label>
       ${PRODUCT_FIELDS.filter((f) => f.key !== "code")
         .map(
@@ -1186,10 +1185,13 @@ function openExportProducts() {
     renderEoCols();
   };
   const renderEoCols = () => {
-    const cols = ["编号"].concat(
-      PRODUCT_FIELDS.filter((f) => f.key !== "code" && checked.has(f.key)).map(
-        (f) => f.label,
-      ),
+    const cols = [];
+    if (checked.has("_image")) {
+      cols.push("图片");
+    }
+    cols.push("编号");
+    PRODUCT_FIELDS.filter((f) => f.key !== "code" && checked.has(f.key)).forEach(
+      (f) => cols.push(f.label),
     );
     $("eoColDesc").textContent = `导出列（顺序固定）＝${cols.join("、")}`;
   };
@@ -1254,12 +1256,15 @@ function openExportProducts() {
     const fields = PRODUCT_FIELDS.map((f) => f.key).filter(
       (k) => k !== "code" && checked.has(k),
     );
+    if (checked.has("_image")) {
+      fields.push("_image");
+    }
     post({
       type: "exportProducts",
       codes,
       filtered: codes.length < state.products.length ? 1 : 0,
       fields,
-      withImages: $("eoWithImg") && $("eoWithImg").checked ? 1 : 0,
+      withImages: checked.has("_image") ? 1 : 0,
     });
   };
 }
