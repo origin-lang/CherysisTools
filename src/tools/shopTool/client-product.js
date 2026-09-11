@@ -68,12 +68,15 @@ function filteredProducts() {
     })
     .filter((p) => {
       for (const key of RANGE_FILTER_FIELDS) {
-        const mn = filters["f_" + key + "_min"];
-        if (mn !== undefined && mn !== "" && Number(p[key]) < Number(mn)) {
+        const raw = filters["f_" + key];
+        if (!raw) {
+          continue;
+        }
+        const [mn, mx] = splitRangeValue(raw);
+        if (mn && Number(p[key]) < Number(mn)) {
           return false;
         }
-        const mx = filters["f_" + key + "_max"];
-        if (mx !== undefined && mx !== "" && Number(p[key]) > Number(mx)) {
+        if (mx && Number(p[key]) > Number(mx)) {
           return false;
         }
       }
@@ -268,10 +271,7 @@ function filterControl(key) {
     case "cost_price":
     case "sale_price": {
       const label = key === "cost_price" ? "进价" : "售价";
-      const mn = filters["f_" + key + "_min"] || "";
-      const mx = filters["f_" + key + "_max"] || "";
-      const cur = mn && mx ? `${mn}~${mx}` : mn || mx;
-      return `<input class="filter-cell" data-col-f="${key}" data-fr="range" title="筛选${label}：输入 10~30 表示 10 到 30，也可直接输 10 或 >10 / <30" placeholder="范围" value="${esc(String(cur))}" />`;
+      return `<input class="filter-cell" type="text" data-col-f="${key}" data-fr="range" title="筛选${label}：输入 10~30 表示 10 到 30，也可直接输 10 或 >10 / <30" placeholder="范围" value="${esc(String(filters["f_" + key] || ""))}" />`;
     }
     default:
       return `<input class="filter-cell" data-col-f="${key}" title="筛选${key}" placeholder="筛选" value="${esc(String(cur))}" />`;
@@ -447,17 +447,11 @@ function bindColFilters() {
     const fr = el.dataset.fr;
     const apply = () => {
       const v = el.value;
-      if (fr === "range") {
-        const [mn, mx] = splitRangeValue(v);
-        mn ? (filters["f_" + key + "_min"] = mn) : delete filters["f_" + key + "_min"];
-        mx ? (filters["f_" + key + "_max"] = mx) : delete filters["f_" + key + "_max"];
+      const fieldKey = fr === "range" ? key : fr ? key + "_" + fr : key;
+      if (String(v).trim()) {
+        filters["f_" + fieldKey] = v;
       } else {
-        const fieldKey = fr ? key + "_" + fr : key;
-        if (String(v).trim()) {
-          filters["f_" + fieldKey] = v;
-        } else {
-          delete filters["f_" + fieldKey];
-        }
+        delete filters["f_" + fieldKey];
       }
       syncClearFilterBtn();
       if (el.tagName === "SELECT") {
