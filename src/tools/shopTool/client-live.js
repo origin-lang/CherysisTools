@@ -95,6 +95,7 @@
             <div class="g-head">
               <b>第 ${g} 组</b>
               <span class="muted">${startNum}号~${startNum + 8}号 · ${filled}/9</span>
+              <button class="mini-btn" data-ls-act="import" data-g="${g}" title="粘贴编号清单导入本组（先清空本组，最多 9 个）">导入本组</button>
               <button class="mini-btn" data-ls-act="clearg" data-g="${g}" title="清空这一组的所有格子">清空本组</button>
               <button class="mini-btn g-gen" data-ls-act="gen" data-g="${g}" title="只生成这一组的九宫格">🖼 生成这组</button>
               <button class="mini-btn btn-danger g-del" data-ls-act="delgroup" data-g="${g}">删组</button>
@@ -333,6 +334,99 @@
       });
     }
 
+    function openImportLiveGroup(groupNo) {
+      const radio = (val, label) =>
+        `<label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;cursor:pointer"><input type="radio" name="liSep" value="${val}"/>${label}</label>`;
+      const mask = showModal(`
+        <h3>导入本组（第 ${groupNo} 组）清单</h3>
+        <p class="muted" style="margin-bottom:6px">分隔符（只能选一种，不可混用）：</p>
+        <div style="margin-bottom:8px">
+          ${radio("space", "空格")}
+          ${radio("tab", "Tab")}
+          ${radio("comma", "逗号")}
+          ${radio("line", "换行")}
+        </div>
+        <textarea id="liText" placeholder="粘贴本组最多 9 个编号，每项必须是真实存在的编号（如 L001）。导入会先清空本组再按顺序填入。" style="display:block;width:100%;box-sizing:border-box;min-height:96px;margin-bottom:6px"></textarea>
+        <p class="muted" id="liDesc" style="margin-bottom:8px"></p>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+          <button id="liCancel">取消</button>
+          <button id="liDo" class="btn-teal">导入</button>
+        </div>`);
+      const splitTokens = (sep, text) => {
+        const s = String(text || "").trim();
+        if (!s) {
+          return [];
+        }
+        return s
+          .split(
+            sep === "space"
+              ? /[ \u3000]+/
+              : sep === "tab"
+                ? /\t+/
+                : sep === "comma"
+                  ? /[,，]+/
+                  : /\r?\n+/,
+          )
+          .map((t) => t.trim())
+          .filter(Boolean);
+      };
+      const curSep = () => {
+        const r = [...mask.querySelectorAll('input[name="liSep"]')].find(
+          (x) => x.checked,
+        );
+        return r ? r.value : "space";
+      };
+      const renderLi = () => {
+        const tokens = splitTokens(curSep(), $("liText").value);
+        const invalid = tokens.filter((t) => !stateProduct(t));
+        $("liDesc").textContent =
+          tokens.length === 0
+            ? "等待输入…"
+            : `识别 ${tokens.length} 个编号 → 有效 ${tokens.length - invalid.length} 个${
+                invalid.length > 0
+                  ? `，不合法：${invalid.slice(0, 5).join("、")}${
+                      invalid.length > 5 ? ` 等${invalid.length}个` : ""
+                    }`
+                  : "，全部合法"
+              }`;
+      };
+      mask.querySelectorAll('input[name="liSep"]').forEach((r) => {
+        r.onchange = () => renderLi();
+      });
+      $("liText").oninput = renderLi;
+      $("liCancel").onclick = closeModal;
+      $("liDo").onclick = () => {
+        const tokens = splitTokens(curSep(), $("liText").value);
+        if (tokens.length === 0) {
+          toast("没有可导入的编号");
+          return;
+        }
+        const invalid = tokens.filter((t) => !stateProduct(t));
+        if (invalid.length > 0) {
+          toast(
+            `已拒绝导入：不合法编号 ${invalid.slice(0, 5).join("、")}${
+              invalid.length > 5 ? ` 等${invalid.length}个` : ""
+            }`,
+          );
+          return;
+        }
+        if (tokens.length > 9) {
+          toast(`本组最多 9 个，当前 ${tokens.length} 个`);
+          return;
+        }
+        let plan = state.livePlan.filter((r) => r.group_no !== groupNo);
+        plan.push({ group_no: groupNo, slot_no: 0, code: "" });
+        tokens.forEach((code, i) => {
+          plan.push({ group_no: groupNo, slot_no: i + 1, code });
+        });
+        state.livePlan = plan;
+        scheduleLivePlanSave();
+        renderLiveGrid();
+        toast(`第 ${groupNo} 组已导入 ${tokens.length} 个`);
+      };
+      renderLi();
+    }
+
     function bindLiveEvents() {
       const add = $("liveAddGroupBtn");
       if (add) {
@@ -408,6 +502,11 @@
       const area = $("liveGridArea");
       if (area) {
         area.addEventListener("click", (e) => {
+          const impBtn = e.target.closest("[data-ls-act='import']");
+          if (impBtn) {
+            openImportLiveGroup(Number(impBtn.dataset.g));
+            return;
+          }
           const genBtn = e.target.closest("[data-ls-act='gen']");
           if (genBtn) {
             generateGroup(Number(genBtn.dataset.g));
