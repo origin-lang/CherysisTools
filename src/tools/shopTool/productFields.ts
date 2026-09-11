@@ -30,7 +30,7 @@ export const PRODUCT_FIELDS: ProductFieldSpec[] = [
   { key: "netTotal", label: "累计净售", kind: "int" },
   { key: "status", label: "状态" },
   { key: "purchase_link", label: "采购链接", max: 500, noSpace: true },
-  { key: "remark", label: "备注", max: 200, hidden: true },
+  { key: "remark", label: "备注", max: 200 },
 ];
 
 // 商品字段的固定显示顺序（与前端 client-core.js PRODUCT_FIELDS 保持一致；隐藏列不参与）

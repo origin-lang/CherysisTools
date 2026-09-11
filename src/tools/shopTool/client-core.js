@@ -68,7 +68,7 @@ window.toolClients = window.toolClients || {};
       { key: "netTotal", label: "累计净售", kind: "int" },
       { key: "status", label: "状态" },
       { key: "purchase_link", label: "采购链接", max: 500, noSpace: true },
-      { key: "remark", label: "备注", max: 200, hidden: true },
+      { key: "remark", label: "备注", max: 200 },
     ];
     // 列显示字段（隐藏列不参与渲染）
     var PRODUCT_FIELDS = FIELD_SPECS.filter((f) => !f.hidden).map((f) => ({
@@ -85,6 +85,7 @@ window.toolClients = window.toolClients || {};
       "sale_price",
       "purchase_link",
       "stockTotal",
+      "remark",
     ]);
     var visList = new Set(PRODUCT_FIELDS.map((f) => f.key));
     var visGallery = new Set(PRODUCT_FIELDS.map((f) => f.key));

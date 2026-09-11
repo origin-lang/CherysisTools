@@ -143,6 +143,12 @@
         font-size: 11px;
         box-sizing: border-box;
       }
+      .data-table td[data-f="remark"] {
+        max-width: 220px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       .data-table td.num {
         text-align: right;
       }
@@ -364,6 +370,27 @@
       .form-grid label {
         font-size: 12px;
         color: var(--vscode-descriptionForeground);
+      }
+      .io-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 10px;
+      }
+      .io-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        white-space: nowrap;
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 4px;
+        padding: 3px 7px;
+        cursor: pointer;
+      }
+      .io-chip input {
+        margin: 0;
+        cursor: pointer;
       }
       .computed {
         color: #23a884;
@@ -666,7 +693,7 @@
         </select>
         <button id="newProductBtn" class="btn-teal">＋ 新建商品</button>
         <button id="colSetBtn">字段显示</button>
-        <button id="ioBtn" title="导入 / 导出商品清单">📥📤 导入导出</button>
+        <button id="ioBtn" title="导入 / 导出商品清单">导入/导出</button>
         <button id="undoBtn" disabled title="撤销上一步修改（最多回退 20 步）">↩ 撤销</button>
         <button id="redoBtn" disabled title="重做上一步被撤销的操作">↪ 重做</button>
         <button id="clearFilterBtn" class="btn-danger" style="visibility: hidden">清除筛选</button>

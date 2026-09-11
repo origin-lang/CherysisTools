@@ -347,6 +347,9 @@ function renderList(list) {
               ? `<a href="${esc(p.purchase_link)}" target="_blank">打开</a>`
               : "";
             break;
+          case "remark":
+            v = esc(p.remark);
+            break;
         }
         tds.push(
           `<td class="${cls}" data-f="${f.key}" data-pid="${p.id}" ${editable}>${v}</td>`,
@@ -386,7 +389,7 @@ function renderList(list) {
                <th style="width:30px"><input type="checkbox" id="selectAllProducts" ${list.length === 0 ? "disabled" : ""} ${allSelected ? "checked" : ""} title="全选 / 取消全选" /></th>
                ${headCols.join("")}
              </tr></thead><tbody>${body}</tbody></table></div>
-             <div class="muted" style="margin-top:4px">表头下小框可筛选对应列；双击单元格编辑（回车或点击别处即保存）；点击行可高亮定位；右键行可复制/删除整行</div>`;
+             <div class="muted" style="margin-top:4px">表头下小框可筛选对应列；双击单元格编辑（回车或点击别处即保存）；右键行可复制/删除整行；悬浮有颜色高亮定位</div>`;
   bindBatchOps();
   bindColFilters();
 }
@@ -501,31 +504,35 @@ function bindBatchOps() {
     batchCopy.onclick = copySelectedProducts;
   }
 
-  if (batchOn) {
-    batchOn.onclick = () => {
-      if (state.selectedProducts.size === 0) {
-        return;
+  const batchSetStatus = (status) => {
+    if (state.selectedProducts.size === 0) {
+      return;
+    }
+    const n = state.selectedProducts.size;
+    post({
+      type: "setProductsStatus",
+      ids: [...state.selectedProducts],
+      status,
+    });
+    // 动作完成后保留勾选：可连续上架↔下架（批量删除才清勾选）
+    // 若当前“状态筛选”会让这批商品从列表消失，自动切回“全部”让结果可见
+    const hiddenVal = status === 0 ? "off" : "on";
+    if (filters.f_status === hiddenVal) {
+      delete filters.f_status;
+      const fs = $("filterStatus");
+      if (fs) {
+        fs.value = "";
       }
-      post({
-        type: "setProductsStatus",
-        ids: [...state.selectedProducts],
-        status: 0,
-      });
-      state.selectedProducts.clear();
-    };
+    }
+    toast(`✅已${status === 0 ? "上架" : "下架"} ${n} 个商品`);
+    renderProducts();
+  };
+
+  if (batchOn) {
+    batchOn.onclick = () => batchSetStatus(0);
   }
   if (batchOff) {
-    batchOff.onclick = () => {
-      if (state.selectedProducts.size === 0) {
-        return;
-      }
-      post({
-        type: "setProductsStatus",
-        ids: [...state.selectedProducts],
-        status: 1,
-      });
-      state.selectedProducts.clear();
-    };
+    batchOff.onclick = () => batchSetStatus(1);
   }
   if (batchDel) {
     batchDel.onclick = () => {
@@ -866,8 +873,8 @@ function openIoMenu() {
   menu.style.cssText =
     "position:fixed;z-index:70;background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:4px;padding:4px 0;min-width:150px;box-shadow:0 2px 8px rgba(0,0,0,.3)";
   menu.innerHTML =
-    `<div class="ctx-item" data-io="import">📥 导入商品</div>` +
-    `<div class="ctx-item" data-io="export">📤 导出Excel</div>`;
+    `<div class="ctx-item" data-io="import">导入商品</div>` +
+    `<div class="ctx-item" data-io="export">导出Excel</div>`;
   menu.style.left = Math.min(r.left, window.innerWidth - 160) + "px";
   menu.style.top = r.bottom + 4 + "px";
   document.body.appendChild(menu);
@@ -966,12 +973,12 @@ function openImportProducts() {
         <button class="mini-btn" id="ipAll">全选</button>
         <button class="mini-btn" id="ipNone">不选</button>
       </div>
-      <div class="form-grid">
-        <label>编号</label><input type="checkbox" data-ip-k="code" checked disabled />
+      <div class="io-chips">
+        <label class="io-chip" title="编号固定第 1 列"><input type="checkbox" data-ip-k="code" checked disabled />编号</label>
         ${PRODUCT_FIELDS.filter((f) => IMPORT_WRITABLE_KEYS.includes(f.key))
           .map(
             (f) =>
-              `<label>${f.label}</label><input type="checkbox" data-ip-k="${f.key}" ${sel.has(f.key) ? "checked" : ""} />`,
+              `<label class="io-chip"><input type="checkbox" data-ip-k="${f.key}" ${sel.has(f.key) ? "checked" : ""} />${f.label}</label>`,
           )
           .join("")}
       </div>
@@ -1063,14 +1070,14 @@ function openExportProducts() {
   const mask = showModal(`
     <h3>📤 导出商品 Excel</h3>
     <p class="muted" style="margin-bottom:8px">范围：${list.length < state.products.length ? "当前筛选结果" : "全部商品"}（${list.length} 条）；导出列按下面勾选、顺序固定。</p>
-    <div class="form-grid">
+    <div class="io-chips">
+      <label class="io-chip" title="编号固定第 1 列"><input type="checkbox" data-io-e="code" checked disabled />编号</label>
       ${PRODUCT_FIELDS.filter((f) => f.key !== "code")
         .map(
           (f) =>
-            `<label>${f.label}</label><input type="checkbox" data-io-e="${f.key}" ${checked.has(f.key) ? "checked" : ""} />`,
+            `<label class="io-chip"><input type="checkbox" data-io-e="${f.key}" ${checked.has(f.key) ? "checked" : ""} />${f.label}</label>`,
         )
         .join("")}
-      <label>编号</label><input type="checkbox" data-io-e="code" checked disabled />
     </div>
     <p class="muted" id="eoColDesc"></p>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
@@ -1078,9 +1085,11 @@ function openExportProducts() {
       <button id="eoDo" class="btn-teal">导出</button>
     </div>`);
   const renderEo = () => {
-    const cols = PRODUCT_FIELDS.filter((f) => f.key !== "code" && checked.has(f.key))
-      .map((f) => f.label)
-      .concat("编号");
+    const cols = ["编号"].concat(
+      PRODUCT_FIELDS.filter((f) => f.key !== "code" && checked.has(f.key)).map(
+        (f) => f.label,
+      ),
+    );
     $("eoColDesc").innerHTML = `导出列（顺序固定）＝<b>${cols.join("、")}</b>`;
   };
   renderEo();
@@ -1367,10 +1376,6 @@ function onProductAct(e) {
       renderProducts();
     }
     return;
-  }
-  const dataTd = e.target.closest("td[data-pid]");
-  if (dataTd) {
-    setActiveProductRow(Number(dataTd.dataset.pid), dataTd.closest("tr"));
   }
   const th = e.target.closest("[data-sort]");
   if (th) {

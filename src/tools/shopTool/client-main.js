@@ -490,6 +490,23 @@
           } catch {
             /* 保持默认 */
           }
+          // 备注本是不可见列；升级为可显示列后，老可见配置缺它就自动补一次并持久化
+          if (!visList.has("remark")) {
+            visList.add("remark");
+            post({
+              type: "saveSettings",
+              key: "col_visible_list",
+              value: JSON.stringify([...visList]),
+            });
+          }
+          if (!visGallery.has("remark")) {
+            visGallery.add("remark");
+            post({
+              type: "saveSettings",
+              key: "col_visible_gallery",
+              value: JSON.stringify([...visGallery]),
+            });
+          }
           renderProducts();
           break;
         }
