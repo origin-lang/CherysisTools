@@ -266,19 +266,24 @@ function renderList(list) {
   const plIdx = vis.findIndex((f) => f.key === "purchase_link");
   const imgAt = plIdx >= 0 ? plIdx : vis.length;
   const headCols = [];
+  const filterCells = [];
   for (let i = 0; i < vis.length; i++) {
     if (i === imgAt) {
       headCols.push(`<th><span class="th-label">图片</span></th>`);
+      filterCells.push(`<td></td>`);
     }
     const f = vis[i];
     headCols.push(
-      `<th><span class="th-label" data-sort="${f.key}">${f.label}${sortKey === f.key ? (sortDir === 1 ? " ▲" : " ▼") : ""}</span>${filterControl(f.key)}</th>`,
+      `<th><span class="th-label" data-sort="${f.key}">${f.label}${sortKey === f.key ? (sortDir === 1 ? " ▲" : " ▼") : ""}</span></th>`,
     );
+    filterCells.push(`<td>${filterControl(f.key)}</td>`);
   }
   if (imgAt >= vis.length) {
     headCols.push(`<th><span class="th-label">图片</span></th>`);
+    filterCells.push(`<td></td>`);
   }
   headCols.push(`<th><span class="th-label">操作</span></th>`);
+  filterCells.push(`<td></td>`);
   const body = list
     .map((p) => {
       const net = p.soldTotal - p.refundTotal;
@@ -392,6 +397,9 @@ function renderList(list) {
              <div class="table-wrap"><table class="data-table"><thead><tr>
                <th style="width:30px"><input type="checkbox" id="selectAllProducts" ${list.length === 0 ? "disabled" : ""} ${allSelected ? "checked" : ""} title="全选 / 取消全选" /></th>
                ${headCols.join("")}
+             </tr><tr class="filter-row">
+               <td></td>
+               ${filterCells.join("")}
              </tr></thead><tbody>${body}</tbody></table></div>
              <div class="muted" style="margin-top:4px">表头下小框可筛选对应列；双击单元格编辑（回车或点击别处即保存）；右键行可复制/删除整行；悬浮有颜色高亮定位</div>`;
   bindBatchOps();

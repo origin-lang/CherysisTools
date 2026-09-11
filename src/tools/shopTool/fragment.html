@@ -123,10 +123,22 @@
       .data-table th {
         position: sticky;
         top: 0;
+        height: 26px;
+        box-sizing: border-box;
         background-color: var(--vscode-editor-background);
-        z-index: 1;
+        z-index: 2;
         cursor: pointer;
         user-select: none;
+      }
+      .data-table .filter-row td {
+        position: sticky;
+        top: 26px;
+        z-index: 1;
+        background: var(--vscode-editor-background);
+        padding: 2px 4px;
+      }
+      .data-table .filter-row .filter-cell {
+        margin-top: 0;
       }
       .data-table th:hover {
         background: var(--vscode-list-hoverBackground);
