@@ -28,13 +28,13 @@ function cellValue(p, key) {
 const TEXT_FILTER_FIELDS = new Set([
   "code",
   "name",
-  "cost_price",
-  "sale_price",
+  "series",
   "stockTotal",
   "soldTotal",
   "netTotal",
   "remark",
 ]);
+const RANGE_FILTER_FIELDS = new Set(["cost_price", "sale_price"]);
 
 function filteredProducts() {
   const st = filters.f_status || "";
@@ -61,6 +61,19 @@ function filteredProducts() {
       for (const key of TEXT_FILTER_FIELDS) {
         const v = filters["f_" + key];
         if (v && !cellValue(p, key).toLowerCase().includes(String(v).toLowerCase())) {
+          return false;
+        }
+      }
+      return true;
+    })
+    .filter((p) => {
+      for (const key of RANGE_FILTER_FIELDS) {
+        const mn = filters["f_" + key + "_min"];
+        if (mn !== undefined && mn !== "" && Number(p[key]) < Number(mn)) {
+          return false;
+        }
+        const mx = filters["f_" + key + "_max"];
+        if (mx !== undefined && mx !== "" && Number(p[key]) > Number(mx)) {
           return false;
         }
       }
@@ -245,14 +258,18 @@ function filterControl(key) {
       .join("");
   switch (key) {
     case "category":
-    case "series":
     case "grade":
-      return `<select class="filter-cell" data-col-f="${key}" title="筛选${key === "grade" ? "等级" : key === "series" ? "系列" : "品类"}"><option value="">全部</option>${opts(
+      return `<select class="filter-cell" data-col-f="${key}" title="筛选${key === "grade" ? "等级" : "品类"}"><option value="">全部</option>${opts(
         distinctOptions(
           key,
           key === "grade" ? displayGrade : undefined,
         ),
       )}</select>`;
+    case "cost_price":
+    case "sale_price": {
+      const label = key === "cost_price" ? "进价" : "售价";
+      return `<div class="filter-range" data-fr-key="${key}"><input class="filter-cell" type="number" min="0" step="0.01" data-col-f="${key}" data-fr="min" title="筛选${label}最低" placeholder="最低" value="${esc(String(filters["f_" + key + "_min"] || ""))}" /><span class="fr-sep">~</span><input class="filter-cell" type="number" min="0" step="0.01" data-col-f="${key}" data-fr="max" title="筛选${label}最高" placeholder="最高" value="${esc(String(filters["f_" + key + "_max"] || ""))}" /></div>`;
+    }
     default:
       return `<input class="filter-cell" data-col-f="${key}" title="筛选${key}" placeholder="筛选" value="${esc(String(cur))}" />`;
   }
@@ -406,12 +423,14 @@ function renderList(list) {
 function bindColFilters() {
   document.querySelectorAll("[data-col-f]").forEach((el) => {
     const key = el.dataset.colF;
+    const fr = el.dataset.fr;
+    const fieldKey = fr ? key + "_" + fr : key;
     const apply = () => {
       const v = el.value;
       if (String(v).trim()) {
-        filters["f_" + key] = v;
+        filters["f_" + fieldKey] = v;
       } else {
-        delete filters["f_" + key];
+        delete filters["f_" + fieldKey];
       }
       syncClearFilterBtn();
       if (el.tagName === "SELECT") {
@@ -421,7 +440,9 @@ function bindColFilters() {
       const pos =
         typeof el.selectionStart === "number" ? el.selectionStart : el.value.length;
       renderProducts();
-      const nf = document.querySelector(`[data-col-f="${key}"]`);
+      const nf = document.querySelector(
+        `[data-col-f="${key}"]${fr ? `[data-fr="${fr}"]` : ""}`,
+      );
       if (nf) {
         nf.focus();
         try {
