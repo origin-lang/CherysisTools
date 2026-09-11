@@ -1141,6 +1141,9 @@ function openExportProducts() {
     </div>
     <textarea id="eoCodes" placeholder="示例：L001，L002  L003、L005；逗号/空格/Tab/换行分隔，编号可省略 L（如 7）" style="display:none;width:100%;box-sizing:border-box;min-height:72px;margin-bottom:6px"></textarea>
     <p class="muted" id="eoScopeDesc" style="margin-bottom:8px"></p>
+    <div class="io-chips" style="margin-bottom:4px">
+      <label class="io-chip" title="每行内嵌该商品第 1 张图（Excel 锚定显示，文件会大一些）"><input type="checkbox" id="eoWithImg" />带图</label>
+    </div>
     <div class="io-chips">
       <label class="io-chip" title="编号固定第 1 列"><input type="checkbox" data-io-e="code" checked disabled />编号</label>
       ${PRODUCT_FIELDS.filter((f) => f.key !== "code")
@@ -1258,6 +1261,7 @@ function openExportProducts() {
       codes,
       filtered: codes.length < state.products.length ? 1 : 0,
       fields,
+      withImages: $("eoWithImg") && $("eoWithImg").checked ? 1 : 0,
     });
   };
 }
@@ -1291,8 +1295,8 @@ function checkGroupHtml(prefix, set) {
   return PRODUCT_FIELDS.map((f) => {
     const locked = f.key === "code";
     return (
-      `<label class="${locked ? "muted" : ""}">${f.label}${locked ? "（固定）" : ""}</label>` +
-      `<input type="checkbox" data-g="${prefix}" data-cfk="${f.key}" ${locked || set.has(f.key) ? "checked" : ""} ${locked ? "disabled" : ""} />`
+      `<label class="io-chip" ${locked ? 'title="编号固定显示"' : ""}>` +
+      `<input type="checkbox" data-g="${prefix}" data-cfk="${f.key}" ${locked || set.has(f.key) ? "checked" : ""} ${locked ? "disabled" : ""} />${f.label}</label>`
     );
   }).join("");
 }
@@ -1308,7 +1312,7 @@ function openColSet() {
           <button class="mini-btn" id="csListAll">全选</button>
           <button class="mini-btn" id="csListNone">不选</button>
         </div>
-        <div class="form-grid">${checkGroupHtml("cur", toggle)}</div>
+        <div class="io-chips">${checkGroupHtml("cur", toggle)}</div>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
           <button id="csReset">复原默认（全部显示）</button>
           <button id="csCancel">取消</button>

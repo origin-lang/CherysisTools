@@ -2,11 +2,14 @@ import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
 import * as XLSX from "xlsx";
+import { Workbook } from "exceljs";
+import sharp from "sharp";
 import { Handler, HandlerCtx } from "./types.js";
 import { getDB, Product } from "../db.js";
 import { net } from "../salesModel.js";
 import { fileStamp } from "../pricing.js";
 import { PRODUCT_FIELD_ORDER } from "../productFields.js";
+import { firstImageFile } from "../images.js";
 
 // 导入导出域：商品/销售/月报/排品清单导出、数据库备份与恢复、文件定位
 export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
@@ -72,16 +75,70 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
               return (p as any)[key] ?? "";
           }
         };
-        const aoa: any[][] = [cols.map((c) => c.label)];
-        for (const p of list) {
-          aoa.push(cols.map((c) => valOf(p, c.key)));
-        }
-        const ws = XLSX.utils.aoa_to_sheet(aoa);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "商品清单");
+        const withImages = !!msg.withImages;
         const outFile = path.join(dir, `商品清单_${fileStamp()}.xlsx`);
-        await fs.promises.writeFile(outFile, XLSX.write(wb, { bookType: "xlsx", type: "buffer" }));
-        log(`✅商品清单已导出（${list.length}条）：${outFile}`);
+        if (withImages) {
+          const imageDir = String(h.getSetting("image_dir") || "").trim();
+          const wb = new Workbook();
+          const ws = wb.addWorksheet("商品清单");
+          const headCells = cols.map((c) => c.label);
+          ws.getCell(1, 1).value = "图片";
+          headCells.forEach((label, i) => {
+            ws.getCell(1, i + 2).value = label;
+          });
+          ws.getColumn(1).width = 14;
+          cols.forEach((_, i) => {
+            ws.getColumn(i + 2).width = 14;
+          });
+          for (let i = 0; i < list.length; i++) {
+            const p = list[i];
+            const rowIndex = i + 2;
+            for (let c = 0; c < cols.length; c++) {
+              ws.getCell(rowIndex, c + 2).value = valOf(p, cols[c].key);
+            }
+            ws.getRow(rowIndex).height = 68;
+            const fp = firstImageFile(imageDir, p.code);
+            if (!fp) {
+              continue;
+            }
+            try {
+              const thumb = await sharp(fp)
+                .resize({
+                  width: 96,
+                  height: 96,
+                  fit: "inside",
+                  withoutEnlargement: true,
+                })
+                .png()
+                .toBuffer();
+              const imgId = wb.addImage({
+                buffer: thumb as any,
+                extension: "png",
+              });
+              ws.addImage(imgId, {
+                tl: { col: 0, row: rowIndex - 1 },
+                ext: { width: 64, height: 64 },
+              });
+            } catch {
+              /* 该行图片缺失或损坏则留空 */
+            }
+          }
+          const raw = (await wb.xlsx.writeBuffer()) as unknown as Uint8Array;
+          await fs.promises.writeFile(outFile, raw);
+        } else {
+          const aoa: any[][] = [cols.map((c) => c.label)];
+          for (const p of list) {
+            aoa.push(cols.map((c) => valOf(p, c.key)));
+          }
+          const ws = XLSX.utils.aoa_to_sheet(aoa);
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, ws, "商品清单");
+          await fs.promises.writeFile(
+            outFile,
+            XLSX.write(wb, { bookType: "xlsx", type: "buffer" }),
+          );
+        }
+        log(`✅商品清单已导出（${list.length}条${withImages ? "，含图" : ""}）：${outFile}`);
         post({
           type: "exportDone",
           kind: "products",
