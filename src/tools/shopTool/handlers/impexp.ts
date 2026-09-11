@@ -60,6 +60,7 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
             ? new Set<string>(msg.fields.map(String))
             : null;
         if (want) {
+          want.add("code");
           cols = PRODUCT_FIELD_ORDER.filter((f) => want.has(f.key));
           db.setSetting("export_fields", JSON.stringify(cols.map((c) => c.key)));
         } else {
