@@ -33,6 +33,7 @@ const TEXT_FILTER_FIELDS = new Set([
   "stockTotal",
   "soldTotal",
   "netTotal",
+  "remark",
 ]);
 
 function filteredProducts() {
@@ -224,14 +225,10 @@ function distinctOptions(key, display) {
 }
 
 const NO_FILTER_FIELDS = new Set([
-  "cost_price",
-  "sale_price",
-  "stockTotal",
   "soldTotal",
   "netTotal",
   "status",
   "purchase_link",
-  "remark",
 ]);
 
 function filterControl(key) {
