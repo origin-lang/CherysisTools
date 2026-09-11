@@ -29,12 +29,11 @@ const TEXT_FILTER_FIELDS = new Set([
   "code",
   "name",
   "series",
-  "stockTotal",
   "soldTotal",
   "netTotal",
   "remark",
 ]);
-const RANGE_FILTER_FIELDS = new Set(["cost_price", "sale_price"]);
+const RANGE_FILTER_FIELDS = new Set(["cost_price", "sale_price", "stockTotal"]);
 
 function filteredProducts() {
   const st = filters.f_status || "";
@@ -269,8 +268,14 @@ function filterControl(key) {
         ),
       )}</select>`;
     case "cost_price":
-    case "sale_price": {
-      const label = key === "cost_price" ? "进价" : "售价";
+    case "sale_price":
+    case "stockTotal": {
+      const label =
+        key === "cost_price"
+          ? "进价"
+          : key === "sale_price"
+            ? "售价"
+            : "库存";
       return `<input class="filter-cell" type="text" data-col-f="${key}" data-fr="range" title="筛选${label}：输入 10~30 表示 10 到 30，也可直接输 10 或 >10 / <30" placeholder="范围" value="${esc(String(filters["f_" + key] || ""))}" />`;
     }
     default:

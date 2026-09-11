@@ -11,6 +11,25 @@ import { fileStamp } from "../pricing.js";
 import { PRODUCT_FIELD_ORDER } from "../productFields.js";
 import { firstImageFile } from "../images.js";
 
+// 读取原图嵌入 Excel：jpg/jpeg/png/gif 直接用原文件（不缩小），其它格式转 png 兜底
+async function readImageForExcel(
+  fp: string,
+): Promise<{ buffer: Buffer; extension: "jpeg" | "png" | "gif" }> {
+  const ext = path.extname(fp).toLowerCase();
+  const buf = await fs.promises.readFile(fp);
+  if (ext === ".jpg" || ext === ".jpeg") {
+    return { buffer: buf, extension: "jpeg" };
+  }
+  if (ext === ".png") {
+    return { buffer: buf, extension: "png" };
+  }
+  if (ext === ".gif") {
+    return { buffer: buf, extension: "gif" };
+  }
+  const png = await sharp(buf).png().toBuffer();
+  return { buffer: png, extension: "png" };
+}
+
 // 导入导出域：商品/销售/月报/排品清单导出、数据库备份与恢复、文件定位
 export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
   const { db, log, post } = h;
@@ -79,45 +98,37 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
         const outFile = path.join(dir, `商品清单_${fileStamp()}.xlsx`);
         if (withImages) {
           const imageDir = String(h.getSetting("image_dir") || "").trim();
+          const plIdx = cols.findIndex((c) => c.key === "purchase_link");
+          const imgColIdx = plIdx >= 0 ? plIdx : cols.length;
+          const displayCols = cols.slice();
+          displayCols.splice(imgColIdx, 0, { key: "_image", label: "图片" });
           const wb = new Workbook();
           const ws = wb.addWorksheet("商品清单");
-          const headCells = cols.map((c) => c.label);
-          ws.getCell(1, 1).value = "图片";
-          headCells.forEach((label, i) => {
-            ws.getCell(1, i + 2).value = label;
+          displayCols.forEach((c, ci) => {
+            ws.getCell(1, ci + 1).value = c.label;
           });
-          ws.getColumn(1).width = 14;
-          cols.forEach((_, i) => {
-            ws.getColumn(i + 2).width = 14;
+          displayCols.forEach((_, i) => {
+            ws.getColumn(i + 1).width = i === imgColIdx ? 14 : 13;
           });
           for (let i = 0; i < list.length; i++) {
             const p = list[i];
             const rowIndex = i + 2;
-            for (let c = 0; c < cols.length; c++) {
-              ws.getCell(rowIndex, c + 2).value = valOf(p, cols[c].key);
+            for (let c = 0; c < displayCols.length; c++) {
+              if (displayCols[c].key !== "_image") {
+                ws.getCell(rowIndex, c + 1).value = valOf(p, displayCols[c].key);
+              }
             }
-            ws.getRow(rowIndex).height = 68;
+            ws.getRow(rowIndex).height = 84;
             const fp = firstImageFile(imageDir, p.code);
             if (!fp) {
               continue;
             }
             try {
-              const thumb = await sharp(fp)
-                .resize({
-                  width: 96,
-                  height: 96,
-                  fit: "inside",
-                  withoutEnlargement: true,
-                })
-                .png()
-                .toBuffer();
-              const imgId = wb.addImage({
-                buffer: thumb as any,
-                extension: "png",
-              });
+              const { buffer, extension } = await readImageForExcel(fp);
+              const imgId = wb.addImage({ buffer: buffer as any, extension });
               ws.addImage(imgId, {
-                tl: { col: 0, row: rowIndex - 1 },
-                ext: { width: 64, height: 64 },
+                tl: { col: imgColIdx, row: rowIndex - 1 },
+                ext: { width: 80, height: 80 },
               });
             } catch {
               /* 该行图片缺失或损坏则留空 */
