@@ -12,6 +12,9 @@ window.toolClients = window.toolClients || {};
         stock_alert: 0,
         col_visible_list: "",
         col_visible_gallery: "",
+        import_fields: "",
+        import_mode: "",
+        export_fields: "",
       },
       settles: [],
       sales: [],
@@ -27,7 +30,27 @@ window.toolClients = window.toolClients || {};
       liveOutDir: "",
       selectedProducts: new Set(),
       activeProductId: null,
+      canUndo: false,
+      canRedo: false,
     };
+
+    // 撤销/重做可用性回推：控制各页面的撤销/重做按钮灰显
+    function applyUndoState(avail, redoAvail) {
+      state.canUndo = !!avail;
+      state.canRedo = !!redoAvail;
+      ["undoBtn", "undoSalesBtn"].forEach((id) => {
+        const b = document.getElementById(id);
+        if (b) {
+          b.disabled = !state.canUndo;
+        }
+      });
+      ["redoBtn", "redoSalesBtn"].forEach((id) => {
+        const b = document.getElementById(id);
+        if (b) {
+          b.disabled = !state.canRedo;
+        }
+      });
+    }
 
     var PRESET_CATEGORIES = ["手链", "项链", "耳环", "戒指", "手镯"];
     // 商品字段规格主表：顺序/标签/文本长度/空格/必填/数值类型，一处定义。

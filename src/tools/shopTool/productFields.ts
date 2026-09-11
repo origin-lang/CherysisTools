@@ -41,9 +41,16 @@ export const PRODUCT_FIELD_ORDER: Array<{ key: string; label: string }> = PRODUC
 // 可写字段子集（派生列不参与导入/导出写回）
 export const IMPORTABLE_FIELD_ORDER: Array<{ key: string; label: string }> = PRODUCT_FIELDS.filter(
   (f) =>
-    ["name", "category", "series", "grade", "cost_price", "sale_price", "purchase_link"].includes(
-      f.key,
-    ),
+    [
+      "name",
+      "category",
+      "series",
+      "grade",
+      "cost_price",
+      "sale_price",
+      "status",
+      "purchase_link",
+    ].includes(f.key),
 );
 
 type TextFieldKey = "name" | "category" | "series" | "purchase_link" | "remark";

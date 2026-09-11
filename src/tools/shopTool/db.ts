@@ -140,7 +140,57 @@ export interface ShopDB {
   replaceLivePlan(plan: LivePlanRow[]): void;
   backupDB(destPath: string): Promise<void>;
   restoreDB(srcPath: string, storageDir: string): void;
+  /** 全表快照（撤销/重做用，仅内存） */
+  snapshotAll(): ShopDBSnapshot;
+  /** 用快照整体替换全部表（事务内 DELETE + INSERT，自动恢复主键计数） */
+  restoreAll(snap: ShopDBSnapshot): void;
 }
+
+/** 撤销/重做快照：各表行数组，key 对应 SNAP_TABLES */
+export interface ShopDBSnapshot {
+  [key: string]: any[];
+}
+
+/** 快照覆盖的全部表与列（列名须与建表/迁移后的最终结构一致）
+ *  覆盖：商品(含库存/价格)、售价规则、入库、销售流水、月报、设置、直播星标、排品 */
+export const SNAP_TABLES: Array<{ key: string; table: string; cols: string[] }> = [
+  {
+    key: "products",
+    table: "products",
+    cols: [
+      "id", "code", "name", "category", "series", "grade",
+      "cost_price", "sale_price", "price_manual", "purchase_link",
+      "status", "remark", "created_at", "stock_manual",
+    ],
+  },
+  {
+    key: "rules",
+    table: "sale_rules",
+    cols: ["grade", "label", "expr", "tail_mode", "tail_value"],
+  },
+  {
+    key: "stockIn",
+    table: "stock_in",
+    cols: ["id", "product_id", "qty", "date", "remark", "created_at"],
+  },
+  {
+    key: "sales",
+    table: "sales_record",
+    cols: ["id", "product_id", "date", "sold_qty", "refund_qty", "cost_price", "note"],
+  },
+  {
+    key: "settles",
+    table: "monthly_settle",
+    cols: [
+      "month", "income_amount", "extra_expense", "goods_cost",
+      "sold_total", "refund_total", "profit", "locked",
+      "created_at", "updated_at", "purchase_cost", "end_stock", "start_stock",
+    ],
+  },
+  { key: "settings", table: "settings", cols: ["key", "value"] },
+  { key: "liveStars", table: "live_star", cols: ["code", "created_at"] },
+  { key: "livePlan", table: "live_plan", cols: ["group_no", "slot_no", "code"] },
+];
 
 let db: Database.Database | null = null;
 let dbPath: string | null = null;
@@ -500,6 +550,17 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
     SELECT SUM(sold_qty) AS sold, SUM(refund_qty) AS refund, SUM((sold_qty - refund_qty) * cost_price) AS cost
     FROM sales_record WHERE date LIKE ?
   `);
+  // 撤销/重做：每表一条快照读 / 全清 / 回写语句，列序固定由 SNAP_TABLES 决定
+  const snapStmts = SNAP_TABLES.map((t) => ({
+    key: t.key,
+    table: t.table,
+    cols: t.cols,
+    select: c.prepare(`SELECT ${t.cols.join(", ")} FROM ${t.table}`),
+    del: c.prepare(`DELETE FROM ${t.table}`),
+    ins: c.prepare(
+      `INSERT INTO ${t.table} (${t.cols.join(", ")}) VALUES (${t.cols.map(() => "?").join(", ")})`,
+    ),
+  }));
 
   cached = {
     getProducts: loadProducts,
@@ -887,6 +948,31 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
         }
         throw err;
       }
+    },
+    snapshotAll(): ShopDBSnapshot {
+      const snap: ShopDBSnapshot = {};
+      for (const st of snapStmts) {
+        snap[st.key] = st.select.all() as any[];
+      }
+      return snap;
+    },
+    restoreAll(snap: ShopDBSnapshot): void {
+      const tx = c.transaction(() => {
+        for (const st of snapStmts) {
+          st.del.run();
+        }
+        for (const st of snapStmts) {
+          const rows = snap[st.key];
+          if (!Array.isArray(rows)) {
+            continue;
+          }
+          for (const row of rows) {
+            st.ins.run(...st.cols.map((col) => row[col]));
+          }
+        }
+      });
+      tx();
+      resetAggCache();
     },
   };
   return cached;

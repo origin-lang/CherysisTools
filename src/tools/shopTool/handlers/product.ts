@@ -10,6 +10,21 @@ import {
 } from "../productFields.js";
 import { splitCells, isHeaderRow, codeFromCell } from "../rowParse.js";
 
+/** 商品可编辑字段 key → 中文名（撤销提示里显示改的是哪个字段） */
+const PRODUCT_FIELD_LABELS: Record<string, string> = {
+  code: "编号",
+  name: "名称",
+  category: "品类",
+  series: "系列",
+  grade: "等级",
+  cost_price: "进价",
+  sale_price: "售价",
+  price_manual: "自定义售价",
+  purchase_link: "采购链接",
+  status: "状态",
+  remark: "备注",
+};
+
 // 商品管理域：新建/编辑/清点/上下架/删除/批量/入库/导入
 export function productHandlers(h: HandlerCtx): Record<string, Handler> {
   const { db, log, post } = h;
@@ -60,6 +75,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         log(`❌${initialStock.msg}`);
         return;
       }
+      const snap = h.snapshot();
       const custom = grade.value === 0;
       if (!custom && db.ensureRule(grade.value)) {
         log(`ℹ️等级 ${grade.value} 无规则，已自动创建默认规则（cost*1.5 → +0.88）`);
@@ -87,6 +103,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
           remark: "期初入库",
         });
       }
+      h.pushUndo(snap, `新建商品 ${code} ${nameR.value}（期初库存 +${initialStock.value}）`);
       log(`✅已新建 ${code} ${nameR.value}（库存 +${initialStock.value}）`);
       post({ type: "toast", text: `✅已新建 ${code}` });
       h.loadAll();
@@ -100,6 +117,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         log("❌商品不存在");
         return;
       }
+      const snap = h.snapshot();
       if (field === "code") {
         const code = canonicalCode(msg.value);
         if (!code) {
@@ -174,6 +192,10 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       } else {
         db.updateProductField(id, field, msg.value);
       }
+      h.pushUndo(
+        snap,
+        `修改 ${product.code} 的「${PRODUCT_FIELD_LABELS[field] || field}」`,
+      );
       log(`✏️已更新 ${product.code}`);
       h.loadAll();
     },
@@ -190,8 +212,10 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         log(`❌${qty.msg}`);
         return;
       }
+      const snap = h.snapshot();
       db.updateStockQty(sid, qty.value);
       const display = qty.value;
+      h.pushUndo(snap, `清点库存 ${product.code} → ${display}`);
       log(`🔢清点 ${product.code} 库存 = ${display}`);
       h.postProductsDelta([sid]);
     },
@@ -202,12 +226,14 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       if (p) {
         await h.preOpBackup();
       }
+      const snap = h.snapshot();
       if (p) {
         // 先删图片文件夹（删不掉也不阻塞删商品，但会打印完整路径），再删商品
         h.removeImageFolder(p.code);
         h.invalidateCover(p.code);
       }
       db.deleteProduct(id);
+      h.pushUndo(snap, `删除商品 ${p ? p.code : id}（含其销售/入库记录）`);
       log(`🗑已删除 ${p ? p.code : id}（含其销售记录与入库记录）`);
       h.refreshSales(todayStr());
       h.postProductsDelta([], [id]);
@@ -217,8 +243,10 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
     setStatus(msg) {
       const id = Number(msg.id);
       const status = msg.status === 1 ? 1 : 0;
+      const snap = h.snapshot();
       db.updateProductField(id, "status", status);
       const p = db.getProductById(id);
+      h.pushUndo(snap, `${status === 1 ? "下架" : "上架"} ${p?.code ?? id}`);
       log(status === 1 ? `🔻已下架 ${p?.code ?? id}` : `🔺已上架 ${p?.code ?? id}`);
       h.postProductsDelta([id]);
     },
@@ -245,6 +273,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
           return;
         }
       }
+      const snap = h.snapshot();
       db.replaceRules(rules);
       for (const p of db.getProducts()) {
         if (p.price_manual === 1) {
@@ -253,6 +282,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         const rule = rules.find((r) => r.grade === p.grade);
         db.updateProductField(p.id, "sale_price", calcPrice(p.cost_price, rule));
       }
+      h.pushUndo(snap, "保存售价规则（已重算受影响商品售价）");
       log("📐售价规则已保存，受影响商品已重算售价");
       h.loadAll();
     },
@@ -264,9 +294,11 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         log("⚠没有选中要操作的商品");
         return;
       }
+      const snap = h.snapshot();
       for (const id of ids) {
         db.updateProductField(id, "status", status);
       }
+      h.pushUndo(snap, `批量${status === 1 ? "下架" : "上架"} ${ids.length} 个商品`);
       log(`✅已${status === 1 ? "下架" : "上架"} ${ids.length} 个商品`);
       h.postProductsDelta(ids);
     },
@@ -278,6 +310,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         return;
       }
       await h.preOpBackup();
+      const snap = h.snapshot();
       let n = 0;
       const deleted: string[] = [];
       for (const id of ids) {
@@ -298,6 +331,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       if (imgCleaned > 0) {
         log(`🗑已同时清理 ${imgCleaned} 个商品图片文件夹`);
       }
+      h.pushUndo(snap, `批量删除商品 ${n} 个`);
       log(`✅删除商品 ${n} 个${deleted.length ? `：${deleted.slice(0, 8).join("、")}${deleted.length > 8 ? " 等" : ""}` : ""}`);
       h.refreshSales(todayStr());
       h.postProductsDelta([], ids);
@@ -316,12 +350,14 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         log("❌商品不存在");
         return;
       }
+      const snap = h.snapshot();
       db.addStockIn({
         product_id: id,
         qty,
         date: String(msg.date ?? todayStr()),
         remark: String(msg.remark ?? "补货入库"),
       });
+      h.pushUndo(snap, `入库 ${p.code} +${qty}`);
       log(`📦已入库 ${p.code} +${qty}`);
       h.postProductsDelta([p.id]);
     },
@@ -334,7 +370,9 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       const id = Number(msg.id);
       const row = db.getStockIns().find((r) => r.id === id);
       await h.preOpBackup();
+      const snap = h.snapshot();
       db.deleteStockIn(id);
+      h.pushUndo(snap, `删除入库记录（${row ? row.code : id}）`);
       log("🗑已删除入库记录");
       h.postStockIns();
       if (row) {
@@ -344,39 +382,59 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
 
     async importProducts(msg) {
       await h.preOpBackup();
+      const snap = h.snapshot();
       const black: string[] = [];
       let created = 0;
       let updated = 0;
       let skipped = 0;
-      // 导入列 = “编号” + 当前可见列∩可写字段（派生列不参与导入；默认可见=旧 8 列格式）
-      const rawVisSetting = String(h.getSetting("col_visible_list") || "");
-      let rawVis: unknown = [];
-      let hasVisConfig = false;
-      if (rawVisSetting) {
-        hasVisConfig = true;
-        try {
-          rawVis = JSON.parse(rawVisSetting);
-        } catch {
-          rawVis = [];
+      const mode = msg.mode === "add" || msg.mode === "update" ? msg.mode : "both";
+      // 导入列 = “编号” + 客户端勾选的可写字段（优先）；缺省回退 当前可见列∩可写字段
+      let importable: Array<{ key: string; label: string }>;
+      const want =
+        Array.isArray(msg.fields) && msg.fields.length
+          ? new Set<string>(msg.fields.map(String))
+          : null;
+      if (want) {
+        importable = IMPORTABLE_FIELD_ORDER.filter((f) => want.has(f.key));
+      } else {
+        const rawVisSetting = String(h.getSetting("col_visible_list") || "");
+        let rawVis: unknown = [];
+        let hasVisConfig = false;
+        if (rawVisSetting) {
+          hasVisConfig = true;
+          try {
+            rawVis = JSON.parse(rawVisSetting);
+          } catch {
+            rawVis = [];
+          }
         }
-      }
-      const visSet = new Set<string>(Array.isArray(rawVis) ? (rawVis as string[]) : []);
-      // 只读列（编号）始终参与定位，但只取它自己的字段；导入列 = 可见∩可写
-      let importable = IMPORTABLE_FIELD_ORDER.filter((f) =>
-        visSet.has(f.key),
-      );
-      if (importable.length === 0) {
-        if (!hasVisConfig) {
-          // 从未配置时兜底为完整可写列（=旧 8 列格式），避免第一次用时只导得进编号
-          importable = IMPORTABLE_FIELD_ORDER;
-        } else {
+        const visSet = new Set<string>(Array.isArray(rawVis) ? (rawVis as string[]) : []);
+        importable = IMPORTABLE_FIELD_ORDER.filter((f) => visSet.has(f.key));
+        if (importable.length === 0) {
+          // 从未配置时兜底为完整可写列（=旧 8 列格式），避免第一次用时只导得进编号；
           // 用户故意只保留编号 → 不导入任何可写字段，只定位/更新编号本身
-          importable = [];
+          importable = hasVisConfig ? [] : IMPORTABLE_FIELD_ORDER;
         }
       }
+      // 记住这次的勾选与模式，下次打开弹窗默认
+      db.setSetting("import_fields", JSON.stringify(importable.map((f) => f.key)));
+      db.setSetting("import_mode", mode);
       const importFields = ["code"].concat(
         importable.map((f) => f.key),
       );
+      const parseStatus = (rawv: string): number | null => {
+        const s = String(rawv ?? "").trim();
+        if (!s) {
+          return null;
+        }
+        if (s === "1" || s === "已下架" || s === "下架") {
+          return 1;
+        }
+        if (s === "0" || s === "在售" || s === "上架") {
+          return 0;
+        }
+        return null;
+      };
       const lines = String(msg.text ?? "").split(/\r?\n/);
       for (let i = 0; i < lines.length; i++) {
         const raw = lines[i].trim();
@@ -397,6 +455,10 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         }
         const exist = db.getProductByCode(code);
         if (exist) {
+          if (mode === "add") {
+            skipped++;
+            continue;
+          }
           const has = (key: string) => {
             const idx = importFields.indexOf(key);
             return idx >= 0 && idx < parts.length;
@@ -456,11 +518,20 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
             db.updateProductField(exist.id, "sale_price", next);
             db.updateProductField(exist.id, "price_manual", 0);
           }
+          const stRaw = has("status") ? parseStatus(getv("status")) : null;
+          if (stRaw !== null && stRaw !== exist.status) {
+            db.updateProductField(exist.id, "status", stRaw);
+            touched++;
+          }
           if (touched > 0) {
             updated++;
           } else {
             skipped++;
           }
+          continue;
+        }
+        if (mode === "update") {
+          skipped++;
           continue;
         }
         const get = (key: string) => {
@@ -476,6 +547,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         const cost = Number.isFinite(costRaw) && costRaw >= 0 ? round2(costRaw) : 0;
         const saleRaw = Number(get("sale_price") || 0);
         const link = normText("purchase_link", get("purchase_link")).value;
+        const statusRaw = parseStatus(get("status"));
         const manual = Number.isFinite(saleRaw) && saleRaw > 0 ? round2(saleRaw) : 0;
         const custom = grade === 0;
         if (!custom && db.ensureRule(grade)) {
@@ -494,21 +566,33 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
           sale_price: custom || manual > 0 ? manual : calcPrice(cost, rule),
           price_manual: custom || manual > 0 ? 1 : 0,
           purchase_link: link,
-          status: 0,
+          status: statusRaw === null ? 0 : statusRaw,
           remark: "",
           stock_manual: 0,
         });
         created++;
       }
+      const modeLabel = mode === "add" ? "只新增" : mode === "update" ? "只修改" : "新增＋修改";
       log(
-        `📥商品导入：新增 ${created} 个，更新 ${updated} 个（编号已存在）` +
-          (skipped ? `，无变更 ${skipped} 个` : "") +
+        `📥商品导入（${modeLabel}）：新增 ${created}，更新 ${updated}` +
+          (skipped ? `，跳过 ${skipped}` : "") +
           (black.length ? `，无法解析 ${black.length} 行` : ""),
       );
       for (const b of black) {
         log(`  ⚠️${b}`);
       }
-      post({ type: "productsImported", ok: true, created, updated, skipped, bad: black });
+      if (created > 0 || updated > 0) {
+        h.pushUndo(snap, `商品导入（${modeLabel} 新增 ${created}、更新 ${updated}）`);
+      }
+      post({
+        type: "productsImported",
+        ok: true,
+        created,
+        updated,
+        skipped,
+        bad: black,
+        mode: mode as string,
+      });
       h.loadAll();
     },
   };

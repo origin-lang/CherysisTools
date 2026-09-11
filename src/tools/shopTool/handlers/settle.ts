@@ -47,6 +47,7 @@ export function settleHandlers(h: HandlerCtx): Record<string, Handler> {
       }
       const snap = db.snapshotMonth(month);
       const profit = round2(income - purchase - extra + endStock - startStock);
+      const undoSnap = h.snapshot();
       db.saveSettle({
         month,
         income_amount: income,
@@ -71,12 +72,15 @@ export function settleHandlers(h: HandlerCtx): Record<string, Handler> {
         prevEndStock: Number(db.getSettle(prevMonth(month))?.end_stock || 0),
         endStockAuto: round2(db.sumStockCost()),
       });
+      h.pushUndo(undoSnap, `保存月报 ${month}`);
       post({ type: "settlesLoaded", settles: db.getSettleMonths() });
     },
 
     lockSettle(msg) {
       const month = String(msg.month ?? "");
+      const undoSnap = h.snapshot();
       db.setLock(month, 1);
+      h.pushUndo(undoSnap, `锁定月报 ${month}`);
       log(`🔒已锁定 ${month}`);
       post({ type: "settlesLoaded", settles: db.getSettleMonths() });
       post({
@@ -91,7 +95,9 @@ export function settleHandlers(h: HandlerCtx): Record<string, Handler> {
 
     unlockSettle(msg) {
       const month = String(msg.month ?? "");
+      const undoSnap = h.snapshot();
       db.setLock(month, 0);
+      h.pushUndo(undoSnap, `解锁月报 ${month}`);
       log(`🔓已解锁 ${month}`);
       post({ type: "settlesLoaded", settles: db.getSettleMonths() });
       post({
@@ -107,7 +113,9 @@ export function settleHandlers(h: HandlerCtx): Record<string, Handler> {
     async deleteSettle(msg) {
       const month = String(msg.month ?? "");
       await h.preOpBackup();
+      const undoSnap = h.snapshot();
       db.deleteSettle(month);
+      h.pushUndo(undoSnap, `删除月报 ${month}`);
       log(`🗑已删除 ${month} 月报`);
       post({ type: "settlesLoaded", settles: db.getSettleMonths() });
     },

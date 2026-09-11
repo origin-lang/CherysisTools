@@ -850,55 +850,264 @@ function openNewProduct() {
   };
 }
 
-function openImportProducts() {
-  const WRITABLE_KEYS = new Set([
-    "name",
-    "category",
-    "series",
-    "grade",
-    "cost_price",
-    "sale_price",
-    "purchase_link",
-  ]);
-  const impKeys = PRODUCT_FIELDS.filter(
-    (f) => f.key !== "code" && visList.has(f.key) && WRITABLE_KEYS.has(f.key),
-  );
-  const impCols = ["编号"].concat(impKeys.map((f) => f.label));
-  const impSamples = {
-    name: "铜合金锆石手链四叶花",
-    category: "手链",
-    series: "C类",
-    grade: "2",
-    cost_price: "12",
-    sale_price: "",
-    purchase_link: "",
+// 「导入/导出」合并下拉：点按钮出菜单，两项分别开导入/导出弹窗
+function openIoMenu() {
+  const old = document.getElementById("ioMenu");
+  if (old) {
+    if (old._ioClose) {
+      old._ioClose();
+    }
+    return;
+  }
+  const btn = $("ioBtn");
+  const r = btn.getBoundingClientRect();
+  const menu = document.createElement("div");
+  menu.id = "ioMenu";
+  menu.style.cssText =
+    "position:fixed;z-index:70;background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:4px;padding:4px 0;min-width:150px;box-shadow:0 2px 8px rgba(0,0,0,.3)";
+  menu.innerHTML =
+    `<div class="ctx-item" data-io="import">📥 导入商品</div>` +
+    `<div class="ctx-item" data-io="export">📤 导出Excel</div>`;
+  menu.style.left = Math.min(r.left, window.innerWidth - 160) + "px";
+  menu.style.top = r.bottom + 4 + "px";
+  document.body.appendChild(menu);
+  const close = () => {
+    menu.remove();
+    window.removeEventListener("mousedown", onDown);
+    window.removeEventListener("keydown", onKey);
   };
-  const placeholder =
-    "L001\t" + impKeys.map((f) => impSamples[f.key] ?? "").join("\t");
+  menu._ioClose = close;
+  const onDown = (ev) => {
+    if (!menu.contains(ev.target) && ev.target !== btn) {
+      close();
+    }
+  };
+  const onKey = (ev) => {
+    if (ev.key === "Escape") {
+      close();
+    }
+  };
+  window.addEventListener("mousedown", onDown);
+  window.addEventListener("keydown", onKey);
+  menu.addEventListener("click", () => close());
+  menu.querySelector('[data-io="import"]').onclick = openImportProducts;
+  menu.querySelector('[data-io="export"]').onclick = openExportProducts;
+}
+
+// 可导入字段（编号固定第 1 列）：与后端 IMPORTABLE_FIELD_ORDER 保持一致
+const IMPORT_WRITABLE_KEYS = [
+  "name",
+  "category",
+  "series",
+  "grade",
+  "cost_price",
+  "sale_price",
+  "status",
+  "purchase_link",
+];
+const IMPORT_SAMPLES = {
+  name: "铜合金锆石手链四叶花",
+  category: "手链",
+  series: "C类",
+  grade: "2",
+  cost_price: "12",
+  sale_price: "",
+  status: "在售",
+  purchase_link: "",
+};
+
+function savedFieldSet(settingKey) {
+  const s = new Set();
+  try {
+    const arr = JSON.parse(state.settings[settingKey] || "[]");
+    if (Array.isArray(arr)) {
+      arr.forEach((k) => s.add(String(k)));
+    }
+  } catch {
+    /* 忽略 */
+  }
+  return s;
+}
+
+function openImportProducts() {
+  let sel = savedFieldSet("import_fields");
+  if (sel.size === 0) {
+    // 兜底：当前「字段显示」勾出的可写列
+    PRODUCT_FIELDS.forEach((f) => {
+      if (IMPORT_WRITABLE_KEYS.includes(f.key) && visList.has(f.key)) {
+        sel.add(f.key);
+      }
+    });
+  }
+  let mode =
+    state.settings.import_mode === "add" || state.settings.import_mode === "update"
+      ? state.settings.import_mode
+      : "both";
+  const impKeys = () =>
+    PRODUCT_FIELDS.filter(
+      (f) => f.key !== "code" && IMPORT_WRITABLE_KEYS.includes(f.key) && sel.has(f.key),
+    );
+  const hiHint = {
+    both: "符合的行：已有编号＝更新，新编号＝新建；",
+    add: "只新增：已有编号的行跳过（不更新）；",
+    update: "只修改：不存在的编号跳过（不新建）；",
+  };
   const mask = showModal(`
-        <h3>📥 导入商品</h3>
-        <p class="muted">
-          每行一个商品，列顺序＝当前「字段显示」勾出的可写列（编号永远是第 1 列）：<br />
-          <b>${impCols.join("、")}</b><br />
-          · 分隔：Tab / 空格 / 逗号；只贴「编号」也能建（其余走默认）<br />
-          · 名称里不要带空格（空格按列分隔）<br />
-          · 库存、销量、状态是自动统计列，不用填、也不导入<br />
-          · 已有编号：覆盖更新（只更新这行列里填了的列，没填的不动；库存/销量/状态仍不导入）
-        </p>
-        <textarea id="ipText" placeholder="示例：
-${placeholder}"></textarea>
-        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-          <button id="ipCancel">取消</button>
-          <button id="ipDo" class="btn-teal">导入</button>
-        </div>`);
+    <h3>📥 导入商品</h3>
+    <div style="margin-bottom:8px">
+      <div class="muted" style="margin-bottom:4px">导入方式</div>
+      <label style="margin-right:10px"><input type="radio" name="ipMode" value="both" ${mode === "both" ? "checked" : ""} />新增＋修改</label>
+      <label style="margin-right:10px"><input type="radio" name="ipMode" value="add" ${mode === "add" ? "checked" : ""} />只新增</label>
+      <label><input type="radio" name="ipMode" value="update" ${mode === "update" ? "checked" : ""} />只修改</label>
+    </div>
+    <div style="margin-bottom:8px">
+      <div class="muted" style="margin-bottom:4px">导入字段（编号固定第 1 列，其余按勾选、顺序固定）</div>
+      <div style="margin-bottom:4px">
+        <button class="mini-btn" id="ipAll">全选</button>
+        <button class="mini-btn" id="ipNone">不选</button>
+      </div>
+      <div class="form-grid">
+        <label>编号</label><input type="checkbox" data-ip-k="code" checked disabled />
+        ${PRODUCT_FIELDS.filter((f) => IMPORT_WRITABLE_KEYS.includes(f.key))
+          .map(
+            (f) =>
+              `<label>${f.label}</label><input type="checkbox" data-ip-k="${f.key}" ${sel.has(f.key) ? "checked" : ""} />`,
+          )
+          .join("")}
+      </div>
+    </div>
+    <p class="muted" id="ipColDesc"></p>
+    <p class="muted" id="ipModeHint"></p>
+    <textarea id="ipText"></textarea>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button id="ipCancel">取消</button>
+      <button id="ipDo" class="btn-teal">导入</button>
+    </div>`);
+  const renderIp = () => {
+    const cols = ["编号"].concat(impKeys().map((f) => f.label));
+    $("ipColDesc").innerHTML = `列顺序＝<b>${cols.join("、")}</b><br />` +
+      "· 分隔：Tab / 空格 / 逗号；名称里不要带空格（空格按列分隔）<br />" +
+      "· 库存、销量、状态(在售/已下架)只在“状态”列可导入，其他派生列不导入" +
+      (cols.length <= 2 ? "<br />· 只贴编号也能建（其余走默认）" : "");
+    $("ipModeHint").textContent = hiHint[mode] || "";
+    $("ipText").placeholder =
+      "示例：\n" +
+      "L001\t" +
+      impKeys().map((f) => IMPORT_SAMPLES[f.key] ?? "").join("\t");
+  };
+  renderIp();
+  mask.querySelectorAll('input[name="ipMode"]').forEach((rb) => {
+    rb.onchange = () => {
+      mode = rb.value;
+      renderIp();
+    };
+  });
+  mask.querySelectorAll('[data-ip-k]').forEach((cb) => {
+    cb.onchange = () => {
+      if (cb.disabled || cb.dataset.ipK === "code") {
+        return;
+      }
+      cb.checked ? sel.add(cb.dataset.ipK) : sel.delete(cb.dataset.ipK);
+      renderIp();
+    };
+  });
+  $("ipAll").onclick = () => {
+    IMPORT_WRITABLE_KEYS.forEach((k) => sel.add(k));
+    mask.querySelectorAll("[data-ip-k]").forEach((cb) => {
+      if (!cb.disabled) {
+        cb.checked = sel.has(cb.dataset.ipK);
+      }
+    });
+    renderIp();
+  };
+  $("ipNone").onclick = () => {
+    sel.clear();
+    mask.querySelectorAll("[data-ip-k]").forEach((cb) => {
+      if (!cb.disabled) {
+        cb.checked = sel.has(cb.dataset.ipK);
+      }
+    });
+    renderIp();
+  };
   $("ipCancel").onclick = closeModal;
   $("ipDo").onclick = () => {
-    if (!$("ipText").value.trim()) {
+    const text = $("ipText").value;
+    if (!text.trim()) {
       toast("先粘贴内容");
       return;
     }
-    post({ type: "importProducts", text: $("ipText").value });
+    post({
+      type: "importProducts",
+      text,
+      mode,
+      fields: [...sel],
+    });
     closeModal();
+  };
+}
+
+function openExportProducts() {
+  const checked = new Set();
+  visList.forEach((k) => {
+    if (k !== "code" && PRODUCT_FIELDS.some((f) => f.key === k)) {
+      checked.add(k);
+    }
+  });
+  const saved = savedFieldSet("export_fields");
+  if (saved.size > 0) {
+    checked.clear();
+    saved.forEach((k) => checked.add(k));
+  }
+  checked.add("code");
+  const list = filteredProducts();
+  const mask = showModal(`
+    <h3>📤 导出商品 Excel</h3>
+    <p class="muted" style="margin-bottom:8px">范围：${list.length < state.products.length ? "当前筛选结果" : "全部商品"}（${list.length} 条）；导出列按下面勾选、顺序固定。</p>
+    <div class="form-grid">
+      ${PRODUCT_FIELDS.filter((f) => f.key !== "code")
+        .map(
+          (f) =>
+            `<label>${f.label}</label><input type="checkbox" data-io-e="${f.key}" ${checked.has(f.key) ? "checked" : ""} />`,
+        )
+        .join("")}
+      <label>编号</label><input type="checkbox" data-io-e="code" checked disabled />
+    </div>
+    <p class="muted" id="eoColDesc"></p>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button id="eoCancel">取消</button>
+      <button id="eoDo" class="btn-teal">导出</button>
+    </div>`);
+  const renderEo = () => {
+    const cols = PRODUCT_FIELDS.filter((f) => f.key !== "code" && checked.has(f.key))
+      .map((f) => f.label)
+      .concat("编号");
+    $("eoColDesc").innerHTML = `导出列（顺序固定）＝<b>${cols.join("、")}</b>`;
+  };
+  renderEo();
+  mask.querySelectorAll('[data-io-e]').forEach((cb) => {
+    cb.onchange = () => {
+      if (cb.disabled || cb.dataset.ioE === "code") {
+        return;
+      }
+      cb.checked ? checked.add(cb.dataset.ioE) : checked.delete(cb.dataset.ioE);
+      renderEo();
+    };
+  });
+  $("eoCancel").onclick = closeModal;
+  $("eoDo").onclick = () => {
+    if ($("eoDo").disabled) {
+      return;
+    }
+    beginExport("eoDo");
+    const fields = PRODUCT_FIELDS.map((f) => f.key).filter(
+      (k) => k !== "code" && checked.has(k),
+    );
+    post({
+      type: "exportProducts",
+      codes: list.map((x) => x.code),
+      filtered: list.length < state.products.length ? 1 : 0,
+      fields,
+    });
   };
 }
 

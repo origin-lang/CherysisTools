@@ -47,6 +47,7 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
         return;
       }
       const mode = resolveUpsertMode(msg.mode);
+      const snap = h.snapshot();
       const res = db.upsertSale({
         product_id: productId,
         date,
@@ -56,6 +57,9 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
         note: String(msg.note ?? ""),
         mode,
       });
+      if (res !== "skipped") {
+        h.pushUndo(snap, `录入销售 ${p.code} 卖${sold}退${refund}`);
+      }
       log(
         res === "created"
           ? `📝已记录 ${p.code} 卖${sold}退${refund}`
@@ -90,6 +94,7 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
       const bad: string[] = [];
       const seen = new Set<string>();
       const touchedIds = new Set<number>();
+      const snap = h.snapshot();
       for (let i = 0; i < lines.length; i++) {
         const raw = lines[i].trim();
         if (!raw) {
@@ -157,6 +162,9 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
       for (const b of bad) {
         log(`  ⚠️${b}`);
       }
+      if (created > 0 || updated > 0) {
+        h.pushUndo(snap, `粘贴销售（新增 ${created}，更新 ${updated}）`);
+      }
       post({
         type: "pasteResult",
         ok: true,
@@ -179,7 +187,9 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
         return;
       }
       await h.preOpBackup();
+      const snap = h.snapshot();
       db.deleteSales(ids);
+      h.pushUndo(snap, `删除销售记录 ${ids.length} 条`);
       log(`🗑已删除 ${ids.length} 条销售记录`);
       h.refreshSales(date);
       h.loadAll();
@@ -193,6 +203,7 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
         log("❌不支持的字段：" + field);
         return;
       }
+      const snap = h.snapshot();
       if (field === "sold_qty" || field === "refund_qty") {
         const n = Math.floor(Number(msg.value));
         if (!Number.isFinite(n) || n < 0) {
@@ -210,6 +221,10 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
         db.updateSalesField(id, "note", String(msg.value ?? ""));
         log("✏️已改备注");
       }
+      h.pushUndo(
+        snap,
+        `修改销售记录（${field === "sold_qty" ? "卖出" : field === "refund_qty" ? "退款" : "备注"}）`,
+      );
       h.refreshSales(date);
       h.loadAll();
     },

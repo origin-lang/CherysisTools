@@ -79,7 +79,11 @@
       }
       $("newProductBtn").onclick = openNewProduct;
       $("colSetBtn").onclick = openColSet;
-      $("importProductBtn").onclick = openImportProducts;
+      $("ioBtn").onclick = openIoMenu;
+      $("undoBtn").onclick = () => post({ type: "undoRequest" });
+      $("redoBtn").onclick = () => post({ type: "redoRequest" });
+      $("undoSalesBtn").onclick = () => post({ type: "undoRequest" });
+      $("redoSalesBtn").onclick = () => post({ type: "redoRequest" });
       $("filterStatus").onchange = () => {
         const v = $("filterStatus").value;
         if (v) {
@@ -221,19 +225,6 @@
         });
       };
       $("pasteArea").value = "";
-      $("exportProductBtn").onclick = () => {
-        const list = filteredProducts();
-        if (!list.length) {
-          toast("没有可导出的商品");
-          return;
-        }
-        beginExport("exportProductBtn");
-        post({
-          type: "exportProducts",
-          codes: list.map((x) => x.code),
-          filtered: list.length < state.products.length ? 1 : 0,
-        });
-      };
       $("salesFrom").value = monthNow() + "-01";
       $("salesTo").value = nowStr();
       $("exportSalesBtn").onclick = () => {
@@ -526,8 +517,16 @@
         }
         case "productsImported": {
           $("pasteHint").textContent = "";
-          toast(`商品导入完成：新增${msg.created}，更新${msg.updated}${msg.skipped ? `，无变更${msg.skipped}` : ""}`);
+          toast(`商品导入完成：新增${msg.created}，更新${msg.updated}${msg.skipped ? `，跳过${msg.skipped}` : ""}`);
           maybeShowOnboard();
+          break;
+        }
+        case "undoState": {
+          applyUndoState(msg.undoAvailable, msg.redoAvailable);
+          // 撤销/重做做了整库恢复：若销售页看的是别的日期，重载当前日期
+          if (msg.restored && state.salesDate) {
+            post({ type: "loadSales", date: state.salesDate || nowStr() });
+          }
           break;
         }
         case "settlesLoaded": {
@@ -589,6 +588,9 @@
         case "exportDone": {
           endExport();
           const kind = String(msg.kind || "");
+          if (kind === "products") {
+            closeModal();
+          }
           const count = Number(msg.count || 0);
           const path = String(msg.path || "");
           const labels = { products: "商品", sales: "销售流水", settles: "月度结算", live: "排品清单" };

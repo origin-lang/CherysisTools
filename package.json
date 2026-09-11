@@ -3,7 +3,7 @@
   "displayName": "Cherysis",
   "publisher": "Faye",
   "description": "small tools",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "icon": "images/logo.png",
   "engines": {
     "vscode": "^1.80.0"

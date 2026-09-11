@@ -1,5 +1,5 @@
 import { ToolContext } from "../../../core/toolContext.js";
-import { ShopDB } from "../db.js";
+import { ShopDB, ShopDBSnapshot } from "../db.js";
 
 export type Handler = (msg: any, h: HandlerCtx) => Promise<void> | void;
 
@@ -24,4 +24,10 @@ export interface HandlerCtx {
   postStockIns: () => void;
   postLiveState: () => void;
   preOpBackup: () => Promise<void>;
+  /** 抓取当前整库快照（改动「之前」的状态） */
+  snapshot: () => ShopDBSnapshot;
+  /** 改动成功后提交撤销记录（同时作废重做分支、回推按钮可用性） */
+  pushUndo: (snap: ShopDBSnapshot, desc: string) => void;
+  /** 清空撤销/重做栈（整库恢复后调用，栈里的快照对不上新库） */
+  resetUndo: () => void;
 }

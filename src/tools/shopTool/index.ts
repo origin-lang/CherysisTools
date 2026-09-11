@@ -3,8 +3,8 @@ import * as fs from "fs";
 import * as path from "path";
 import { ToolDefinition } from "../../core/toolRegistry.js";
 import { ToolContext } from "../../core/toolContext.js";
-import { getDB, initDB, ShopDB } from "./db.js";
-import { canonicalCode, fileStamp } from "./pricing.js";
+import { getDB, initDB, ShopDB, ShopDBSnapshot } from "./db.js";
+import { canonicalCode, fileStamp, todayStr } from "./pricing.js";
 import { coverThumbCachePaths } from "./images.js";
 import { Handler, HandlerCtx } from "./handlers/types.js";
 import { productHandlers } from "./handlers/product.js";
@@ -127,6 +127,12 @@ async function preOpBackup(storageDir: string, defaultStorageDir: string, log: (
 // 老数据迁移：历史录入的是去前导零的编码（L76），新规范统一 3 位补零（L076）。
 // 首次消息处理时把 products.code 补零，并把图片目录里对应文件夹改名为新编码。
 let codeMigrated = false;
+
+// 撤销/重做快照栈（仅内存，面板重开/网页重载即清）：每条 = 某次改动「之前」的整库快照 + 动作描述
+const UNDO_LIMIT = 20;
+const REDO_LIMIT = 20;
+const undoStack: Array<{ snap: ShopDBSnapshot; desc: string }> = [];
+const redoStack: Array<{ snap: ShopDBSnapshot; desc: string }> = [];
 
 export const shopTool: ToolDefinition = {
   toolName: "shopTool",
@@ -273,6 +279,33 @@ export const shopTool: ToolDefinition = {
       });
     };
 
+    // 撤销/重做可用性回推（前端据此控制按钮灰显）
+    const postUndoState = (restored = false) => {
+      ctx.postToWebview({
+        type: "undoState",
+        undoAvailable: undoStack.length > 0,
+        redoAvailable: redoStack.length > 0,
+        restored,
+      });
+    };
+
+    // 改动成功后推进撤销栈（失败的路由到 handleMessage 顶部统一报错，不污染栈）
+    const pushUndo = (snap: ShopDBSnapshot, desc: string) => {
+      undoStack.push({ snap, desc });
+      if (undoStack.length > UNDO_LIMIT) {
+        undoStack.shift();
+      }
+      // 产生新改动即作废重做分支
+      redoStack.length = 0;
+      postUndoState();
+    };
+
+    const refreshAfterRestore = () => {
+      h.loadAll();
+      h.refreshSales(todayStr());
+      h.postStockIns();
+    };
+
     const loadAll = () => {
       ctx.postToWebview({
         type: "productsLoaded",
@@ -288,10 +321,14 @@ export const shopTool: ToolDefinition = {
           stock_alert: stockAlert(),
           col_visible_list: getSetting("col_visible_list"),
           col_visible_gallery: getSetting("col_visible_gallery"),
+          import_fields: getSetting("import_fields"),
+          import_mode: getSetting("import_mode"),
+          export_fields: getSetting("export_fields"),
         },
       });
       ctx.postToWebview({ type: "settlesLoaded", settles: state.current.getSettleMonths() });
       postLiveState();
+      postUndoState();
     };
 
     const postProductsDelta = (ids: number[], removed: number[] = []) => {
@@ -333,6 +370,13 @@ export const shopTool: ToolDefinition = {
         }),
       postLiveState,
       preOpBackup: () => preOpBackup(ctx.storageDir, ctx.defaultStorageDir, log),
+      snapshot: () => state.current.snapshotAll(),
+      pushUndo,
+      resetUndo: () => {
+        undoStack.length = 0;
+        redoStack.length = 0;
+        postUndoState();
+      },
     };
 
     // 表驱动分发：单一入口，按消息类型路由到对应域的 handler。
@@ -344,6 +388,53 @@ export const shopTool: ToolDefinition = {
       ...settleHandlers(h),
       ...liveHandlers(h),
       ...impexpHandlers(h),
+
+      // ===== 撤销 / 重做 =====
+      undoRequest() {
+        const item = undoStack.pop();
+        if (!item) {
+          log("⚠没有可撤销的操作");
+          postUndoState();
+          return;
+        }
+        try {
+          // 把当前状态压入重做栈，之后可「重做」抵销这次撤销
+          redoStack.push({ snap: state.current.snapshotAll(), desc: item.desc });
+          if (redoStack.length > REDO_LIMIT) {
+            redoStack.shift();
+          }
+          state.current.restoreAll(item.snap);
+          log(`↩ 已撤销：${item.desc}`);
+        } catch (err: any) {
+          undoStack.push(item);
+          log(`❌撤销失败：${err.message}`);
+        }
+        refreshAfterRestore();
+        postUndoState(true);
+      },
+
+      redoRequest() {
+        const item = redoStack.pop();
+        if (!item) {
+          log("⚠没有可重做的操作");
+          postUndoState();
+          return;
+        }
+        try {
+          // 重新执行后，当前状态也压入撤销栈，可再「撤销」回退到这里
+          undoStack.push({ snap: state.current.snapshotAll(), desc: item.desc });
+          if (undoStack.length > UNDO_LIMIT) {
+            undoStack.shift();
+          }
+          state.current.restoreAll(item.snap);
+          log(`↪ 已重做：${item.desc}`);
+        } catch (err: any) {
+          redoStack.push(item);
+          log(`❌重做失败：${err.message}`);
+        }
+        refreshAfterRestore();
+        postUndoState(true);
+      },
     };
     const fn = handlers[msg.type];
     if (!fn) {

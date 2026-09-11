@@ -21,7 +21,7 @@ vsc-extension-quickstart.md
 **/eslint.config.mjs
 **/*.map
 **/.vscode-test.*
-
+testData/**
 # 排除ts源码，但保留webview静态html资源
 src/**/*.ts
 src/test/**

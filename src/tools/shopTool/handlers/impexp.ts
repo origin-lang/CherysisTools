@@ -32,14 +32,24 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
         const gradeLabel = new Map(
           db.getRules().map((r) => [String(r.grade), r.label || `等级${r.grade}`]),
         );
-        let rawVis: unknown;
-        try {
-          rawVis = JSON.parse(String(h.getSetting("col_visible_list") || "[]"));
-        } catch {
-          rawVis = [];
+        let cols: Array<{ key: string; label: string }>;
+        const want =
+          Array.isArray(msg.fields) && msg.fields.length
+            ? new Set<string>(msg.fields.map(String))
+            : null;
+        if (want) {
+          cols = PRODUCT_FIELD_ORDER.filter((f) => want.has(f.key));
+          db.setSetting("export_fields", JSON.stringify(cols.map((c) => c.key)));
+        } else {
+          let rawVis: unknown;
+          try {
+            rawVis = JSON.parse(String(h.getSetting("col_visible_list") || "[]"));
+          } catch {
+            rawVis = [];
+          }
+          const vis = new Set<string>(Array.isArray(rawVis) ? (rawVis as string[]) : []);
+          cols = PRODUCT_FIELD_ORDER.filter((f) => vis.has(f.key));
         }
-        const vis = new Set<string>(Array.isArray(rawVis) ? (rawVis as string[]) : []);
-        let cols = PRODUCT_FIELD_ORDER.filter((f) => vis.has(f.key));
         if (cols.length === 0) {
           cols = [{ key: "code", label: "编号" }];
         }
@@ -239,6 +249,7 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
         await h.preOpBackup();
         db.restoreDB(fp, ctx.storageDir);
         h.setDB(getDB());
+        h.resetUndo();
         log("✅数据库已恢复，数据已替换为所选备份");
         post({ type: "toast", text: "数据库恢复完成" });
         h.loadAll();
@@ -248,6 +259,7 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
         post({ type: "toast", text: `恢复失败：${err.message}` });
         try {
           h.setDB(getDB());
+          h.resetUndo();
           h.loadAll();
         } catch {
           /* 忽略 */
