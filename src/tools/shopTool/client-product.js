@@ -301,6 +301,7 @@ function renderList(list) {
         const f = vis[i];
         let v = "";
         let cls = "";
+        let tip = "";
         const editable = EDITABLE_FIELDS.has(f.key) ? 'data-edit="1"' : "";
         switch (f.key) {
           case "code":
@@ -349,10 +350,13 @@ function renderList(list) {
             break;
           case "remark":
             v = esc(p.remark);
+            if (p.remark) {
+              tip = ` title="${esc(p.remark)}"`;
+            }
             break;
         }
         tds.push(
-          `<td class="${cls}" data-f="${f.key}" data-pid="${p.id}" ${editable}>${v}</td>`,
+          `<td class="${cls}" data-f="${f.key}" data-pid="${p.id}" ${editable}${tip}>${v}</td>`,
         );
       }
       if (imgAt >= vis.length) {
@@ -1066,10 +1070,24 @@ function openExportProducts() {
     saved.forEach((k) => checked.add(k));
   }
   checked.add("code");
+  const total = state.products.length;
   const list = filteredProducts();
+  const hasFilter = list.length < total;
+  const selCount = state.selectedProducts.size;
+  const radio = (val, label, disabled) =>
+    `<label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;cursor:${disabled ? "not-allowed" : "pointer"}"><input type="radio" name="eoScope" value="${val}" ${disabled ? "disabled" : ""}/>${label}</label>`;
+  const defaultScope = selCount > 0 ? "selected" : hasFilter ? "filtered" : "all";
   const mask = showModal(`
     <h3>📤 导出商品 Excel</h3>
-    <p class="muted" style="margin-bottom:8px">范围：${list.length < state.products.length ? "当前筛选结果" : "全部商品"}（${list.length} 条）；导出列按下面勾选、顺序固定。</p>
+    <p class="muted" style="margin-bottom:6px">导出范围：</p>
+    <div style="margin-bottom:8px">
+      ${radio("all", `全部商品（${total} 条）`)}
+      ${hasFilter ? radio("filtered", `当前筛选结果（${list.length} 条）`) : radio("filtered", "当前筛选结果", true)}
+      ${selCount > 0 ? radio("selected", `勾选的 ${selCount} 个`) : ""}
+      ${radio("manual", "指定编号")}
+    </div>
+    <textarea id="eoCodes" placeholder="示例：L001，L002  L003、L005；逗号/空格/Tab/换行分隔，编号可省略 L（如 7）" style="display:none;width:100%;box-sizing:border-box;min-height:72px;margin-bottom:6px"></textarea>
+    <p class="muted" id="eoScopeDesc" style="margin-bottom:8px"></p>
     <div class="io-chips">
       <label class="io-chip" title="编号固定第 1 列"><input type="checkbox" data-io-e="code" checked disabled />编号</label>
       ${PRODUCT_FIELDS.filter((f) => f.key !== "code")
@@ -1084,27 +1102,98 @@ function openExportProducts() {
       <button id="eoCancel">取消</button>
       <button id="eoDo" class="btn-teal">导出</button>
     </div>`);
+  const scopeLabels = {
+    all: `全部商品（${total} 条）`,
+    filtered: `当前筛选结果（${list.length} 条）`,
+    selected: `勾选的 ${selCount} 个`,
+    manual: "指定编号",
+  };
+  const matchedByCode = new Map(state.products.map((p) => [p.code, p]));
   const renderEo = () => {
+    const scope = [...mask.querySelectorAll('input[name="eoScope"]')].find(
+      (r) => r.checked,
+    );
+    const scopeVal = scope ? scope.value : defaultScope;
+    const isManual = scopeVal === "manual";
+    $("eoCodes").style.display = isManual ? "" : "none";
+    if (isManual) {
+      const codes = parseEoCodes($("eoCodes").value);
+      const valid = codes.filter((c) => matchedByCode.has(c));
+      const uniq = [...new Set(valid)];
+      $("eoScopeDesc").textContent =
+        `识别 ${codes.length} 个编号 → 匹配到 ${uniq.length} 条商品` +
+        (codes.length - valid.length > 0
+          ? `（${codes.length - valid.length} 个不存在或未识别）`
+          : "");
+    } else {
+      $("eoScopeDesc").textContent =
+        scopeLabels[scopeVal] === undefined ? "" : `范围：${scopeLabels[scopeVal]}`;
+    }
+    renderEoCols();
+  };
+  const renderEoCols = () => {
     const cols = ["编号"].concat(
       PRODUCT_FIELDS.filter((f) => f.key !== "code" && checked.has(f.key)).map(
         (f) => f.label,
       ),
     );
-    $("eoColDesc").innerHTML = `导出列（顺序固定）＝<b>${cols.join("、")}</b>`;
+    $("eoColDesc").textContent = `导出列（顺序固定）＝${cols.join("、")}`;
   };
-  renderEo();
+  const parseEoCodes = (raw) =>
+    String(raw || "")
+      .split(/[\s,\t，、]/)
+      .map((s) => canonicalCode(s))
+      .filter(Boolean);
+  const setScope = (val) => {
+    mask.querySelectorAll('input[name="eoScope"]').forEach((r) => {
+      r.checked = r.value === val;
+    });
+    renderEo();
+  };
+  mask.querySelectorAll('input[name="eoScope"]').forEach((r) => {
+    r.onchange = () => renderEo();
+  });
+  $("eoCodes").oninput = () => renderEo();
+  setScope(defaultScope);
+  renderEoCols();
   mask.querySelectorAll('[data-io-e]').forEach((cb) => {
     cb.onchange = () => {
       if (cb.disabled || cb.dataset.ioE === "code") {
         return;
       }
       cb.checked ? checked.add(cb.dataset.ioE) : checked.delete(cb.dataset.ioE);
-      renderEo();
+      renderEoCols();
     };
   });
   $("eoCancel").onclick = closeModal;
   $("eoDo").onclick = () => {
     if ($("eoDo").disabled) {
+      return;
+    }
+    const scopeVal = (
+      [...mask.querySelectorAll('input[name="eoScope"]')].find((r) => r.checked) ||
+      {}
+    ).value;
+    let codes;
+    if (scopeVal === "filtered") {
+      codes = list.map((x) => x.code);
+    } else if (scopeVal === "selected") {
+      codes = state.products
+        .filter((p) => state.selectedProducts.has(p.id))
+        .map((x) => x.code);
+    } else if (scopeVal === "manual") {
+      const uniq = [...new Set(parseEoCodes($("eoCodes").value))];
+      const valid = uniq.filter((c) => matchedByCode.has(c));
+      if (valid.length === 0) {
+        toast("没有匹配到任何编号，请检查输入");
+        return;
+      }
+      codes = valid;
+    } else {
+      codes = state.products.map((x) => x.code);
+    }
+    if (!codes.length) {
+      toast("没有可导出的商品");
       return;
     }
     beginExport("eoDo");
@@ -1113,8 +1202,8 @@ function openExportProducts() {
     );
     post({
       type: "exportProducts",
-      codes: list.map((x) => x.code),
-      filtered: list.length < state.products.length ? 1 : 0,
+      codes,
+      filtered: codes.length < state.products.length ? 1 : 0,
       fields,
     });
   };
