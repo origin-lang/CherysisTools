@@ -122,7 +122,6 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
           displayCols.forEach((_, i) => {
             ws.getColumn(i + 1).width = i === imgColIdx ? 16 : 13;
           });
-          const codeColIdx = displayCols.findIndex((c) => c.key === "code");
           for (let i = 0; i < list.length; i++) {
             const p = list[i];
             const rowIndex = i + 2;
@@ -130,10 +129,7 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
               if (displayCols[c].key !== "_image") {
                 const cell = ws.getCell(rowIndex, c + 1);
                 cell.value = valOf(p, displayCols[c].key);
-                cell.alignment =
-                  c === codeColIdx
-                    ? { horizontal: "center", vertical: "middle" }
-                    : { vertical: "middle" };
+                cell.alignment = { vertical: "middle" };
               }
             }
             const fp = firstImageFile(imageDir, p.code);
