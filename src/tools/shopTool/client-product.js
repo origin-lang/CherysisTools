@@ -26,7 +26,7 @@ function cellValue(p, key) {
 }
 
 var selCell = null; // { pid, field } 列表视图当前选中的单元格
-var appClipboard = null; // { value, cut } 单元格剪贴板；cut 为源格 {pid, field} | null
+var appClipboard = null; // { value } 内部单元格剪贴板内容 | null
 
 const TEXT_FILTER_FIELDS = new Set([
   "code",
@@ -67,27 +67,55 @@ function selectListCell(pid, field) {
   syncListCellState();
 }
 
+function copyCell(p, field) {
+  const value = field ? cellValue(p, field) : "";
+  copyText(value, "已复制该格 ✅");
+  appClipboard = value;
+}
+
+function cutCell(p, field) {
+  const value = field ? cellValue(p, field) : "";
+  copyText(value);
+  appClipboard = value;
+  const r = saveFieldValue(p.id, field, "");
+  toast(r === false ? "已复制，但源格清空失败" : `已剪切并清空源格 ✅`);
+  if (selCell && selCell.pid === p.id && selCell.field === field) {
+    selectListCell(p.id, field);
+  }
+}
+
+function pasteCell(pid, field) {
+  const doPaste = (val) => {
+    const v = String(val ?? "").trim();
+    if (!v) {
+      toast("剪贴板无内容");
+      return;
+    }
+    saveFieldValue(pid, field, v);
+    syncListCellState();
+  };
+  if (appClipboard) {
+    doPaste(appClipboard);
+  } else if (navigator.clipboard && navigator.clipboard.readText) {
+    navigator.clipboard
+      .readText()
+      .then(doPaste)
+      .catch(() => toast("无法读取系统剪贴板"));
+  } else {
+    toast("剪贴板为空：请先右击「复制」或「剪切」");
+  }
+}
+
 function syncListCellState() {
   document
     .querySelectorAll("#productListView td.cell-selected")
     .forEach((el) => el.classList.remove("cell-selected"));
-  document
-    .querySelectorAll("#productListView td.cell-cut")
-    .forEach((el) => el.classList.remove("cell-cut"));
   if (selCell) {
     const td = document.querySelector(
       `#productListView td[data-pid="${selCell.pid}"][data-f="${selCell.field}"]`,
     );
     if (td) {
       td.classList.add("cell-selected");
-    }
-  }
-  if (appClipboard && appClipboard.cut) {
-    const td = document.querySelector(
-      `#productListView td[data-pid="${appClipboard.cut.pid}"][data-f="${appClipboard.cut.field}"]`,
-    );
-    if (td) {
-      td.classList.add("cell-cut");
     }
   }
 }
@@ -480,7 +508,7 @@ function renderList(list) {
                <td></td>
                ${filterCells.join("")}
              </tr></thead><tbody>${body}</tbody></table></div>
-             <div class="muted" style="margin-top:4px">表头下小框可筛选对应列；单击单元格框选、右键可剪切/复制/粘贴；双击单元格编辑（回车或点击别处即保存）；右键行可复制整行/删除整行</div>`;
+             <div class="muted" style="margin-top:4px">表头下小框可筛选对应列；单击单元格框选，Ctrl+C/X/V 复制/剪切/粘贴该格、Esc 取消框选；双击单元格编辑（回车或点击别处即保存）；右键可剪切/复制/粘贴、复制整行/删除整行</div>`;
   bindBatchOps();
   bindColFilters();
   syncListCellState();
@@ -1184,16 +1212,24 @@ function openExportProducts() {
       ${radio("manual", "指定编号")}
     </div>
     <textarea id="eoCodes" placeholder="示例：L001，L002  L003、L005；逗号/空格/Tab/换行分隔，编号可省略 L（如 7）" style="display:none;width:100%;box-sizing:border-box;min-height:72px;margin-bottom:6px"></textarea>
+    <div id="eoBadWrap" style="display:none;max-height:88px;overflow:auto;margin-bottom:6px;padding:6px 8px;border:1px solid var(--vscode-inputValidation-warningBorder);border-radius:3px;background:var(--vscode-inputValidation-warningBackground);font-size:12px"></div>
     <p class="muted" id="eoScopeDesc" style="margin-bottom:8px"></p>
     <div class="io-chips">
-      <label class="io-chip" title="图片列：在采购链接前插入每行首张图"><input type="checkbox" data-io-e="_image" ${checked.has("_image") ? "checked" : ""} />图片</label>
-      <label class="io-chip" title="编号固定第 1 列"><input type="checkbox" data-io-e="code" checked disabled />编号</label>
-      ${PRODUCT_FIELDS.filter((f) => f.key !== "code")
-        .map(
-          (f) =>
-            `<label class="io-chip"><input type="checkbox" data-io-e="${f.key}" ${checked.has(f.key) ? "checked" : ""} />${f.label}</label>`,
-        )
-        .join("")}
+      ${(() => {
+        const chip = (key, label, title, on, disabled) =>
+          `<label class="io-chip" title="${esc(title)}"><input type="checkbox" data-io-e="${key}" ${on ? "checked" : ""} ${disabled ? "disabled" : ""} />${label}</label>`;
+        const parts = [chip("code", "编号", "编号固定第 1 列", true, true)];
+        for (const f of PRODUCT_FIELDS) {
+          if (f.key === "code") {
+            continue;
+          }
+          if (f.key === "purchase_link") {
+            parts.push(chip("_image", "图片", "图片列：在采购链接前插入每行首张图", checked.has("_image"), false));
+          }
+          parts.push(chip(f.key, f.label, "", checked.has(f.key), false));
+        }
+        return parts.join("");
+      })()}
     </div>
     <p class="muted" id="eoColDesc"></p>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
@@ -1215,14 +1251,23 @@ function openExportProducts() {
     const isManual = scopeVal === "manual";
     $("eoCodes").style.display = isManual ? "" : "none";
     if (isManual) {
-      const codes = parseEoCodes($("eoCodes").value);
-      const valid = codes.filter((c) => matchedByCode.has(c));
+      const { valid, bad } = parseEoCodes($("eoCodes").value);
       const uniq = [...new Set(valid)];
+      const matched = uniq.filter((c) => matchedByCode.has(c));
+      const missing = uniq.filter((c) => !matchedByCode.has(c));
+      const badUniq = [...new Set(bad)];
       $("eoScopeDesc").textContent =
-        `识别 ${codes.length} 个编号 → 匹配到 ${uniq.length} 条商品` +
-        (codes.length - valid.length > 0
-          ? `（${codes.length - valid.length} 个不存在或未识别）`
-          : "");
+        `识别 ${valid.length} 个编号 → 匹配到 ${matched.length} 条商品`;
+      const lines = [];
+      if (badUniq.length) {
+        lines.push(`无法解析 ${badUniq.length} 个：${badUniq.join("、")}`);
+      }
+      if (missing.length) {
+        lines.push(`不存在 ${missing.length} 个：${missing.join("、")}`);
+      }
+      const wrap = $("eoBadWrap");
+      wrap.style.display = lines.length ? "" : "none";
+      wrap.innerHTML = lines.map((l) => esc(l)).join("<br>");
     } else {
       $("eoScopeDesc").textContent =
         scopeLabels[scopeVal] === undefined ? "" : `范围：${scopeLabels[scopeVal]}`;
@@ -1230,21 +1275,50 @@ function openExportProducts() {
     renderEoCols();
   };
   const renderEoCols = () => {
+    const imgOn = checked.has("_image");
+    const linkOn = checked.has("purchase_link");
     const cols = [];
-    if (checked.has("_image")) {
+    for (const f of PRODUCT_FIELDS) {
+      if (f.key === "code") {
+        continue;
+      }
+      if (f.key === "purchase_link") {
+        if (imgOn) {
+          cols.push("图片");
+        }
+        if (linkOn) {
+          cols.push(f.label);
+        }
+        continue;
+      }
+      if (checked.has(f.key)) {
+        cols.push(f.label);
+      }
+    }
+    if (imgOn && !linkOn) {
       cols.push("图片");
     }
-    cols.push("编号");
-    PRODUCT_FIELDS.filter((f) => f.key !== "code" && checked.has(f.key)).forEach(
-      (f) => cols.push(f.label),
-    );
-    $("eoColDesc").textContent = `导出列（顺序固定）＝${cols.join("、")}`;
+    $("eoColDesc").textContent = `导出列（顺序固定）＝编号、${cols.join("、")}`;
   };
-  const parseEoCodes = (raw) =>
+  const parseEoCodes = (raw) => {
+    const valid = [];
+    const bad = [];
     String(raw || "")
       .split(/[\s,\t，、]/)
-      .map((s) => canonicalCode(s))
-      .filter(Boolean);
+      .forEach((s) => {
+        const t = String(s || "").trim();
+        if (!t) {
+          return;
+        }
+        const c = canonicalCode(t);
+        if (c) {
+          valid.push(c);
+        } else {
+          bad.push(t);
+        }
+      });
+    return { valid, bad };
+  };
   const setScope = (val) => {
     mask.querySelectorAll('input[name="eoScope"]').forEach((r) => {
       r.checked = r.value === val;
@@ -1283,13 +1357,13 @@ function openExportProducts() {
         .filter((p) => state.selectedProducts.has(p.id))
         .map((x) => x.code);
     } else if (scopeVal === "manual") {
-      const uniq = [...new Set(parseEoCodes($("eoCodes").value))];
-      const valid = uniq.filter((c) => matchedByCode.has(c));
-      if (valid.length === 0) {
+      const { valid } = parseEoCodes($("eoCodes").value);
+      const validCodes = [...new Set(valid)].filter((c) => matchedByCode.has(c));
+      if (validCodes.length === 0) {
         toast("没有匹配到任何编号，请检查输入");
         return;
       }
-      codes = valid;
+      codes = validCodes;
     } else {
       codes = state.products.map((x) => x.code);
     }
@@ -1422,14 +1496,15 @@ function openContextMenu(e, p, field) {
   const menu = document.createElement("div");
   menu.id = "ctxMenu";
   menu.style.cssText =
-    "position:fixed;z-index:70;background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:4px;padding:4px 0;min-width:130px;box-shadow:0 2px 8px rgba(0,0,0,.3)";
+    "position:fixed;z-index:70;background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:4px;padding:4px 0;min-width:150px;box-shadow:0 2px 8px rgba(0,0,0,.3)";
   const editable = EDITABLE_FIELDS.has(field);
   const canPaste = !!appClipboard || !!(navigator.clipboard && navigator.clipboard.readText);
   menu.innerHTML =
-    `<div class="ctx-item${editable ? "" : " ctx-disabled"}" data-cellop="cut">✂ 剪切</div>` +
-    `<div class="ctx-item" data-cellop="copy">📋 复制</div>` +
-    `<div class="ctx-item${canPaste && editable ? "" : " ctx-disabled"}" data-cellop="paste">📥 粘贴</div>` +
-    `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
+    `<div class="ctx-cellops">` +
+    `<div class="ctx-cellop" data-cellop="copy" title="复制该格 (Ctrl+C)"><span class="cop-icon">📋</span><span>复制</span></div>` +
+    `<div class="ctx-cellop${canPaste && editable ? "" : " ctx-disabled"}" data-cellop="paste" title="粘贴到该格 (Ctrl+V)"><span class="cop-icon">📥</span><span>粘贴</span></div>` +
+    `<div class="ctx-cellop${editable ? "" : " ctx-disabled"}" data-cellop="cut" title="剪切该格并立即清空 (Ctrl+X)"><span class="cop-icon">✂</span><span>剪切</span></div>` +
+    `</div>` +
     `<div class="ctx-item" data-copy="row">复制整行</div>` +
     `<div class="ctx-item" data-copy="table">复制整表(筛选后)</div>` +
     `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
@@ -1444,54 +1519,22 @@ function openContextMenu(e, p, field) {
   document.body.appendChild(menu);
   const close = () => menu.remove();
   menu.addEventListener("click", () => close());
-  const value = field ? cellValue(p, field) : "";
   const cutBtn = menu.querySelector('[data-cellop="cut"]');
   if (cutBtn) {
     cutBtn.onclick = () => {
-      copyText(value, "该格已剪切，点「粘贴」落地 ✅");
-      appClipboard = { value, cut: { pid: p.id, field } };
-      syncListCellState();
+      cutCell(p, field);
       close();
     };
   }
   menu.querySelector('[data-cellop="copy"]').onclick = () => {
-    copyText(value, "已复制该格 ✅");
-    appClipboard = { value, cut: null };
+    copyCell(p, field);
     close();
   };
   const pasteBtn = menu.querySelector('[data-cellop="paste"]');
   if (pasteBtn) {
     pasteBtn.onclick = () => {
-      const clip = appClipboard;
-      const doPaste = (val) => {
-        const v = String(val ?? "").trim();
-        if (!v) {
-          toast("剪贴板无内容");
-          return;
-        }
-        const r = saveFieldValue(p.id, field, v);
-        if (r === false) {
-          return;
-        }
-        if (clip && clip.cut) {
-          if (clip.cut.pid !== p.id || clip.cut.field !== field) {
-            saveFieldValue(clip.cut.pid, clip.cut.field, "");
-          }
-          appClipboard = null;
-        }
-        syncListCellState();
-        close();
-      };
-      if (clip) {
-        doPaste(clip.value);
-      } else if (navigator.clipboard && navigator.clipboard.readText) {
-        navigator.clipboard
-          .readText()
-          .then(doPaste)
-          .catch(() => toast("无法读取系统剪贴板"));
-      } else {
-        toast("剪贴板为空：请先右键「剪切」或「复制」");
-      }
+      pasteCell(p.id, field);
+      close();
     };
   }
   menu.querySelector('[data-copy="row"]').onclick = () => {
