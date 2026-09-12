@@ -117,6 +117,14 @@
       $("productListView").addEventListener("contextmenu", onProductCtx);
       $("productGalleryView").addEventListener("click", onProductAct);
       $("productGalleryView").addEventListener("contextmenu", onProductCtx);
+      document.addEventListener("mousedown", (e) => {
+        if (!e.target.closest("#productListView td[data-pid]") && selCell) {
+          selCell = null;
+          document
+            .querySelectorAll(".cell-selected")
+            .forEach((el) => el.classList.remove("cell-selected"));
+        }
+      });
       $("salesTableWrap").addEventListener("click", onSalesAct);
       if ($("salesKwInput")) {
         $("salesKwInput").oninput = () => {

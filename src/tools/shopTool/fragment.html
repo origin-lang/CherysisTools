@@ -107,6 +107,23 @@
       .data-table td.cell-code {
         width: 1%;
       }
+      .data-table td.cell-selected {
+        outline: 2px solid var(--vscode-focusBorder);
+        outline-offset: -2px;
+        position: relative;
+        z-index: 1;
+      }
+      .data-table td.cell-cut {
+        opacity: 0.55;
+      }
+      .data-table td.cell-cut::after {
+        content: "";
+        position: absolute;
+        left: 2px;
+        right: 2px;
+        bottom: 2px;
+        border-bottom: 2px dashed var(--vscode-focusBorder);
+      }
       .data-table th:last-child,
       .data-table td:last-child {
         border-right: none;
@@ -474,6 +491,10 @@
       }
       .ctx-item:hover {
         background: var(--vscode-list-hoverBackground);
+      }
+      .ctx-item.ctx-disabled {
+        opacity: 0.4;
+        pointer-events: none;
       }
       .ctx-item.ctx-danger {
         color: #e0404b;

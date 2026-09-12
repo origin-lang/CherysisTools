@@ -25,6 +25,9 @@ function cellValue(p, key) {
   }
 }
 
+var selCell = null; // { pid, field } 列表视图当前选中的单元格
+var appClipboard = null; // { value, cut } 单元格剪贴板；cut 为源格 {pid, field} | null
+
 const TEXT_FILTER_FIELDS = new Set([
   "code",
   "name",
@@ -34,6 +37,60 @@ const TEXT_FILTER_FIELDS = new Set([
   "remark",
 ]);
 const RANGE_FILTER_FIELDS = new Set(["cost_price", "sale_price", "stockTotal"]);
+
+function saveFieldValue(pid, field, raw) {
+  const res = sanitizeProductField(field, raw);
+  if (!res.ok) {
+    toast(res.msg);
+    return false;
+  }
+  if (field === "stockTotal") {
+    post({ type: "setStockQty", id: pid, qty: res.value });
+  } else {
+    post({
+      type: "updateProductField",
+      id: pid,
+      field,
+      value: field === "grade" ? Number(res.value) : res.value,
+    });
+    if (res.truncated) {
+      toast("已保存（超出长度已截断）");
+      return "truncated";
+    }
+  }
+  toast("已保存");
+  return true;
+}
+
+function selectListCell(pid, field) {
+  selCell = { pid: Number(pid), field: String(field) };
+  syncListCellState();
+}
+
+function syncListCellState() {
+  document
+    .querySelectorAll("#productListView td.cell-selected")
+    .forEach((el) => el.classList.remove("cell-selected"));
+  document
+    .querySelectorAll("#productListView td.cell-cut")
+    .forEach((el) => el.classList.remove("cell-cut"));
+  if (selCell) {
+    const td = document.querySelector(
+      `#productListView td[data-pid="${selCell.pid}"][data-f="${selCell.field}"]`,
+    );
+    if (td) {
+      td.classList.add("cell-selected");
+    }
+  }
+  if (appClipboard && appClipboard.cut) {
+    const td = document.querySelector(
+      `#productListView td[data-pid="${appClipboard.cut.pid}"][data-f="${appClipboard.cut.field}"]`,
+    );
+    if (td) {
+      td.classList.add("cell-cut");
+    }
+  }
+}
 
 function filteredProducts() {
   const st = filters.f_status || "";
@@ -423,9 +480,10 @@ function renderList(list) {
                <td></td>
                ${filterCells.join("")}
              </tr></thead><tbody>${body}</tbody></table></div>
-             <div class="muted" style="margin-top:4px">表头下小框可筛选对应列；双击单元格编辑（回车或点击别处即保存）；右键行可复制/删除整行；悬浮有颜色高亮定位</div>`;
+             <div class="muted" style="margin-top:4px">表头下小框可筛选对应列；单击单元格框选、右键可剪切/复制/粘贴；双击单元格编辑（回车或点击别处即保存）；右键行可复制整行/删除整行</div>`;
   bindBatchOps();
   bindColFilters();
+  syncListCellState();
 }
 
 function splitRangeValue(raw) {
@@ -701,27 +759,14 @@ function openInlineEditor(td) {
     }
     done = true;
     if (commit) {
-      const res = sanitizeProductField(field, editor.value);
-      if (!res.ok) {
-        toast(res.msg);
+      const r = saveFieldValue(pid, field, editor.value);
+      if (r === false) {
         td.innerHTML = td.dataset.orig;
         return;
       }
-      if (field === "stockTotal") {
-        post({ type: "setStockQty", id: pid, qty: res.value });
-      } else {
-        post({
-          type: "updateProductField",
-          id: pid,
-          field,
-          value: field === "grade" ? Number(res.value) : res.value,
-        });
-        if (res.truncated) {
-          toast("已保存（超出长度已截断）");
-          return;
-        }
+      if (r === "truncated") {
+        return;
       }
-      toast("已保存");
     }
     td.innerHTML = td.dataset.orig;
     delete td.dataset.orig;
@@ -1367,7 +1412,7 @@ function openColSet() {
   };
 }
 
-function openContextMenu(e, p) {
+function openContextMenu(e, p, field) {
   e.preventDefault();
   e.stopPropagation();
   const old = document.getElementById("ctxMenu");
@@ -1378,7 +1423,13 @@ function openContextMenu(e, p) {
   menu.id = "ctxMenu";
   menu.style.cssText =
     "position:fixed;z-index:70;background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:4px;padding:4px 0;min-width:130px;box-shadow:0 2px 8px rgba(0,0,0,.3)";
+  const editable = EDITABLE_FIELDS.has(field);
+  const canPaste = !!appClipboard || !!(navigator.clipboard && navigator.clipboard.readText);
   menu.innerHTML =
+    `<div class="ctx-item${editable ? "" : " ctx-disabled"}" data-cellop="cut">✂ 剪切</div>` +
+    `<div class="ctx-item" data-cellop="copy">📋 复制</div>` +
+    `<div class="ctx-item${canPaste && editable ? "" : " ctx-disabled"}" data-cellop="paste">📥 粘贴</div>` +
+    `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
     `<div class="ctx-item" data-copy="row">复制整行</div>` +
     `<div class="ctx-item" data-copy="table">复制整表(筛选后)</div>` +
     `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
@@ -1393,6 +1444,56 @@ function openContextMenu(e, p) {
   document.body.appendChild(menu);
   const close = () => menu.remove();
   menu.addEventListener("click", () => close());
+  const value = field ? cellValue(p, field) : "";
+  const cutBtn = menu.querySelector('[data-cellop="cut"]');
+  if (cutBtn) {
+    cutBtn.onclick = () => {
+      copyText(value, "该格已剪切，点「粘贴」落地 ✅");
+      appClipboard = { value, cut: { pid: p.id, field } };
+      syncListCellState();
+      close();
+    };
+  }
+  menu.querySelector('[data-cellop="copy"]').onclick = () => {
+    copyText(value, "已复制该格 ✅");
+    appClipboard = { value, cut: null };
+    close();
+  };
+  const pasteBtn = menu.querySelector('[data-cellop="paste"]');
+  if (pasteBtn) {
+    pasteBtn.onclick = () => {
+      const clip = appClipboard;
+      const doPaste = (val) => {
+        const v = String(val ?? "").trim();
+        if (!v) {
+          toast("剪贴板无内容");
+          return;
+        }
+        const r = saveFieldValue(p.id, field, v);
+        if (r === false) {
+          return;
+        }
+        if (clip && clip.cut) {
+          if (clip.cut.pid !== p.id || clip.cut.field !== field) {
+            saveFieldValue(clip.cut.pid, clip.cut.field, "");
+          }
+          appClipboard = null;
+        }
+        syncListCellState();
+        close();
+      };
+      if (clip) {
+        doPaste(clip.value);
+      } else if (navigator.clipboard && navigator.clipboard.readText) {
+        navigator.clipboard
+          .readText()
+          .then(doPaste)
+          .catch(() => toast("无法读取系统剪贴板"));
+      } else {
+        toast("剪贴板为空：请先右键「剪切」或「复制」");
+      }
+    };
+  }
   menu.querySelector('[data-copy="row"]').onclick = () => {
     const vis = visList;
     const keys = PRODUCT_FIELDS.map((f) => f.key).filter((k) => vis.has(k));
@@ -1473,7 +1574,10 @@ function onProductCtx(e) {
   if (!p) {
     return;
   }
-  openContextMenu(e, p);
+  if (td.dataset.f) {
+    selectListCell(Number(td.dataset.pid), td.dataset.f);
+  }
+  openContextMenu(e, p, td.dataset.f);
 }
 
 function openCoverMenu(e, p) {
@@ -1494,6 +1598,13 @@ function openCoverMenu(e, p) {
 }
 
 function onProductAct(e) {
+  const cellTd = e.target.closest("td[data-pid][data-f]");
+  if (
+    cellTd &&
+    !e.target.closest("input,select,button,a,.thumb,[data-s-act],[data-p-act]")
+  ) {
+    selectListCell(Number(cellTd.dataset.pid), cellTd.dataset.f);
+  }
   const starBtn = e.target.closest("[data-s-act]");
   if (starBtn) {
     e.stopPropagation();
