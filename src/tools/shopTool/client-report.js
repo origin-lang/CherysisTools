@@ -167,6 +167,27 @@
       $("setNameTemplate").value =
         state.settings.name_template || "{name}{series}{grade}{code}";
       $("setStockAlert").value = Number(state.settings.stock_alert || 0);
+      const rh = String(state.settings.row_height || "5");
+      const rhSel = $("setRowHeight");
+      const rhCustom = $("setRowHeightCustom");
+      if (rhSel) {
+        if (["5", "8", "12", "16"].includes(rh)) {
+          rhSel.value = rh;
+          if (rhCustom) {
+            rhCustom.style.display = "none";
+          }
+        } else {
+          rhSel.value = "custom";
+          if (rhCustom) {
+            rhCustom.value = /^\d+$/.test(rh) ? rh : "12";
+            rhCustom.style.display = "";
+          }
+        }
+      }
+      const sds = $("setSalesDeductStock");
+      if (sds) {
+        sds.checked = Number(state.settings.sales_deduct_stock || 1) !== 0;
+      }
       updateNameTemplatePreview();
       $("clearFilterBtn").style.visibility = hasFilter() ? "visible" : "hidden";
     }

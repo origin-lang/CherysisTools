@@ -90,6 +90,25 @@
         max-height: calc(100vh - 300px);
         min-height: 320px;
       }
+      #tabProducts .data-table tbody tr:not(.filter-row) td {
+        padding-top: 0;
+        padding-bottom: 0;
+      }
+      #tabProducts .data-table td[data-f="name"],
+      #tabProducts .data-table td[data-f="category"],
+      #tabProducts .data-table td[data-f="series"] {
+        white-space: normal;
+      }
+      #tabProducts .data-table td[data-f="name"] .clip-cell,
+      #tabProducts .data-table td[data-f="category"] .clip-cell,
+      #tabProducts .data-table td[data-f="series"] .clip-cell {
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: var(--row-lines, 4);
+        overflow: hidden;
+        overflow-wrap: anywhere;
+        white-space: normal;
+      }
       .data-table {
         width: 100%;
         border-collapse: collapse;
@@ -108,21 +127,10 @@
         width: 1%;
       }
       .data-table td.cell-selected {
-        outline: 2px solid var(--vscode-focusBorder);
-        outline-offset: -2px;
+        outline: 1px solid var(--vscode-focusBorder);
+        outline-offset: -1px;
         position: relative;
         z-index: 1;
-      }
-      .data-table td.cell-cut {
-        opacity: 0.55;
-      }
-      .data-table td.cell-cut::after {
-        content: "";
-        position: absolute;
-        left: 2px;
-        right: 2px;
-        bottom: 2px;
-        border-bottom: 2px dashed var(--vscode-focusBorder);
       }
       .data-table th:last-child,
       .data-table td:last-child {
@@ -223,12 +231,14 @@
         color: var(--vscode-descriptionForeground);
       }
       .thumb {
-        width: 34px;
-        height: 34px;
-        object-fit: cover;
+        width: auto;
+        height: calc(var(--row-py, 5px) * 2 + 24px);
+        max-width: 140px;
+        object-fit: contain;
         border-radius: 3px;
         cursor: pointer;
         border: 1px solid var(--vscode-panel-border);
+        vertical-align: middle;
       }
       .thumb.placeholder {
         display: inline-flex;
@@ -236,6 +246,7 @@
         justify-content: center;
         font-size: 10px;
         color: var(--vscode-descriptionForeground);
+        width: calc(var(--row-py, 5px) * 2 + 24px);
       }
       .cell-link a {
         color: var(--vscode-textLink-foreground);
@@ -495,6 +506,36 @@
       .ctx-item.ctx-disabled {
         opacity: 0.4;
         pointer-events: none;
+      }
+      .ctx-cellops {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 2px;
+        padding: 0 4px 5px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        margin-bottom: 3px;
+      }
+      .ctx-cellop {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        padding: 6px 4px 4px;
+        cursor: pointer;
+        border-radius: 3px;
+        font-size: 11px;
+        user-select: none;
+      }
+      .ctx-cellop:hover {
+        background: var(--vscode-list-hoverBackground);
+      }
+      .ctx-cellop.ctx-disabled {
+        opacity: 0.4;
+        pointer-events: none;
+      }
+      .ctx-cellop .cop-icon {
+        font-size: 15px;
+        line-height: 1;
       }
       .ctx-item.ctx-danger {
         color: #e0404b;
@@ -788,6 +829,7 @@
             <button id="delSelBtn" class="mini-btn btn-danger" disabled title="删除勾选的行">删除选中</button>
           </span>
         </h4>
+        <div id="salesNoDeductTip" style="display:none;margin-bottom:8px;padding:6px 8px;border:1px solid var(--vscode-inputValidation-warningBorder);border-radius:3px;background:var(--vscode-inputValidation-warningBackground);font-size:12px">当前为「销售不扣库存」模式：登记/修改/删除销售只记账、不再调整库存，库存请用「补货入库」或「清点库存」（商品列表点库存数字）维护。</div>
         <div class="table-wrap" style="max-height: 260px" id="salesTableWrap"></div>
       </div>
       <div class="panel">
@@ -972,6 +1014,25 @@ L032,1"></textarea>
             <input id="setStockAlert" type="number" min="0" style="width: 120px" />
             <span class="muted">库存 ≤ 该值 且在售 → 标红提示补货（0 关闭）</span>
             <button id="saveStockAlertBtn">保存</button>
+          </div>
+          <label>销售自动扣库存</label>
+          <div class="rows" style="width: 100%">
+            <label style="display: flex; align-items: center; gap: 6px">
+              <input id="setSalesDeductStock" type="checkbox" />
+              <span class="muted">登记销售时自动扣减库存。关闭后销售只记账、不动库存，库存由「补货入库」「清点库存」维护（适合现实环境复杂、偶尔才盘点的情况）。</span>
+            </label>
+          </div>
+          <label>列表行高</label>
+          <div class="rows" style="width: 100%">
+            <select id="setRowHeight">
+              <option value="5">小号</option>
+              <option value="8">中号</option>
+              <option value="12">大号</option>
+              <option value="16">超大号</option>
+              <option value="custom">自定义…</option>
+            </select>
+            <input id="setRowHeightCustom" type="number" min="0" max="50" step="1" style="width: 80px; display: none" title="自定义行高 px" />
+            <span class="muted">列表图片高随行高（px）、宽按原图比例自适应不裁剪；名称/品类/系列超长折行、超上限省略号、悬浮看全文，中号 = 默认</span>
           </div>
         </div>
       </div>

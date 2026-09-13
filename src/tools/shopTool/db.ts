@@ -562,6 +562,13 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
     ),
   }));
 
+  // 「销售自动扣库存」开关：关闭（"0"）后，录入/修改/删除销售记录都不再调整 stock_manual，
+  // 库存只由补货入库与清点库存维护。缺省开启，与历史行为一致。
+  const salesDeductsStock = (): boolean => {
+    const v = String((settingGet.get("sales_deduct_stock") as any)?.value ?? "1");
+    return v !== "0";
+  };
+
   cached = {
     getProducts: loadProducts,
     getProductsWithTotals(ids?: number[]): Array<{ stockTotal: number; soldTotal: number; refundTotal: number } & Product> {
@@ -718,7 +725,9 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
           product_id: r.product_id,
         });
       }
-      stockAdjustStmt.run(d.stockDelta, r.product_id);
+      if (salesDeductsStock()) {
+        stockAdjustStmt.run(d.stockDelta, r.product_id);
+      }
       if (aggCache.loaded) {
         const t = aggCache.sale.get(r.product_id) || { sold: 0, refund: 0 };
         t.sold += d.saleDeltaSold;
@@ -739,7 +748,7 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
         const newSold = field === "sold_qty" ? Number(value) : oldSold;
         const newRefund = field === "refund_qty" ? Number(value) : oldRefund;
         salesRowUpdate.run(newSold, newRefund, id);
-        if (r.product_id !== undefined) {
+        if (r.product_id !== undefined && salesDeductsStock()) {
           stockAdjustStmt.run(net(oldSold, oldRefund) - net(newSold, newRefund), pid);
         }
         if (aggCache.loaded) {
@@ -761,7 +770,7 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
         for (const id of ids) {
           const r = saleById.get(id) as any;
           salesDel.run(id);
-          if (r) {
+          if (r && salesDeductsStock()) {
             stockAdjustStmt.run(net(Number(r.sold_qty || 0), Number(r.refund_qty || 0)), Number(r.product_id));
           }
           if (r && aggCache.loaded) {

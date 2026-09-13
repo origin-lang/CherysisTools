@@ -10,6 +10,7 @@ window.toolClients = window.toolClients || {};
         image_dir: "",
         name_template: "",
         stock_alert: 0,
+        row_height: "8",
         col_visible_list: "",
         col_visible_gallery: "",
         import_fields: "",

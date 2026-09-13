@@ -319,6 +319,8 @@ export const shopTool: ToolDefinition = {
           image_dir: imageDir(),
           name_template: getSetting("name_template"),
           stock_alert: stockAlert(),
+          sales_deduct_stock: String(getSetting("sales_deduct_stock") || "1"),
+          row_height: String(getSetting("row_height") || "8"),
           col_visible_list: getSetting("col_visible_list"),
           col_visible_gallery: getSetting("col_visible_gallery"),
           import_fields: getSetting("import_fields"),

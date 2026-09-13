@@ -50,6 +50,7 @@
     }
 
     function renderSales() {
+      updateSalesDeductTip();
       $("salesDate").value = state.salesDate || nowStr();
       $("salesDateLabel").textContent = state.salesDate || "";
       const rows = salesTableRows();
@@ -95,6 +96,15 @@
             <td colspan="3"></td>
           </tr></tfoot></table>`;
       updateSelBtn();
+    }
+
+    function updateSalesDeductTip() {
+      const el = $("salesNoDeductTip");
+      if (!el) {
+        return;
+      }
+      el.style.display =
+        Number(state.settings.sales_deduct_stock || 1) === 0 ? "" : "none";
     }
 
     function updateSelBtn() {

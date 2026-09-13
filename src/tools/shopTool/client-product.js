@@ -421,13 +421,13 @@ function renderList(list) {
             cls = "cell-code";
             break;
           case "name":
-            v = esc(p.name);
+            v = `<div class="clip-cell" title="${esc(p.name)}">${esc(p.name)}</div>`;
             break;
           case "category":
-            v = esc(p.category);
+            v = `<div class="clip-cell" title="${esc(p.category || "")}">${esc(p.category || "")}</div>`;
             break;
           case "series":
-            v = esc(p.series);
+            v = `<div class="clip-cell" title="${esc(p.series || "")}">${esc(p.series || "")}</div>`;
             break;
           case "grade":
             v = esc(displayGrade(p));
@@ -823,25 +823,48 @@ function openInlineEditor(td) {
     editor.step = "1";
     editor.value = product.stockTotal || 0;
   } else {
-    editor = document.createElement("input");
-    editor.value = cellValue(product, field);
     if (field === "category") {
+      editor = document.createElement("input");
       editor.setAttribute("list", "shopCatList");
+    } else {
+      editor = document.createElement("textarea");
+      editor.setAttribute("rows", "1");
+      editor.spellcheck = false;
     }
+    editor.value = cellValue(product, field);
   }
   editor.style.cssText =
     "width:100%;min-width:70px;box-sizing:border-box;padding:2px 5px";
+  const isTextarea = editor.tagName === "TEXTAREA";
+  if (isTextarea) {
+    editor.style.resize = "vertical";
+    editor.style.maxHeight = "160px";
+    editor.style.overflow = "auto";
+    editor.style.lineHeight = "1.4";
+  }
+  const autosize = () => {
+    editor.style.height = "auto";
+    editor.style.height = Math.min(160, editor.scrollHeight) + "px";
+  };
   td.innerHTML = "";
   td.appendChild(editor);
   editor.onblur = () => finish(true);
   editor.onkeydown = (e) => {
     if (e.key === "Enter") {
+      if (isTextarea && e.shiftKey) {
+        return;
+      }
+      e.preventDefault();
       finish(true);
     } else if (e.key === "Escape") {
       finish(false);
     }
     e.stopPropagation();
   };
+  if (isTextarea) {
+    editor.oninput = autosize;
+    autosize();
+  }
   setTimeout(() => {
     if (Array.isArray(editor) ? false : editor.focus) {
       editor.focus();

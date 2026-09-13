@@ -125,6 +125,56 @@
             .forEach((el) => el.classList.remove("cell-selected"));
         }
       });
+      document.addEventListener("keydown", (e) => {
+        const t = e.target;
+        if (
+          t &&
+          (t.tagName === "INPUT" ||
+            t.tagName === "TEXTAREA" ||
+            t.tagName === "SELECT" ||
+            t.isContentEditable)
+        ) {
+          return;
+        }
+        if (document.getElementById("ctxMenu")) {
+          return;
+        }
+        if (e.key === "Escape") {
+          if (selCell) {
+            selCell = null;
+            document
+              .querySelectorAll(".cell-selected")
+              .forEach((el) => el.classList.remove("cell-selected"));
+          }
+          return;
+        }
+        if ((!e.ctrlKey && !e.metaKey) || !selCell) {
+          return;
+        }
+        const p = state.products.find((x) => x.id === selCell.pid);
+        if (!p) {
+          return;
+        }
+        const k = e.key.toLowerCase();
+        if (k === "c") {
+          e.preventDefault();
+          copyCell(p, selCell.field);
+        } else if (k === "x") {
+          e.preventDefault();
+          if (!EDITABLE_FIELDS.has(selCell.field)) {
+            toast("该列不可编辑，无法剪切");
+            return;
+          }
+          cutCell(p, selCell.field);
+        } else if (k === "v") {
+          e.preventDefault();
+          if (!EDITABLE_FIELDS.has(selCell.field)) {
+            toast("该列不可编辑，无法粘贴");
+            return;
+          }
+          pasteCell(p.id, selCell.field);
+        }
+      });
       $("salesTableWrap").addEventListener("click", onSalesAct);
       if ($("salesKwInput")) {
         $("salesKwInput").oninput = () => {
@@ -344,6 +394,45 @@
           key: "stock_alert",
           value: String(Number($("setStockAlert").value || 0)),
         });
+      const setSalesDeductStock = $("setSalesDeductStock");
+      if (setSalesDeductStock) {
+        setSalesDeductStock.onchange = () =>
+          post({
+            type: "saveSettings",
+            key: "sales_deduct_stock",
+            value: setSalesDeductStock.checked ? "1" : "0",
+          });
+      }
+      const rhSel = $("setRowHeight");
+      const rhCustom = $("setRowHeightCustom");
+      if (rhSel) {
+        rhSel.onchange = () => {
+          if (rhSel.value === "custom") {
+            if (rhCustom) {
+              rhCustom.style.display = "";
+              rhCustom.focus();
+            }
+            return;
+          }
+          if (rhCustom) {
+            rhCustom.style.display = "none";
+          }
+          saveRowHeight(rhSel.value);
+        };
+      }
+      if (rhCustom) {
+        rhCustom.onblur = () => {
+          saveRowHeight(rhCustom.value || "5");
+        };
+        rhCustom.onchange = () => {
+          saveRowHeight(rhCustom.value || "5");
+        };
+        rhCustom.onkeydown = (e) => {
+          if (e.key === "Enter") {
+            rhCustom.blur();
+          }
+        };
+      }
       $("dbBackupBtn").onclick = () => post({ type: "exportDB" });
       $("dbRestoreBtn").onclick = () =>
         confirmBox("恢复会用所选备份整体替换当前全部数据（商品/库存/销售/月报/排品）。确定继续？").then(
@@ -375,6 +464,22 @@
         };
       }
       bindLiveEvents();
+    }
+
+    function applyRowHeight(raw) {
+      const n = Math.max(0, Math.min(50, parseInt(String(raw || "5"), 10) || 5));
+      const tab = $("tabProducts");
+      if (tab) {
+        tab.style.setProperty("--row-py", n + "px");
+        const lines = Math.max(3, Math.min(8, 3 + Math.round((n - 2) / 3)));
+        tab.style.setProperty("--row-lines", String(lines));
+      }
+    }
+
+    function saveRowHeight(raw) {
+      const n = Math.max(0, Math.min(50, parseInt(String(raw || "5"), 10) || 5));
+      applyRowHeight(n);
+      post({ type: "saveSettings", key: "row_height", value: String(n) });
     }
 
     let exportingBtn = null;
@@ -480,6 +585,10 @@
         case "settingsLoaded": {
           state.settings = { ...state.settings, ...(msg.settings || {}) };
           renderSettings();
+          applyRowHeight(state.settings.row_height);
+          if (typeof updateSalesDeductTip === "function") {
+            updateSalesDeductTip();
+          }
           try {
             const arr = JSON.parse(state.settings.col_visible_list || "[]");
             if (Array.isArray(arr) && arr.length) {
