@@ -38,6 +38,7 @@
         padding: 16px;
         margin-bottom: 16px;
         background: var(--vscode-editor-background);
+        min-width: 0;
       }
       .form-group {
         margin-bottom: 16px;
@@ -182,6 +183,33 @@
       .sort-indicator.active {
         opacity: 1;
       }
+      .zoom-bar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 8px;
+        flex-wrap: wrap;
+      }
+      .zoom-label {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+        white-space: nowrap;
+      }
+      .btn-zoom {
+        padding: 2px 8px;
+        font-size: 12px;
+        border: 1px solid var(--vscode-button-secondaryBorder, transparent);
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-foreground);
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .btn-zoom:hover {
+        background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-secondaryBackground));
+      }
+      .hidden {
+        display: none !important;
+      }
       .filter-row td {
         padding: 3px 6px;
         background: var(--vscode-editor-background);
@@ -214,7 +242,21 @@
       }
       .chart-scroll {
         max-height: 460px;
-        overflow: auto;
+        overflow-x: auto;
+        overflow-y: auto;
+        min-width: 0;
+      }
+      .chart-scroll::-webkit-scrollbar {
+        height: 10px;
+        width: 10px;
+      }
+      .chart-scroll::-webkit-scrollbar-track {
+        background: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.2));
+        border-radius: 5px;
+      }
+      .chart-scroll::-webkit-scrollbar-thumb {
+        background: var(--vscode-scrollbarSlider-hoverBackground, rgba(121, 121, 121, 0.5));
+        border-radius: 5px;
       }
       .chart-box canvas {
         width: 100%;
@@ -339,12 +381,15 @@
     </div>
 
     <!-- 结果区 -->
-    <div class="grid-2col">
+    <div class="grid-2col" id="ea_resultGrid">
       <div class="card-panel">
         <div class="form-label" style="font-weight: 700; margin-bottom: 12px">
           统计结果表
         </div>
-        <div class="result-table-wrap">
+        <div class="zoom-bar" style="justify-content: flex-end">
+          <button class="btn-zoom" id="ez_tableToggle" style="font-size: 11px">隐藏表格</button>
+        </div>
+        <div class="result-table-wrap" id="ea_tableWrap">
           <table class="result-table" id="ea_table">
             <thead>
               <tr>
@@ -368,9 +413,14 @@
         <div class="form-label" style="font-weight: 700; margin-bottom: 12px">
           可视化图表（悬浮可查看数值；柱状/折线的长标签可滚动查看全文）
         </div>
+        <div class="zoom-bar" style="justify-content: flex-end; margin-bottom: 8px">
+          <button class="btn-zoom" id="ez_chartToggle" style="font-size: 11px">隐藏图表</button>
+        </div>
         <div class="chart-box" id="ea_chartBox">
           <div class="chart-scroll" id="ea_chartScroll">
-            <canvas id="ea_canvas" width="560" height="320"></canvas>
+            <div id="ea_chartInner" style="display: block">
+              <canvas id="ea_canvas" width="560" height="320"></canvas>
+            </div>
           </div>
           <div class="empty-hint" id="ea_chartHint">执行分析后生成图表</div>
         </div>

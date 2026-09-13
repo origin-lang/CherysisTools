@@ -11,6 +11,8 @@
     outDir: "",
     statRows: [],
     displayRows: [],
+    tableVisible: true,
+    chartVisible: true,
     xHeader: "X标签",
     yHeader: "聚合数值",
     chartType: "bar",
@@ -137,6 +139,38 @@
       // 首次布局后按实际宽度设置画布尺寸
       requestAnimationFrame(() => setupCanvas());
     }
+
+    // 表格 / 图表 显示与隐藏开关
+    const resultGrid = document.getElementById("ea_resultGrid");
+    const syncVisibility = () => {
+      const tWrap = document.getElementById("ea_tableWrap");
+      const cBox = document.getElementById("ea_chartBox");
+      const tBtn = document.getElementById("ez_tableToggle");
+      const cBtn = document.getElementById("ez_chartToggle");
+      if (tWrap) {tWrap.classList.toggle("hidden", !state.tableVisible);}
+      if (cBox) {cBox.classList.toggle("hidden", !state.chartVisible);}
+      if (tBtn) {tBtn.textContent = state.tableVisible ? "隐藏表格" : "显示表格";}
+      if (cBtn) {cBtn.textContent = state.chartVisible ? "隐藏图表" : "显示图表";}
+      // 只显示一边时占满整行
+      if (resultGrid) {
+        resultGrid.style.gridTemplateColumns =
+          state.tableVisible && state.chartVisible ? "1fr 1fr" : "1fr";
+      }
+      // 单列布局后画布按新宽度重排
+      setupCanvas();
+    };
+    const bindToggle = (id, key) => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener("click", () => {
+          state[key] = !state[key];
+          syncVisibility();
+        });
+      }
+    };
+    bindToggle("ez_tableToggle", "tableVisible");
+    bindToggle("ez_chartToggle", "chartVisible");
+    syncVisibility();
 
     while (pendingMessages.length > 0) {
       onMessage(pendingMessages.shift());
@@ -347,6 +381,7 @@
     state.displayRows = [];
     state.sortCol = null;
     state.sortDir = "desc";
+    updateChartRangeUI();
     const fx = document.getElementById("ea_filterX");
     const fv = document.getElementById("ea_filterValue");
     if (fx) {fx.value = "";}
@@ -357,23 +392,28 @@
   // ============ 画布 & 图表 ============
   function setupCanvas() {
     const wrap = document.getElementById("ea_chartScroll");
+    const inner = document.getElementById("ea_chartInner");
     const hint = document.getElementById("ea_chartHint");
     if (!canvas || !ctx || !wrap) {return;}
     const dpr = window.devicePixelRatio || 1;
     const rect = wrap.getBoundingClientRect();
-    const newW = Math.max(320, Math.round(rect.width) - 2);
+    let newW;
     let newH;
     if (state.chartType === "pie") {
+      newW = Math.max(320, Math.round(rect.width) - 2);
       newH = Math.max(240, Math.round(newW * 0.62));
     } else {
-      // 柱状/折线：画布高度 = 绘图区(固定) + X轴竖直标签区(随最长标签长度)
+      const n = state.displayRows.length;
+      const needW = Math.round(n * 48 + 68);
+      newW = Math.max(320, Math.round(rect.width) - 2, n > 0 ? needW : 0);
       const maxLen = Math.max(1, ...state.displayRows.map((r) => r.xName.length));
       const padB = Math.max(40, maxLen * 12 + 12);
-      newH = 30 + 260 + padB; // padT(30) + 绘图高(260) + 标签区(padB)
+      newH = 30 + 260 + padB;
     }
     logicalW = newW;
     logicalH = newH;
-    canvas.style.width = logicalW + "px";
+    // 内层容器宽度按组数撑开：组多时超出滚动容器宽度 → 出现横向滚动条，左右滑看后面的组
+    if (inner) {inner.style.width = logicalW + "px";}
     canvas.style.height = logicalH + "px";
     canvas.width = Math.round(logicalW * dpr);
     canvas.height = Math.round(logicalH * dpr);
