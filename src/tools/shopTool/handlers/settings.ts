@@ -19,7 +19,7 @@ export function settingsHandlers(h: HandlerCtx): Record<string, Handler> {
 
     saveSettings(msg) {
       const key = String(msg.key ?? "");
-      const allowedKeys = new Set(["image_dir", "name_template", "stock_alert", "sales_deduct_stock", "row_height", "col_visible_list", "col_visible_gallery", "live_out_dir"]);
+      const allowedKeys = new Set(["image_dir", "name_template", "stock_alert", "sales_deduct_stock", "row_height", "col_visible_list", "col_visible_gallery", "col_image_list", "col_image_gallery", "live_out_dir"]);
       if (!allowedKeys.has(key)) {
         log("❌不支持的设置项: " + key);
         return;

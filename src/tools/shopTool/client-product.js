@@ -374,8 +374,9 @@ function filterControl(key) {
 
 function renderList(list) {
   const vis = PRODUCT_FIELDS.filter((f) => visList.has(f.key));
+  const showImg = showImageList;
   const plIdx = vis.findIndex((f) => f.key === "purchase_link");
-  const imgAt = plIdx >= 0 ? plIdx : vis.length;
+  const imgAt = showImg ? (plIdx >= 0 ? plIdx : vis.length) : -1;
   const headCols = [];
   const filterCells = [];
   for (let i = 0; i < vis.length; i++) {
@@ -763,7 +764,7 @@ function renderGallery(list) {
             return `<div class="card ${off ? "off" : ""}" data-p-act="img" data-id="${p.id}">
                   <button class="star ${starred ? "on" : ""}" data-s-act="toggle" data-code="${esc(p.code)}" data-id="${p.id}" title="${starred ? "取消星标" : "加入直播排品备选"}">${starred ? "★" : "☆"}</button>
                   <span class="card-badge ${off ? "off" : ""}">${off ? "已下架" : p.code}</span>
-                  ${coverData ? `<img src="${coverData}" />` : `<div class="ph">暂无图片</div>`}
+                  ${showImageGallery ? (coverData ? `<img src="${coverData}" />` : `<div class="ph">暂无图片</div>`) : ""}
                   <div class="card-body">${lines}</div>
                 </div>`;
           })
@@ -1440,19 +1441,24 @@ function openStockIn(product) {
   };
 }
 
-function checkGroupHtml(prefix, set) {
-  return PRODUCT_FIELDS.map((f) => {
-    const locked = f.key === "code";
-    return (
-      `<label class="io-chip" ${locked ? 'title="编号固定显示"' : ""}>` +
-      `<input type="checkbox" data-g="${prefix}" data-cfk="${f.key}" ${locked || set.has(f.key) ? "checked" : ""} ${locked ? "disabled" : ""} />${f.label}</label>`
-    );
-  }).join("");
+function checkGroupHtml(prefix, set, imgVisible) {
+  return (
+    PRODUCT_FIELDS.map((f) => {
+      const locked = f.key === "code";
+      return (
+        `<label class="io-chip" ${locked ? 'title="编号固定显示"' : ""}>` +
+        `<input type="checkbox" data-g="${prefix}" data-cfk="${f.key}" ${locked || set.has(f.key) ? "checked" : ""} ${locked ? "disabled" : ""} />${f.label}</label>`
+      );
+    }).join("") +
+    `<label class="io-chip" title="商品图片列（列表为整列，画册为卡片主图）">` +
+    `<input type="checkbox" data-g="${prefix}" data-cfk="image" ${imgVisible ? "checked" : ""} />图片</label>`
+  );
 }
 
 function openColSet() {
   const isList = viewMode !== "gallery";
   const toggle = isList ? new Set(visList) : new Set(visGallery);
+  let imgVisible = isList ? showImageList : showImageGallery;
   const keyName = isList ? "列表视图" : "画册视图（卡片上显示的字段）";
   const mask = showModal(`
         <h3>字段显示 / 隐藏（当前：${keyName}）</h3>
@@ -1461,7 +1467,7 @@ function openColSet() {
           <button class="mini-btn" id="csListAll">全选</button>
           <button class="mini-btn" id="csListNone">不选</button>
         </div>
-        <div class="io-chips">${checkGroupHtml("cur", toggle)}</div>
+        <div class="io-chips">${checkGroupHtml("cur", toggle, imgVisible)}</div>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
           <button id="csReset">复原默认（全部显示）</button>
           <button id="csCancel">取消</button>
@@ -1470,20 +1476,32 @@ function openColSet() {
   const recalc = () => {
     mask
       .querySelectorAll('[data-g="cur"]')
-      .forEach((cb) => (cb.checked = toggle.has(cb.dataset.cfk)));
+      .forEach((cb) => {
+        if (cb.dataset.cfk === "image") {
+          cb.checked = imgVisible;
+        } else {
+          cb.checked = toggle.has(cb.dataset.cfk);
+        }
+      });
   };
   $("csListAll").onclick = () => {
     PRODUCT_FIELDS.forEach((f) => toggle.add(f.key));
+    imgVisible = true;
     recalc();
   };
   $("csListNone").onclick = () => {
     toggle.clear();
     toggle.add("code");
+    imgVisible = false;
     recalc();
   };
   mask.querySelectorAll('[data-g="cur"]').forEach((cb) => {
     cb.onchange = () => {
       if (cb.disabled || cb.dataset.cfk === "code") {
+        return;
+      }
+      if (cb.dataset.cfk === "image") {
+        imgVisible = cb.checked;
         return;
       }
       cb.checked ? toggle.add(cb.dataset.cfk) : toggle.delete(cb.dataset.cfk);
@@ -1492,6 +1510,7 @@ function openColSet() {
   $("csReset").onclick = async () => {
     if (await confirmBox(`复原默认：${keyName}显示全部字段？`)) {
       PRODUCT_FIELDS.forEach((f) => toggle.add(f.key));
+      imgVisible = true;
       recalc();
     }
   };
@@ -1500,13 +1519,20 @@ function openColSet() {
     toggle.add("code");
     if (isList) {
       visList = new Set(toggle);
+      showImageList = imgVisible;
     } else {
       visGallery = new Set(toggle);
+      showImageGallery = imgVisible;
     }
     post({
       type: "saveSettings",
       key: isList ? "col_visible_list" : "col_visible_gallery",
       value: JSON.stringify([...toggle]),
+    });
+    post({
+      type: "saveSettings",
+      key: isList ? "col_image_list" : "col_image_gallery",
+      value: imgVisible ? "1" : "0",
     });
     closeModal();
     renderProducts();

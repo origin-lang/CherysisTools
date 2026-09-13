@@ -323,6 +323,8 @@ export const shopTool: ToolDefinition = {
           row_height: String(getSetting("row_height") || "8"),
           col_visible_list: getSetting("col_visible_list"),
           col_visible_gallery: getSetting("col_visible_gallery"),
+          col_image_list: getSetting("col_image_list"),
+          col_image_gallery: getSetting("col_image_gallery"),
           import_fields: getSetting("import_fields"),
           import_mode: getSetting("import_mode"),
           export_fields: getSetting("export_fields"),

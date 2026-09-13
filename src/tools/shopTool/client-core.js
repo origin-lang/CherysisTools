@@ -92,6 +92,9 @@ window.toolClients = window.toolClients || {};
     CUTTABLE_FIELDS.delete("name");
     var visList = new Set(PRODUCT_FIELDS.map((f) => f.key));
     var visGallery = new Set(PRODUCT_FIELDS.map((f) => f.key));
+    // 图片列是否显示（与「字段显示」分开存储，独立开关，默认显示）
+    var showImageList = true;
+    var showImageGallery = true;
     var viewMode = "list";
     var listPage = 1;
     var pageSize = 200;

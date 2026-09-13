@@ -607,23 +607,9 @@
           } catch {
             /* 保持默认 */
           }
-          // 备注本是不可见列；升级为可显示列后，老可见配置缺它就自动补一次并持久化
-          if (!visList.has("remark")) {
-            visList.add("remark");
-            post({
-              type: "saveSettings",
-              key: "col_visible_list",
-              value: JSON.stringify([...visList]),
-            });
-          }
-          if (!visGallery.has("remark")) {
-            visGallery.add("remark");
-            post({
-              type: "saveSettings",
-              key: "col_visible_gallery",
-              value: JSON.stringify([...visGallery]),
-            });
-          }
+          // 图片列是否显示（独立设置，默认显示；用户可在「字段显示」里关掉）
+          showImageList = state.settings.col_image_list !== "0";
+          showImageGallery = state.settings.col_image_gallery !== "0";
           renderProducts();
           break;
         }
