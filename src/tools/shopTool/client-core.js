@@ -87,6 +87,9 @@ window.toolClients = window.toolClients || {};
       "stockTotal",
       "remark",
     ]);
+    var CUTTABLE_FIELDS = new Set(EDITABLE_FIELDS);
+    CUTTABLE_FIELDS.delete("code");
+    CUTTABLE_FIELDS.delete("name");
     var visList = new Set(PRODUCT_FIELDS.map((f) => f.key));
     var visGallery = new Set(PRODUCT_FIELDS.map((f) => f.key));
     var viewMode = "list";

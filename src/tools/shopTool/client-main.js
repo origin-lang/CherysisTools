@@ -161,8 +161,8 @@
           copyCell(p, selCell.field);
         } else if (k === "x") {
           e.preventDefault();
-          if (!EDITABLE_FIELDS.has(selCell.field)) {
-            toast("该列不可编辑，无法剪切");
+          if (!CUTTABLE_FIELDS.has(selCell.field)) {
+            toast("该列不可清空，无法剪切");
             return;
           }
           cutCell(p, selCell.field);

@@ -74,6 +74,10 @@ function copyCell(p, field) {
 }
 
 function cutCell(p, field) {
+  if (!CUTTABLE_FIELDS.has(field)) {
+    toast("该列不可清空，无法剪切");
+    return;
+  }
   const value = field ? cellValue(p, field) : "";
   copyText(value);
   appClipboard = value;
@@ -1526,7 +1530,7 @@ function openContextMenu(e, p, field) {
     `<div class="ctx-cellops">` +
     `<div class="ctx-cellop" data-cellop="copy" title="复制该格 (Ctrl+C)"><span class="cop-icon">📋</span><span>复制</span></div>` +
     `<div class="ctx-cellop${canPaste && editable ? "" : " ctx-disabled"}" data-cellop="paste" title="粘贴到该格 (Ctrl+V)"><span class="cop-icon">📥</span><span>粘贴</span></div>` +
-    `<div class="ctx-cellop${editable ? "" : " ctx-disabled"}" data-cellop="cut" title="剪切该格并立即清空 (Ctrl+X)"><span class="cop-icon">✂</span><span>剪切</span></div>` +
+    `<div class="ctx-cellop${CUTTABLE_FIELDS.has(field) ? "" : " ctx-disabled"}" data-cellop="cut" title="剪切该格并立即清空 (Ctrl+X)"><span class="cop-icon">✂</span><span>剪切</span></div>` +
     `</div>` +
     `<div class="ctx-item" data-copy="row">复制整行</div>` +
     `<div class="ctx-item" data-copy="table">复制整表(筛选后)</div>` +
