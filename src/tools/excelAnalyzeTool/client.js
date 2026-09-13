@@ -8,7 +8,6 @@
     filePath: "",
     columns: [],
     rowCount: 0,
-    outDir: "",
     statRows: [],
     displayRows: [],
     tableVisible: true,
@@ -43,7 +42,6 @@
     state.filePath = "";
     state.columns = [];
     state.rowCount = 0;
-    state.outDir = "";
     state.statRows = [];
     state.xHeader = "X标签";
     state.yHeader = "聚合数值";
@@ -53,18 +51,8 @@
     document.getElementById("ea_btnSelectFile").onclick = () =>
       post({ type: "selectFile", toolName: "excelAnalyzeTool" });
     document.getElementById("ea_btnRun").onclick = runAnalysis;
-    document.getElementById("ea_btnSelectOut").onclick = () =>
-      post({ type: "selectOutFolder", toolName: "excelAnalyzeTool" });
-    document.getElementById("ea_btnOpenOut").onclick = () => {
-      const p = document.getElementById("ea_outDirInput").value.trim();
-      if (!p) {
-        log("⚠请先选择或在输入框填写导出文件夹");
-        return;
-      }
-      post({ type: "openTargetFolder", toolName: "excelAnalyzeTool", targetPath: p });
-    };
-    document.getElementById("ea_btnExportExcel").onclick = exportExcel;
-    document.getElementById("ea_btnSaveChart").onclick = exportChart;
+    document.getElementById("ea_btnExportTable").onclick = exportExcel;
+    document.getElementById("ea_btnExportChart").onclick = exportChart;
     document.getElementById("ea_btnAddRule").onclick = () => addRuleRow();
 
     // 初始化分组规则列表：默认一条空规则
@@ -303,13 +291,11 @@
   }
 
   function exportExcel() {
-    if (!state.outDir) { log("⚠请先选择导出保存目录"); return; }
     if (!state.displayRows.length) { log("⚠没有可导出的统计结果，请先执行分析"); return; }
-    post({ type: "exportExcel", toolName: "excelAnalyzeTool", outDir: state.outDir, statRows: state.displayRows, xHeader: state.xHeader, yHeader: state.yHeader });
+    post({ type: "exportExcel", toolName: "excelAnalyzeTool", statRows: state.displayRows, xHeader: state.xHeader, yHeader: state.yHeader });
   }
 
   function exportChart() {
-    if (!state.outDir) { log("⚠请先选择导出保存目录"); return; }
     if (!state.displayRows.length || !canvas) { log("⚠请先执行分析生成图表"); return; }
     const exported = document.createElement("canvas");
     exported.width = logicalW;
@@ -319,7 +305,7 @@
     exCtx.fillRect(0, 0, logicalW, logicalH);
     drawChart(exCtx, logicalW, logicalH, state.chartType);
     const dataUrl = exported.toDataURL("image/png");
-    post({ type: "saveChart", toolName: "excelAnalyzeTool", outDir: state.outDir, dataUrl });
+    post({ type: "saveChart", toolName: "excelAnalyzeTool", dataUrl });
   }
 
   // ============ 表格 ============
@@ -408,7 +394,7 @@
       newW = Math.max(320, Math.round(rect.width) - 2, n > 0 ? needW : 0);
       const maxLen = Math.max(1, ...state.displayRows.map((r) => r.xName.length));
       const padB = Math.max(40, maxLen * 12 + 12);
-      newH = 30 + 260 + padB;
+      newH = 30 + 380 + padB;
     }
     logicalW = newW;
     logicalH = newH;
@@ -723,11 +709,6 @@
       updateSortIndicators();
       renderTable();
       setupCanvas();
-    } else if (msg.type === "outFolderSelected") {
-      state.outDir = msg.path;
-      const el = document.getElementById("ea_outDirInput");
-      if (el) {el.value = msg.path;}
-      document.getElementById("ea_outStatus").textContent = `导出目录：${msg.path}`;
     }
   }
 

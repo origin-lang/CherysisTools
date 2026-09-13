@@ -144,7 +144,7 @@
         }
       }
       .result-table-wrap {
-        max-height: 360px;
+        max-height: 560px;
         overflow: auto;
         border: 1px solid var(--vscode-panel-border);
         border-radius: 4px;
@@ -241,7 +241,7 @@
         background: var(--vscode-editor-background);
       }
       .chart-scroll {
-        max-height: 460px;
+        max-height: 560px;
         overflow-x: auto;
         overflow-y: auto;
         min-width: 0;
@@ -383,11 +383,12 @@
     <!-- 结果区 -->
     <div class="grid-2col" id="ea_resultGrid">
       <div class="card-panel">
-        <div class="form-label" style="font-weight: 700; margin-bottom: 12px">
-          统计结果表
-        </div>
-        <div class="zoom-bar" style="justify-content: flex-end">
-          <button class="btn-zoom" id="ez_tableToggle" style="font-size: 11px">隐藏表格</button>
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px">
+          <div class="form-label" style="font-weight: 700">统计结果表</div>
+          <div style="display: flex; align-items: center; gap: 6px">
+            <button class="btn-zoom" id="ez_tableToggle" style="font-size: 11px">隐藏表格</button>
+            <button class="btn-zoom" id="ea_btnExportTable" style="font-size: 11px">💾 导出Excel</button>
+          </div>
         </div>
         <div class="result-table-wrap" id="ea_tableWrap">
           <table class="result-table" id="ea_table">
@@ -410,11 +411,14 @@
       </div>
 
       <div class="card-panel">
-        <div class="form-label" style="font-weight: 700; margin-bottom: 12px">
-          可视化图表（悬浮可查看数值；柱状/折线的长标签可滚动查看全文）
-        </div>
-        <div class="zoom-bar" style="justify-content: flex-end; margin-bottom: 8px">
-          <button class="btn-zoom" id="ez_chartToggle" style="font-size: 11px">隐藏图表</button>
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px">
+          <div class="form-label" style="font-weight: 700">
+            可视化图表（悬浮可查看数值；柱状/折线的长标签可滚动查看全文）
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px">
+            <button class="btn-zoom" id="ez_chartToggle" style="font-size: 11px">隐藏图表</button>
+            <button class="btn-zoom" id="ea_btnExportChart" style="font-size: 11px">🖼️ 保存PNG</button>
+          </div>
         </div>
         <div class="chart-box" id="ea_chartBox">
           <div class="chart-scroll" id="ea_chartScroll">
@@ -427,25 +431,5 @@
       </div>
     </div>
 
-    <!-- 导出区 -->
-    <div class="card-panel">
-      <div class="form-group">
-        <label class="form-label">导出保存目录</label>
-        <div class="form-row">
-          <input
-            id="ea_outDirInput"
-            style="flex: 1; margin: 0"
-            placeholder="请选择输出文件夹（导出表格与图表共用）"
-          />
-          <button id="ea_btnSelectOut">选择文件夹</button>
-          <button id="ea_btnOpenOut">打开文件夹</button>
-        </div>
-        <div class="tip-text" id="ea_outStatus">选择后用于保存统计表格Excel与图表PNG</div>
-      </div>
-      <div class="form-actions">
-        <button id="ea_btnExportExcel">💾 导出统计表格Excel</button>
-        <button id="ea_btnSaveChart">🖼️ 保存图表PNG</button>
-      </div>
-    </div>
   </body>
 </html>

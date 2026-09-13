@@ -1,4 +1,3 @@
-import * as fs from "fs";
 import * as fsp from "fs/promises";
 import * as path from "path";
 import * as XLSX from "xlsx";
@@ -184,6 +183,20 @@ function genTimestamp(): string {
     .slice(0, 19);
 }
 
+/** 在资源管理器中打开目标文件夹（explorer 即便成功也返回非零码，故仅凭 stderr 判断失败） */
+function openFolderInExplorer(target: string, log: (text: string) => void): Promise<void> {
+  return new Promise((resolve) => {
+    exec(`explorer "${target}"`, {}, (_err, _stdout, stderr) => {
+      if (stderr.trim()) {
+        log(`❌打开文件夹失败：${stderr.trim()}`);
+      } else {
+        log(`✅已打开文件夹：${target}`);
+      }
+      resolve();
+    });
+  });
+}
+
 export const excelAnalyzeTool: ToolDefinition = {
   toolName: "excelAnalyzeTool",
   title: "📊Excel清洗统计绘图",
@@ -263,64 +276,39 @@ export const excelAnalyzeTool: ToolDefinition = {
         }
         break;
       }
-      case "selectOutFolder": {
-        const dir = await ctx.selectFolder();
-        if (dir) {
-          ctx.postToWebview({ type: "outFolderSelected", path: dir });
-        }
-        break;
-      }
-      case "openTargetFolder": {
-        const target = (msg.targetPath ?? "").trim();
-        if (!target) {
-          ctx.log("⚠请先选择或在输入框填写导出文件夹");
-          break;
-        }
-        await new Promise<void>((resolve) => {
-          // explorer 即便成功打开也会返回非零退出码，故仅凭 stderr 判断是否真失败
-          exec(`explorer "${target}"`, {}, (_err, _stdout, stderr) => {
-            if (stderr.trim()) {
-              ctx.log(`❌打开文件夹失败：${stderr.trim()}`);
-            } else {
-              ctx.log(`✅已打开文件夹：${target}`);
-            }
-            resolve();
-          });
-        });
-        break;
-      }
       case "exportExcel": {
-        const outDir: string = msg.outDir?.trim() ?? "";
         const statRows: StatRow[] = msg.statRows ?? [];
         const xHeader: string = msg.xHeader ?? "X标签";
         const yHeader: string = msg.yHeader ?? "聚合数值";
-        if (!outDir || !fs.existsSync(outDir)) {
-          ctx.log("⚠请先选择有效的输出文件夹");
-          break;
-        }
         if (!statRows.length) {
           ctx.log("⚠没有可导出的统计结果，请先执行分析");
           break;
         }
+        const dir = await ctx.selectFolder();
+        if (!dir) {
+          ctx.log("❌已取消导出（未选择文件夹）");
+          break;
+        }
         try {
           const ts = genTimestamp();
-          const outFile = path.join(outDir, `统计分析结果_${ts}.xlsx`);
+          const outFile = path.join(dir, `统计分析结果_${ts}.xlsx`);
           await exportStatToExcel(statRows, xHeader, yHeader, outFile);
           ctx.log(`✅统计表格已导出：${outFile}`);
+          await openFolderInExplorer(dir, (t) => ctx.log(t));
         } catch (err: any) {
           ctx.log(`❌导出Excel异常：${err.message}`);
         }
         break;
       }
       case "saveChart": {
-        const outDir: string = msg.outDir?.trim() ?? "";
         const dataUrl: string = msg.dataUrl ?? "";
-        if (!outDir || !fs.existsSync(outDir)) {
-          ctx.log("⚠请先选择有效的输出文件夹");
-          break;
-        }
         if (!dataUrl || !dataUrl.startsWith("data:image/png;base64,")) {
           ctx.log("⚠没有可保存的图表，请先执行分析");
+          break;
+        }
+        const dir = await ctx.selectFolder();
+        if (!dir) {
+          ctx.log("❌已取消导出（未选择文件夹）");
           break;
         }
         try {
@@ -329,9 +317,10 @@ export const excelAnalyzeTool: ToolDefinition = {
             "base64",
           );
           const ts = genTimestamp();
-          const outFile = path.join(outDir, `统计分析图表_${ts}.png`);
+          const outFile = path.join(dir, `统计分析图表_${ts}.png`);
           await fsp.writeFile(outFile, buf);
           ctx.log(`✅图表已保存：${outFile}`);
+          await openFolderInExplorer(dir, (t) => ctx.log(t));
         } catch (err: any) {
           ctx.log(`❌保存图表异常：${err.message}`);
         }
