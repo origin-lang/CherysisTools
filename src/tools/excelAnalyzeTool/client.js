@@ -13,7 +13,10 @@
     tableVisible: true,
     chartVisible: true,
     xHeader: "X标签",
-    yHeader: "聚合数值",
+    yHeaders: ["聚合数值"],
+    yCols: [],
+    seriesVisible: [],
+    filterCol: 0,
     chartType: "bar",
     sortCol: null,
     sortDir: "desc",
@@ -44,7 +47,10 @@
     state.rowCount = 0;
     state.statRows = [];
     state.xHeader = "X标签";
-    state.yHeader = "聚合数值";
+    state.yHeaders = ["聚合数值"];
+    state.yCols = [];
+    state.seriesVisible = [];
+    state.filterCol = 0;
     state.chartType = "bar";
     hoverShapes = [];
 
@@ -69,9 +75,19 @@
       });
     });
 
-    // 排序表头点击
-    document.querySelectorAll("#ea_table th.sortable").forEach((th) => {
-      th.addEventListener("click", () => {
+    // 聚合方式：计数不需要选 Y 列，置灰勾选列表
+    document.querySelectorAll('input[name="ea_agg"]').forEach((r) => {
+      r.addEventListener("change", updateAggModeUI);
+    });
+
+    // 排序 / 筛选统一走事件委托（表头与筛选行由 renderThead 动态生成）
+    const eaTable = document.getElementById("ea_table");
+    if (eaTable) {
+      eaTable.addEventListener("click", (e) => {
+        const th = e.target.closest("th.sortable");
+        if (!th) {
+          return;
+        }
         const col = th.dataset.col;
         if (state.sortCol === col) {
           state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
@@ -84,25 +100,26 @@
         setupCanvas();
         updateSortIndicators();
       });
-    });
-
-    // 筛选输入
-    const filterXEl = document.getElementById("ea_filterX");
-    const filterValueEl = document.getElementById("ea_filterValue");
-    if (filterXEl) {
-      filterXEl.addEventListener("input", () => {
-        state.filterX = filterXEl.value;
-        computeDisplayRows();
-        renderTable();
-        setupCanvas();
+      eaTable.addEventListener("input", (e) => {
+        if (e.target.id === "ea_filterX") {
+          state.filterX = e.target.value;
+          computeDisplayRows();
+          renderTable();
+          setupCanvas();
+        } else if (e.target.id === "ea_filterValue") {
+          state.filterValue = e.target.value;
+          computeDisplayRows();
+          renderTable();
+          setupCanvas();
+        }
       });
-    }
-    if (filterValueEl) {
-      filterValueEl.addEventListener("input", () => {
-        state.filterValue = filterValueEl.value;
-        computeDisplayRows();
-        renderTable();
-        setupCanvas();
+      eaTable.addEventListener("change", (e) => {
+        if (e.target.id === "ea_filterCol") {
+          state.filterCol = Number(e.target.value || 0);
+          computeDisplayRows();
+          renderTable();
+          setupCanvas();
+        }
       });
     }
 
@@ -124,9 +141,32 @@
       canvas.addEventListener("mouseleave", () => {
         if (tooltipEl) {tooltipEl.style.display = "none";}
       });
+      // 图例点击：切换某个 Y 系列显隐（饼图单系列不支持）
+      canvas.addEventListener("click", (e) => {
+        if (state.chartType === "pie" || !hoverShapes.length || state.yHeaders.length < 2) {
+          return;
+        }
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        for (const s of hoverShapes) {
+          if (
+            s.type === "legend" &&
+            x >= s.x &&
+            x <= s.x + s.w &&
+            y >= s.y &&
+            y <= s.y + s.h
+          ) {
+            state.seriesVisible[s.col] = !state.seriesVisible[s.col];
+            setupCanvas();
+            return;
+          }
+        }
+      });
       // 首次布局后按实际宽度设置画布尺寸
       requestAnimationFrame(() => setupCanvas());
     }
+    renderThead();
 
     // 表格 / 图表 显示与隐藏开关
     const resultGrid = document.getElementById("ea_resultGrid");
@@ -216,6 +256,21 @@
     return rules;
   }
 
+  // ============ Y 列勾选与计数模式 ============
+  function updateAggModeUI() {
+    const yList = document.getElementById("ea_yColList");
+    const hint = document.getElementById("ea_yHint");
+    const aggInput = document.querySelector('input[name="ea_agg"]:checked');
+    const aggType = aggInput ? aggInput.value : "sum";
+    const isCount = aggType === "count";
+    if (yList) {yList.classList.toggle("disabled", isCount);}
+    if (hint) {
+      hint.textContent = isCount
+        ? "计数只统计每个分组的行数，不需要选 Y 列；选好 X 列后直接执行即可。"
+        : "勾选一个或多个数值列：结果表每列一列、柱状/折线图每列一个系列（饼图只画第一列）；多列时图表顶部出现图例，点击色块可隐藏/显示对应系列。";
+    }
+  }
+
   // ============ 筛选排序 ============
   function computeDisplayRows() {
     let rows = state.statRows.slice();
@@ -226,7 +281,9 @@
       rows = rows.filter((r) => String(r.xName).toLowerCase().includes(kw));
     }
 
-    // 数值筛选：支持 >N, <N, >=N, <=N, N-M, 或纯文本包含
+    // 数值筛选：作用在 filterCol 指定的 Y 列上；支持 >N, <N, >=N, <=N, N-M, 或纯文本包含
+    const cols = state.yHeaders.length || 1;
+    const col = Math.min(state.filterCol, cols - 1);
     if (state.filterValue.trim()) {
       const fv = state.filterValue.trim();
       const rangeMatch = fv.match(/^\s*(>=|<=|>|<)?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:-\s*([0-9]+(?:\.[0-9]+)?))?\s*$/);
@@ -235,7 +292,7 @@
         const a = parseFloat(rangeMatch[2]);
         const b = rangeMatch[3] !== undefined ? parseFloat(rangeMatch[3]) : null;
         rows = rows.filter((r) => {
-          const v = r.value;
+          const v = r.data[col];
           if (b !== null) {
             return v >= a && v <= b;
           }
@@ -248,51 +305,111 @@
       } else {
         // 纯文本包含
         const kw = fv.toLowerCase();
-        rows = rows.filter((r) => String(r.value).toLowerCase().includes(kw));
+        rows = rows.filter((r) => String(r.data[col]).toLowerCase().includes(kw));
       }
     }
 
-    // 排序
+    // 排序：按 X 标签或某个 Y 列数值
     if (state.sortCol) {
       const dir = state.sortDir === "asc" ? 1 : -1;
       rows.sort((a, b) => {
         if (state.sortCol === "x") {
           return dir * String(a.xName).localeCompare(String(b.xName), "zh-CN");
         }
-        return dir * (a.value - b.value);
+        const ci = Number(state.sortCol);
+        return dir * ((a.data[ci] || 0) - (b.data[ci] || 0));
       });
     }
 
     state.displayRows = rows;
   }
 
+  function renderThead() {
+    const thead = document.getElementById("ea_thead");
+    if (!thead) {
+      return;
+    }
+    const arrow = (col) =>
+      state.sortCol === col ? (state.sortDir === "asc" ? "▲" : "▼") : "";
+    const cols = state.yHeaders.length || 1;
+    const headCells = [
+      `<th style="width:60px">序号</th>`,
+      `<th class="sortable" data-col="x" title="点击排序"><span id="ea_thX">X标签</span> <span class="sort-indicator">${arrow("x")}</span></th>`,
+    ];
+    state.yHeaders.forEach((h, i) => {
+      headCells.push(
+        `<th class="sortable" data-col="${i}" style="min-width:120px" title="点击按该列排序">${esc(h)} <span class="sort-indicator">${arrow(i)}</span></th>`,
+      );
+    });
+    const filterOpts = [`<option value="0">${esc(state.yHeaders[0] || "数值")}</option>`];
+    for (let i = 1; i < cols; i++) {
+      filterOpts.push(`<option value="${i}">${esc(state.yHeaders[i] || "")}</option>`);
+    }
+    thead.innerHTML =
+      `<tr>${headCells.join("")}</tr>
+       <tr class="filter-row">
+         <td></td>
+         <td><input id="ea_filterX" type="text" placeholder="筛选 X 标签..." /></td>
+         <td colspan="${cols}" style="padding:3px 6px">
+           <div style="display:flex; gap:4px; align-items:center">
+             <select id="ea_filterCol" style="width:150px; flex:none; padding:3px 4px" title="数值筛选作用的列">${filterOpts.join("")}</select>
+             <input id="ea_filterValue" type="text" placeholder="如 >100 或 10-50" style="flex:1" />
+           </div>
+         </td>
+       </tr>`;
+    const fX = thead.querySelector("#ea_filterX");
+    const fV = thead.querySelector("#ea_filterValue");
+    const fC = thead.querySelector("#ea_filterCol");
+    if (fX) { fX.value = state.filterX; }
+    if (fV) { fV.value = state.filterValue; }
+    if (fC) { fC.value = String(Math.min(state.filterCol, cols - 1)); }
+  }
+
   function updateSortIndicators() {
-    const sortX = document.getElementById("ea_sortX");
-    const sortVal = document.getElementById("ea_sortValue");
-    if (sortX) {
-      sortX.textContent = state.sortCol === "x" ? (state.sortDir === "asc" ? "▲" : "▼") : "";
-      sortX.className = "sort-indicator" + (state.sortCol === "x" ? " active" : "");
+    const thead = document.getElementById("ea_thead");
+    if (!thead) {
+      return;
     }
-    if (sortVal) {
-      sortVal.textContent = state.sortCol === "value" ? (state.sortDir === "asc" ? "▲" : "▼") : "";
-      sortVal.className = "sort-indicator" + (state.sortCol === "value" ? " active" : "");
-    }
+    thead.querySelectorAll("th.sortable[data-col]").forEach((th) => {
+      const col = th.dataset.col;
+      const active = state.sortCol === col;
+      const sp = th.querySelector(".sort-indicator");
+      if (sp) {
+        sp.textContent = active ? (state.sortDir === "asc" ? "▲" : "▼") : "";
+        sp.className = "sort-indicator" + (active ? " active" : "");
+      }
+    });
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, (m) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[m]));
   }
 
   // ============ 操作 ============
   function runAnalysis() {
     const xCol = document.getElementById("ea_xCol").value;
-    const yCol = document.getElementById("ea_yCol").value;
+    const yCols = Array.from(
+      document.querySelectorAll("#ea_yColList .ea_ycol:checked"),
+    ).map((cb) => cb.value);
     const rules = collectRules();
     const aggType = document.querySelector('input[name="ea_agg"]:checked').value;
     const chartType = document.querySelector('input[name="ea_chart"]:checked').value;
     const invalidMode = document.querySelector('input[name="ea_invalidMode"]:checked').value;
-    post({ type: "runAnalysis", toolName: "excelAnalyzeTool", xCol, yCol, rules, aggType, chartType, invalidMode });
+    if (!xCol) { log("⚠请选择【X轴原始列】"); return; }
+    // 计数与 Y 列无关；其余聚合方式必须勾选至少一个 Y 列
+    if (aggType !== "count" && !yCols.length) { log("⚠请至少勾选一个【Y轴数值列】"); return; }
+    post({ type: "runAnalysis", toolName: "excelAnalyzeTool", xCol, yCols, rules, aggType, chartType, invalidMode });
   }
 
   function exportExcel() {
     if (!state.displayRows.length) { log("⚠没有可导出的统计结果，请先执行分析"); return; }
-    post({ type: "exportExcel", toolName: "excelAnalyzeTool", statRows: state.displayRows, xHeader: state.xHeader, yHeader: state.yHeader });
+    post({ type: "exportExcel", toolName: "excelAnalyzeTool", statRows: state.displayRows, xHeader: state.xHeader, yHeaders: state.yHeaders });
   }
 
   function exportChart() {
@@ -312,26 +429,31 @@
   function renderTable() {
     const tbody = document.getElementById("ea_tbody");
     const hint = document.getElementById("ea_tableHint");
+    const thX = document.getElementById("ea_thX");
+    if (thX) {
+      thX.textContent = state.xHeader;
+    }
     tbody.innerHTML = "";
-    document.getElementById("ea_thX").textContent = state.xHeader;
-    document.getElementById("ea_thValue").textContent = state.yHeader;
     if (!state.displayRows.length) {
       hint.textContent = state.statRows.length ? "无匹配结果" : "执行分析后显示结果";
       return;
     }
     state.displayRows.forEach((r, i) => {
       const tr = document.createElement("tr");
-      const xCell = document.createElement("td");
-      xCell.textContent = r.xName;
-      xCell.title = r.xName;
       const idxCell = document.createElement("td");
       idxCell.className = "idx";
       idxCell.textContent = String(i + 1);
-      const valCell = document.createElement("td");
-      valCell.textContent = String(round(r.value));
       tr.appendChild(idxCell);
+      const xCell = document.createElement("td");
+      xCell.textContent = r.xName;
+      xCell.title = r.xName;
       tr.appendChild(xCell);
-      tr.appendChild(valCell);
+      r.data.forEach((v, c) => {
+        const valCell = document.createElement("td");
+        valCell.textContent = String(round(v));
+        valCell.title = `${state.yHeaders[c] || ""} = ${round(v)}`;
+        tr.appendChild(valCell);
+      });
       tbody.appendChild(tr);
     });
     const total = state.statRows.length;
@@ -342,19 +464,39 @@
 
   function populateColumns(columns) {
     const xCol = document.getElementById("ea_xCol");
-    const yCol = document.getElementById("ea_yCol");
     xCol.innerHTML = '<option value="">— 请选择列 —</option>';
-    yCol.innerHTML = '<option value="">— 请选择列 —</option>';
     columns.forEach((c) => {
       xCol.appendChild(new Option(c, c));
-      yCol.appendChild(new Option(c, c));
     });
+    const yList = document.getElementById("ea_yColList");
+    if (yList) {
+      yList.innerHTML = "";
+      columns.forEach((c, idx) => {
+        const lbl = document.createElement("label");
+        lbl.className = "ycol-item";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.value = c;
+        cb.className = "ea_ycol";
+        cb.checked = idx === 0; // 默认勾选第一列，加载后可直接执行
+        lbl.appendChild(cb);
+        lbl.appendChild(document.createTextNode(c));
+        yList.appendChild(lbl);
+      });
+    }
+    updateAggModeUI();
   }
 
   function resetResult() {
-    document.getElementById("ea_tbody").innerHTML = "";
-    document.getElementById("ea_thX").textContent = "X标签";
-    document.getElementById("ea_thValue").textContent = "聚合数值";
+    state.displayRows = [];
+    state.sortCol = null;
+    state.sortDir = "desc";
+    state.filterX = "";
+    state.filterValue = "";
+    state.filterCol = 0;
+    state.seriesVisible = state.yHeaders.map(() => true);
+    renderThead();
+    renderTable();
     document.getElementById("ea_tableHint").textContent = "执行分析后显示结果";
     const hint = document.getElementById("ea_chartHint");
     if (hint) {hint.style.display = "block";}
@@ -364,14 +506,6 @@
       ctx.clearRect(0, 0, logicalW, logicalH);
     }
     hoverShapes = [];
-    state.displayRows = [];
-    state.sortCol = null;
-    state.sortDir = "desc";
-    updateChartRangeUI();
-    const fx = document.getElementById("ea_filterX");
-    const fv = document.getElementById("ea_filterValue");
-    if (fx) {fx.value = "";}
-    if (fv) {fv.value = "";}
     updateSortIndicators();
   }
 
@@ -394,7 +528,8 @@
       newW = Math.max(320, Math.round(rect.width) - 2, n > 0 ? needW : 0);
       const maxLen = Math.max(1, ...state.displayRows.map((r) => r.xName.length));
       const padB = Math.max(40, maxLen * 12 + 12);
-      newH = 30 + 380 + padB;
+      const legendTop = state.yHeaders.length > 1 ? 20 : 0;
+      newH = 30 + legendTop + 380 + padB;
     }
     logicalW = newW;
     logicalH = newH;
@@ -437,18 +572,66 @@
     return getCss("--vscode-editor-background", "#ffffff");
   }
 
+  const PALETTE = ["#23a884", "#2f81f7", "#e6a23c", "#f56c6c", "#9b59b6", "#1bbc9b", "#f39c12", "#e74c3c", "#3498db", "#7f8c8d"];
+
+  function visibleCols() {
+    return state.yHeaders.map((_, i) => i).filter((i) => !!state.seriesVisible[i]);
+  }
+
+  function drawLegend(g, padL, topY) {
+    g.font = "11px sans-serif";
+    let x = padL;
+    const y = topY;
+    for (let c = 0; c < state.yHeaders.length; c++) {
+      const header = truncate(state.yHeaders[c] || "", 9);
+      const hidden = !state.seriesVisible[c];
+      g.fillStyle = PALETTE[c % PALETTE.length];
+      g.fillRect(x, y, 10, 10);
+      if (hidden) {
+        g.fillStyle = axisFg();
+        g.fillRect(x, y + 4, 10, 2);
+      }
+      g.fillStyle = axisFg();
+      g.globalAlpha = hidden ? 0.35 : 1;
+      g.textAlign = "left";
+      g.textBaseline = "middle";
+      g.fillText(header, x + 14, y + 5);
+      g.globalAlpha = 1;
+      const tw = g.measureText(header).width;
+      const w = 14 + tw + 2;
+      hoverShapes.push({ type: "legend", col: c, x, y: y - 2, w, h: 16, label: header });
+      x += w + 14;
+    }
+  }
+
   function drawAxesChart(g, W, H, kind) {
     const data = state.displayRows;
     const n = data.length;
-    const maxV = Math.max(1, ...data.map((r) => r.value));
+    const vis = visibleCols();
+    if (n === 0) {
+      return;
+    }
+    const showLegend = state.yHeaders.length > 1;
     const padL = 52;
     const padR = 16;
-    const padT = 30;
+    const padT = 30 + (showLegend ? 20 : 0);
     // 竖直 X 标签：底部留白随最长标签高度自适应（不截断，超高时滚动查看）
     const padB = Math.max(40, Math.max(...data.map((r) => r.xName.length)) * 12 + 12);
     const plotW = W - padL - padR;
     const plotH = H - padT - padB;
     const color = axisFg();
+
+    let maxV = 1;
+    for (const r of data) {
+      for (const c of vis) {
+        const v = Number(r.data[c] || 0);
+        if (v > maxV) {
+          maxV = v;
+        }
+      }
+    }
+    // Y 轴上限留出 ~10% 余量并取整齐刻度，避免最高柱顶死到绘图区上沿
+    maxV = niceCeil(maxV * 1.1);
 
     // Y 刻度 + 网格
     g.font = "11px sans-serif";
@@ -467,67 +650,114 @@
       g.fillText(fmtShort(val), padL - 6, vy);
     }
 
+    // 图例（可点击切换某列显隐）——即使全部系列隐藏也始终绘制，保证能再点回来
+    if (showLegend) {
+      drawLegend(g, padL, padT - 16);
+    }
+
+    // 全部系列已隐藏：只画坐标框 + 提示，等待用户通过图例恢复
+    if (vis.length === 0) {
+      g.strokeStyle = color;
+      g.lineWidth = 1;
+      g.beginPath();
+      g.moveTo(padL, padT);
+      g.lineTo(padL, padT + plotH);
+      g.lineTo(W - padR, padT + plotH);
+      g.stroke();
+      g.fillStyle = "rgba(128,128,128,0.8)";
+      g.font = "12px sans-serif";
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+      g.fillText("全部系列已隐藏：点击上方图例色块恢复显示",
+        padL + plotW / 2, padT + plotH / 2);
+      return;
+    }
+
     const step = plotW / Math.max(1, n);
     const slot = step * 0.7;
-    const barColor = "#23a884";
-    const lineColor = "#2f81f7";
-    hoverShapes = [];
 
-    for (let i = 0; i < n; i++) {
-      const r = data[i];
-      const cx = padL + step * (i + 0.5);
-      const h = (r.value / maxV) * plotH;
-      const yTop = padT + plotH - h;
-
-      if (kind === "bar") {
-        let x, w;
-        if (n === 1) {
-          x = padL;
-          w = plotW;
-        } else {
-          x = cx - slot / 2;
-          w = slot;
-        }
-        g.fillStyle = barColor;
-        g.fillRect(x, yTop, w, h);
-        hoverShapes.push({ type: "rect", x, y: yTop, w, h, label: r.xName, value: r.value, pct: null });
-
-        g.fillStyle = color;
-        g.font = "11px sans-serif";
-        g.textAlign = "center";
-        g.textBaseline = "bottom";
-        g.fillText(fmtShort(r.value), cx, yTop - 3);
-
-        // 竖直 X 标签
+    if (kind === "bar") {
+      const gap = 2;
+      const barW = Math.max(2, (slot - gap * (vis.length - 1)) / vis.length);
+      const labelFit = barW >= 26;
+      for (let i = 0; i < n; i++) {
+        const r = data[i];
+        const cx = padL + step * (i + 0.5);
+        const startX = cx - slot / 2;
+        vis.forEach((c, j) => {
+          const x = startX + j * (barW + gap);
+          const h = (r.data[c] / maxV) * plotH;
+          const yTop = padT + plotH - h;
+          g.fillStyle = PALETTE[c % PALETTE.length];
+          g.fillRect(x, yTop, barW, h);
+          hoverShapes.push({
+            type: "rect",
+            row: i,
+            col: c,
+            x,
+            y: yTop,
+            w: barW,
+            h,
+            label: r.xName,
+            value: r.data[c],
+            pct: null,
+          });
+          if (labelFit) {
+            g.fillStyle = color;
+            g.font = "10px sans-serif";
+            g.textAlign = "center";
+            g.textBaseline = "bottom";
+            g.fillText(fmtShort(r.data[c]), x + barW / 2, yTop - 2);
+          }
+        });
         drawVerticalXLabel(g, r.xName, cx, padT + plotH + 6);
-      } else {
-        // line
-        g.fillStyle = lineColor;
+      }
+    } else {
+      // line：每个可见列一条折线
+      for (const c of vis) {
+        g.strokeStyle = PALETTE[c % PALETTE.length];
+        g.lineWidth = 2;
         g.beginPath();
-        g.arc(cx, yTop, 4, 0, Math.PI * 2);
-        g.fill();
-        hoverShapes.push({ type: "rect", x: cx - 8, y: yTop - 8, w: 16, h: 16, label: r.xName, value: r.value, pct: null });
-
-        if (i > 0) {
-          const prev = data[i - 1];
-          const prevY = padT + plotH - (prev.value / maxV) * plotH;
-          g.strokeStyle = lineColor;
-          g.lineWidth = 2;
-          g.beginPath();
-          g.moveTo(cx - step, prevY);
-          g.lineTo(cx, yTop);
-          g.stroke();
+        for (let i = 0; i < n; i++) {
+          const cx = padL + step * (i + 0.5);
+          const yTop = padT + plotH - (data[i].data[c] / maxV) * plotH;
+          if (i === 0) {
+            g.moveTo(cx, yTop);
+          } else {
+            g.lineTo(cx, yTop);
+          }
         }
-
-        g.fillStyle = color;
-        g.font = "11px sans-serif";
-        g.textAlign = "center";
-        g.textBaseline = "bottom";
-        g.fillText(fmtShort(r.value), cx, yTop - 6);
-
-        g.fillStyle = color;
-        g.textAlign = "center";
-        g.textBaseline = "top";
+        g.stroke();
+      }
+      for (let i = 0; i < n; i++) {
+        const r = data[i];
+        const cx = padL + step * (i + 0.5);
+        vis.forEach((c) => {
+          const yTop = padT + plotH - (r.data[c] / maxV) * plotH;
+          g.fillStyle = PALETTE[c % PALETTE.length];
+          g.beginPath();
+          g.arc(cx, yTop, 3.5, 0, Math.PI * 2);
+          g.fill();
+          hoverShapes.push({
+            type: "rect",
+            row: i,
+            col: c,
+            x: cx - 8,
+            y: yTop - 8,
+            w: 16,
+            h: 16,
+            label: r.xName,
+            value: r.data[c],
+            pct: null,
+          });
+          if (vis.length === 1) {
+            g.fillStyle = color;
+            g.font = "10px sans-serif";
+            g.textAlign = "center";
+            g.textBaseline = "bottom";
+            g.fillText(fmtShort(r.data[c]), cx, yTop - 6);
+          }
+        });
         drawVerticalXLabel(g, r.xName, cx, padT + plotH + 6);
       }
     }
@@ -558,16 +788,17 @@
 
   function drawPie(g, W, H) {
     const data = state.displayRows;
-    const total = data.reduce((s, r) => s + r.value, 0) || 1;
+    // 饼图单维度：只用第一个 Y 列
+    const total = data.reduce((s, r) => s + (r.data[0] || 0), 0) || 1;
     const cx = W / 2;
     const cy = H / 2 + 6;
     const radius = Math.min(W, H) / 2 - 20;
-    const colors = ["#23a884", "#2f81f7", "#e6a23c", "#f56c6c", "#9b59b6", "#1bbc9b", "#f39c12", "#e74c3c", "#3498db", "#7f8c8d"];
+    const colors = PALETTE;
     hoverShapes = [];
 
     let start = -Math.PI / 2;
     for (let i = 0; i < data.length; i++) {
-      const v = data[i].value;
+      const v = data[i].data[0];
       const frac = v / total;
       const sweep = frac * Math.PI * 2;
       const end = start + sweep;
@@ -603,7 +834,7 @@
         cy,
         radius,
         label: data[i].xName,
-        value: data[i].value,
+        value: data[i].data[0],
         pct: frac * 100,
       });
       start = end;
@@ -621,7 +852,7 @@
       g.fillStyle = axisFg();
       g.textAlign = "left";
       g.textBaseline = "middle";
-      g.fillText(`${truncate(data[i].xName, 20)}  ${fmtShort(data[i].value)}`, 26, y + 7);
+      g.fillText(`${truncate(data[i].xName, 20)}  ${fmtShort(data[i].data[0])}`, 26, y + 7);
       y += lh;
     }
   }
@@ -656,14 +887,46 @@
       }
     }
     if (hit) {
-      const pctTxt = hit.pct !== null ? `  (${hit.pct.toFixed(1)}%)` : "";
-      tooltipEl.textContent = `${hit.label}\n${fmtShort(hit.value)}${pctTxt}`;
+      let text;
+      if (hit.type === "legend") {
+        text = `${hit.label}：点击${state.seriesVisible[hit.col] ? "隐藏" : "显示"}该系列`;
+      } else if (hit.type === "pie") {
+        text = `${hit.label}\n${fmtShort(hit.value)}  (${hit.pct.toFixed(1)}%)`;
+      } else if (hit.row !== undefined) {
+        const row = state.displayRows[hit.row];
+        text = row.xName;
+        state.yHeaders.forEach((h, ci) => {
+          if (state.seriesVisible[ci]) {
+            text += `\n${h}: ${fmtShort(row.data[ci])}`;
+          }
+        });
+      } else {
+        const pctTxt = hit.pct !== null ? `  (${hit.pct.toFixed(1)}%)` : "";
+        text = `${hit.label}\n${fmtShort(hit.value)}${pctTxt}`;
+      }
+      tooltipEl.textContent = text;
       tooltipEl.style.display = "block";
       tooltipEl.style.left = x + 14 + "px";
       tooltipEl.style.top = y + 14 + "px";
     } else {
       tooltipEl.style.display = "none";
     }
+  }
+
+  function niceCeil(v) {
+    const pow = Math.pow(10, Math.floor(Math.log10(v)));
+    const m = v / pow;
+    if (m <= 1) {return 1 * pow;}
+    if (m <= 1.2) {return 1.2 * pow;}
+    if (m <= 1.5) {return 1.5 * pow;}
+    if (m <= 2) {return 2 * pow;}
+    if (m <= 2.5) {return 2.5 * pow;}
+    if (m <= 3) {return 3 * pow;}
+    if (m <= 4) {return 4 * pow;}
+    if (m <= 5) {return 5 * pow;}
+    if (m <= 6) {return 6 * pow;}
+    if (m <= 8) {return 8 * pow;}
+    return 10 * pow;
   }
 
   function fmtShort(v) {
@@ -689,15 +952,20 @@
       state.columns = msg.columns;
       state.rowCount = msg.rowCount;
       state.statRows = [];
+      state.yHeaders = ["聚合数值"];
+      state.yCols = [];
+      state.seriesVisible = [];
       document.getElementById("ea_fileInput").value = msg.filePath;
       document.getElementById("ea_fileStatus").textContent = `已加载 ${msg.rowCount} 行数据，共 ${msg.columns.length} 个字段`;
       populateColumns(msg.columns);
       resetResult();
     } else if (msg.type === "analysisResult") {
       state.statRows = msg.statRows || [];
-      state.displayRows = [];
       state.xHeader = msg.xHeader || "X标签";
-      state.yHeader = msg.yHeader || "聚合数值";
+      state.yHeaders = Array.isArray(msg.yHeaders) && msg.yHeaders.length
+        ? msg.yHeaders
+        : ["聚合数值"];
+      state.yCols = Array.isArray(msg.yCols) ? msg.yCols : state.yHeaders;
       state.rowCount = msg.rowCount || 0;
       state.chartType = msg.chartType || "bar";
       state.sortCol = null;
@@ -705,6 +973,7 @@
       if (!state.statRows.length) {
         log("⚠处理后无可用数据，请检查筛选/正则/Y列");
       }
+      resetResult();
       computeDisplayRows();
       updateSortIndicators();
       renderTable();

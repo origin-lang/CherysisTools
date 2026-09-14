@@ -67,6 +67,24 @@
         margin-top: 6px;
         line-height: 1.5;
       }
+      .ycol-item {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 1px 4px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .ycol-item:hover {
+        background: var(--vscode-list-hoverBackground);
+      }
+      .ycol-item input[type="checkbox"] {
+        margin: 0;
+      }
+      #ea_yColList.disabled {
+        pointer-events: none;
+        opacity: 0.45;
+      }
       .radio-horizontal-group {
         display: flex;
         gap: 16px;
@@ -304,10 +322,21 @@
           </select>
         </div>
         <div class="form-group">
-          <label class="form-label">Y轴数值列 *</label>
-          <select id="ea_yCol" style="width: 100%">
-            <option value="">— 请选择列 —</option>
-          </select>
+          <label class="form-label">Y轴数值列 *（可多选）</label>
+          <div
+            id="ea_yColList"
+            style="
+              max-height: 170px;
+              overflow-y: auto;
+              border: 1px solid var(--vscode-input-border);
+              border-radius: 4px;
+              padding: 4px 6px;
+              background: var(--vscode-input-background);
+            "
+          ></div>
+          <div class="tip-text" id="ea_yHint">
+            勾选一个或多个数值列：结果表每列一列、柱状/折线图每列一个系列（饼图只画第一列）；多列时图表顶部出现图例，点击色块可隐藏/显示对应系列。
+          </div>
         </div>
         <div class="form-group">
           <div class="form-label">分组规则（多组，按优先级匹配；可选）</div>
@@ -394,18 +423,7 @@
         </div>
         <div class="result-table-wrap" id="ea_tableWrap">
           <table class="result-table" id="ea_table">
-            <thead>
-              <tr>
-                <th style="width: 60px">序号</th>
-                <th id="ea_thX" class="sortable" data-col="x">X标签 <span class="sort-indicator" id="ea_sortX"></span></th>
-                <th id="ea_thValue" class="sortable" data-col="value" style="width: 160px">聚合数值 <span class="sort-indicator" id="ea_sortValue"></span></th>
-              </tr>
-              <tr class="filter-row">
-                <td></td>
-                <td><input id="ea_filterX" type="text" placeholder="筛选 X 标签..." /></td>
-                <td><input id="ea_filterValue" type="text" placeholder="如 >100 或 10-50" /></td>
-              </tr>
-            </thead>
+            <thead id="ea_thead"></thead>
             <tbody id="ea_tbody"></tbody>
           </table>
         </div>
