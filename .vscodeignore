@@ -29,16 +29,4 @@ src/test/**
 !src/tools/**/fragment.html
 !src/tools/**/client.js
 
-# pnpm环境：排除全部node_modules，但是保留生产依赖(xlsx/sharp/better-sqlite3)以及它们在.pnpm内的包
-node_modules/**
-!node_modules/sharp/**
-!node_modules/xlsx/**
-!node_modules/better-sqlite3/**
-!node_modules/.pnpm/@img+*/**
-!node_modules/.pnpm/sharp+*/**
-!node_modules/.pnpm/xlsx+*/**
-!node_modules/.pnpm/better-sqlite3+*/**
-!node_modules/.pnpm/bindings+*/
-!node_modules/.pnpm/file-uri-to-path+*/
-!node_modules/bindings/**
-!node_modules/file-uri-to-path/**
+# pnpm环境：vsce-pnpm(默认依赖解析模式)只会把生产依赖加入打包列表，node_modules无需排除
