@@ -48,7 +48,8 @@
     "watch": "tsc -watch -p ./",
     "pretest": "pnpm run compile && pnpm run lint",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "test": "vscode-test",
+    "package": "vsce-pnpm package"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",

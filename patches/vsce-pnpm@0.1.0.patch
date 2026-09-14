@@ -1,0 +1,17 @@
+diff --git a/dist/src-CVOqVVGp.mjs b/dist/src-CVOqVVGp.mjs
+index b25cb70e7de9334934354bea71f1e611f90559e7..f4cf3439e0645573d47a0be1f8bedebed3ef83f2 100644
+--- a/dist/src-CVOqVVGp.mjs
++++ b/dist/src-CVOqVVGp.mjs
+@@ -511,7 +511,11 @@ async function resolvePnpmDependencyPath(root, fromPath, name, optional) {
+ 	if (direct) return direct;
+ 	const realPath = await fs.promises.realpath(fromPath).catch(() => void 0);
+ 	if (realPath) {
+-		const siblingCandidate = path.join(path.dirname(realPath), name);
++		let container = path.dirname(realPath);
++		while (container !== path.dirname(container) && path.basename(container) !== "node_modules") {
++			container = path.dirname(container);
++		}
++		const siblingCandidate = path.join(container, name);
+ 		if (await fileExists(path.join(siblingCandidate, "package.json"))) return siblingCandidate;
+ 	}
+ 	if (optional) {

@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  vsce-pnpm@0.1.0: 6915d218760df4564c8f00707e433483be460f25ecb247873822207904ae22c0
+
 importers:
 
   .:
@@ -56,7 +59,7 @@ importers:
         version: 8.69.0(eslint@10.9.1(supports-color@8.1.1))(supports-color@8.1.1)(typescript@6.0.3)
       vsce-pnpm:
         specifier: ^0.1.0
-        version: 0.1.0(supports-color@8.1.1)
+        version: 0.1.0(patch_hash=6915d218760df4564c8f00707e433483be460f25ecb247873822207904ae22c0)(supports-color@8.1.1)
 
 packages:
 
@@ -4497,7 +4500,7 @@ snapshots:
 
   version-range@4.15.0: {}
 
-  vsce-pnpm@0.1.0(supports-color@8.1.1):
+  vsce-pnpm@0.1.0(patch_hash=6915d218760df4564c8f00707e433483be460f25ecb247873822207904ae22c0)(supports-color@8.1.1):
     dependencies:
       '@secretlint/node': 10.2.2(supports-color@8.1.1)
       '@secretlint/secretlint-formatter-sarif': 10.2.2

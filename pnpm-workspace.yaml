@@ -3,3 +3,5 @@ allowBuilds:
   better-sqlite3: true
   keytar: false
   sharp: false
+patchedDependencies:
+  vsce-pnpm@0.1.0: patches/vsce-pnpm@0.1.0.patch
