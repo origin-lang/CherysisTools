@@ -337,7 +337,15 @@
               (window.toolClients && window.toolClients[toolName]) || null;
             currentToolClient = client;
             if (client && client.init) {
-              client.init();
+              try {
+                client.init();
+              } catch (err) {
+                vscode.postMessage({
+                  type: "log",
+                  text: "❌工具初始化失败：" + (err && err.message ? err.message : String(err)),
+                });
+                return;
+              }
             }
             // 投递暂存的消息
             while (pendingClientMessages.length > 0) {

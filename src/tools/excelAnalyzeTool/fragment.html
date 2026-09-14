@@ -381,14 +381,16 @@
     </div>
 
     <!-- 结果区 -->
+    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px">
+      <b style="font-size: 12px; margin-right: 4px">结果显示</b>
+      <button class="btn-zoom" id="ez_tableToggle" style="font-size: 11px">隐藏表格</button>
+      <button class="btn-zoom" id="ez_chartToggle" style="font-size: 11px">隐藏图表</button>
+    </div>
     <div class="grid-2col" id="ea_resultGrid">
       <div class="card-panel">
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px">
           <div class="form-label" style="font-weight: 700">统计结果表</div>
-          <div style="display: flex; align-items: center; gap: 6px">
-            <button class="btn-zoom" id="ez_tableToggle" style="font-size: 11px">隐藏表格</button>
-            <button class="btn-zoom" id="ea_btnExportTable" style="font-size: 11px">💾 导出Excel</button>
-          </div>
+          <button class="btn-zoom" id="ea_btnExportTable" style="font-size: 11px">💾 导出Excel</button>
         </div>
         <div class="result-table-wrap" id="ea_tableWrap">
           <table class="result-table" id="ea_table">
@@ -415,10 +417,7 @@
           <div class="form-label" style="font-weight: 700">
             可视化图表（悬浮可查看数值；柱状/折线的长标签可滚动查看全文）
           </div>
-          <div style="display: flex; align-items: center; gap: 6px">
-            <button class="btn-zoom" id="ez_chartToggle" style="font-size: 11px">隐藏图表</button>
-            <button class="btn-zoom" id="ea_btnExportChart" style="font-size: 11px">🖼️ 保存PNG</button>
-          </div>
+          <button class="btn-zoom" id="ea_btnExportChart" style="font-size: 11px">🖼️ 保存PNG</button>
         </div>
         <div class="chart-box" id="ea_chartBox">
           <div class="chart-scroll" id="ea_chartScroll">
