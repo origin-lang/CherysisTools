@@ -249,6 +249,10 @@
         outline-offset: -2px;
         background: var(--vscode-list-hoverBackground, transparent);
       }
+      .lightbox.img-drop-hover {
+        outline: 2px dashed var(--vscode-focusBorder, #0078d4);
+        outline-offset: -6px;
+      }
       .thumb.placeholder {
         display: inline-flex;
         align-items: center;
@@ -397,7 +401,7 @@
         position: fixed;
         inset: 0;
         background: rgba(0, 0, 0, 0.5);
-        z-index: 40;
+        z-index: 60;
         display: flex;
         align-items: center;
         justify-content: center;

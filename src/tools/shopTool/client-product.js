@@ -148,7 +148,10 @@ function filteredProducts() {
     .filter((p) => {
       for (const key of TEXT_FILTER_FIELDS) {
         const v = filters["f_" + key];
-        if (v && !cellValue(p, key).toLowerCase().includes(String(v).toLowerCase())) {
+        if (
+          v &&
+          !cellValue(p, key).toLowerCase().includes(String(v).toLowerCase())
+        ) {
           return false;
         }
       }
@@ -221,8 +224,11 @@ function openLightbox(product) {
   state.lbCode = product.code;
   state.lbIdx = 0;
   state.lbPendingCopy = null;
-  const mask = showModal(`
-        <div class="lightbox" id="lbBox">
+  closeLightbox();
+  const lb = document.createElement("div");
+  lb.id = "lbBox";
+  lb.className = "lightbox";
+  lb.innerHTML = `
           <div class="lb-head">
             <span><b>${esc(product.code)}</b> ${esc(product.name)} <span class="muted" style="color:#aaa">（${esc(displayGrade(product))}・售价 ¥${money(product.sale_price)}）</span></span>
             <span style="display:flex;gap:8px;align-items:center">
@@ -233,13 +239,18 @@ function openLightbox(product) {
             </span>
           </div>
           <img class="big" id="lbBig" style="display:none" />
-          <div class="thumbs" id="lbThumbs"><span class="muted" style="color:#aaa">图片加载中…</span></div>
-        </div>`);
-  mask.querySelector("#lbClose").onclick = closeModal;
-  mask.querySelector("#lbCopy").onclick = () => copyText(fullName(product));
-  mask.querySelector("#lbUpload").onclick = () =>
+          <div class="thumbs" id="lbThumbs"><span class="muted" style="color:#aaa">图片加载中…</span></div>`;
+  lb.addEventListener("click", (e) => {
+    if (e.target === lb) {
+      closeLightbox();
+    }
+  });
+  document.body.appendChild(lb);
+  lb.querySelector("#lbClose").onclick = closeLightbox;
+  lb.querySelector("#lbCopy").onclick = () => copyText(fullName(product));
+  lb.querySelector("#lbUpload").onclick = () =>
     post({ type: "uploadImages", code: product.code });
-  mask.querySelector("#lbClearImg").onclick = async () => {
+  lb.querySelector("#lbClearImg").onclick = async () => {
     if (
       await confirmBox(
         `确认清空 ${product.code} 的图片文件夹？（文件会真的删除）`,
@@ -249,6 +260,13 @@ function openLightbox(product) {
     }
   };
   post({ type: "getImages", code: product.code });
+}
+
+function closeLightbox() {
+  const lb = document.getElementById("lbBox");
+  if (lb) {
+    lb.remove();
+  }
 }
 
 function filterSig(list) {
@@ -351,20 +369,13 @@ function filterControl(key) {
     case "category":
     case "grade":
       return `<select class="filter-cell" data-col-f="${key}" title="筛选${key === "grade" ? "等级" : "品类"}"><option value="">全部</option>${opts(
-        distinctOptions(
-          key,
-          key === "grade" ? displayGrade : undefined,
-        ),
+        distinctOptions(key, key === "grade" ? displayGrade : undefined),
       )}</select>`;
     case "cost_price":
     case "sale_price":
     case "stockTotal": {
       const label =
-        key === "cost_price"
-          ? "进价"
-          : key === "sale_price"
-            ? "售价"
-            : "库存";
+        key === "cost_price" ? "进价" : key === "sale_price" ? "售价" : "库存";
       return `<input class="filter-cell" type="text" data-col-f="${key}" data-fr="range" title="筛选${label}：输入 10~30 表示 10 到 30，也可直接输 10 或 >10 / <30" placeholder="范围" value="${esc(String(filters["f_" + key] || ""))}" />`;
     }
     default:
@@ -555,7 +566,9 @@ function bindColFilters() {
         return;
       }
       const pos =
-        typeof el.selectionStart === "number" ? el.selectionStart : el.value.length;
+        typeof el.selectionStart === "number"
+          ? el.selectionStart
+          : el.value.length;
       renderProducts();
       const nf = document.querySelector(
         `[data-col-f="${key}"]${fr ? `[data-fr="${fr}"]` : ""}`,
@@ -1104,12 +1117,16 @@ function openImportProducts() {
     });
   }
   let mode =
-    state.settings.import_mode === "add" || state.settings.import_mode === "update"
+    state.settings.import_mode === "add" ||
+    state.settings.import_mode === "update"
       ? state.settings.import_mode
       : "both";
   const impKeys = () =>
     PRODUCT_FIELDS.filter(
-      (f) => f.key !== "code" && IMPORT_WRITABLE_KEYS.includes(f.key) && sel.has(f.key),
+      (f) =>
+        f.key !== "code" &&
+        IMPORT_WRITABLE_KEYS.includes(f.key) &&
+        sel.has(f.key),
     );
   const hiHint = {
     both: "符合的行：已有编号＝更新，新编号＝新建；",
@@ -1149,7 +1166,8 @@ function openImportProducts() {
     </div>`);
   const renderIp = () => {
     const cols = ["编号"].concat(impKeys().map((f) => f.label));
-    $("ipColDesc").innerHTML = `列顺序＝<b>${cols.join("、")}</b><br />` +
+    $("ipColDesc").innerHTML =
+      `列顺序＝<b>${cols.join("、")}</b><br />` +
       "· 分隔：Tab / 空格 / 逗号；名称里不要带空格（空格按列分隔）<br />" +
       "· 库存/累计售出/累计净售是自动统计列，导入不参与；状态列可导入（填 在售/已下架 或 1/0）；备注不导入" +
       (cols.length <= 2 ? "<br />· 只贴编号也能建（其余走默认）" : "");
@@ -1157,7 +1175,9 @@ function openImportProducts() {
     $("ipText").placeholder =
       "示例：\n" +
       "L001\t" +
-      impKeys().map((f) => IMPORT_SAMPLES[f.key] ?? "").join("\t");
+      impKeys()
+        .map((f) => IMPORT_SAMPLES[f.key] ?? "")
+        .join("\t");
   };
   renderIp();
   mask.querySelectorAll('input[name="ipMode"]').forEach((rb) => {
@@ -1166,7 +1186,7 @@ function openImportProducts() {
       renderIp();
     };
   });
-  mask.querySelectorAll('[data-ip-k]').forEach((cb) => {
+  mask.querySelectorAll("[data-ip-k]").forEach((cb) => {
     cb.onchange = () => {
       if (cb.disabled || cb.dataset.ipK === "code") {
         return;
@@ -1229,7 +1249,8 @@ function openExportProducts() {
   const selCount = state.selectedProducts.size;
   const radio = (val, label, disabled) =>
     `<label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;cursor:${disabled ? "not-allowed" : "pointer"}"><input type="radio" name="eoScope" value="${val}" ${disabled ? "disabled" : ""}/>${label}</label>`;
-  const defaultScope = selCount > 0 ? "selected" : hasFilter ? "filtered" : "all";
+  const defaultScope =
+    selCount > 0 ? "selected" : hasFilter ? "filtered" : "all";
   const mask = showModal(`
     <h3>📤 导出商品 Excel</h3>
     <p class="muted" style="margin-bottom:6px">导出范围：</p>
@@ -1252,7 +1273,15 @@ function openExportProducts() {
             continue;
           }
           if (f.key === "purchase_link") {
-            parts.push(chip("_image", "图片", "图片列：在采购链接前插入每行首张图", checked.has("_image"), false));
+            parts.push(
+              chip(
+                "_image",
+                "图片",
+                "图片列：在采购链接前插入每行首张图",
+                checked.has("_image"),
+                false,
+              ),
+            );
           }
           parts.push(chip(f.key, f.label, "", checked.has(f.key), false));
         }
@@ -1298,7 +1327,9 @@ function openExportProducts() {
       wrap.innerHTML = lines.map((l) => esc(l)).join("<br>");
     } else {
       $("eoScopeDesc").textContent =
-        scopeLabels[scopeVal] === undefined ? "" : `范围：${scopeLabels[scopeVal]}`;
+        scopeLabels[scopeVal] === undefined
+          ? ""
+          : `范围：${scopeLabels[scopeVal]}`;
     }
     renderEoCols();
   };
@@ -1359,7 +1390,7 @@ function openExportProducts() {
   $("eoCodes").oninput = () => renderEo();
   setScope(defaultScope);
   renderEoCols();
-  mask.querySelectorAll('[data-io-e]').forEach((cb) => {
+  mask.querySelectorAll("[data-io-e]").forEach((cb) => {
     cb.onchange = () => {
       if (cb.disabled || cb.dataset.ioE === "code") {
         return;
@@ -1374,8 +1405,9 @@ function openExportProducts() {
       return;
     }
     const scopeVal = (
-      [...mask.querySelectorAll('input[name="eoScope"]')].find((r) => r.checked) ||
-      {}
+      [...mask.querySelectorAll('input[name="eoScope"]')].find(
+        (r) => r.checked,
+      ) || {}
     ).value;
     let codes;
     if (scopeVal === "filtered") {
@@ -1386,7 +1418,9 @@ function openExportProducts() {
         .map((x) => x.code);
     } else if (scopeVal === "manual") {
       const { valid } = parseEoCodes($("eoCodes").value);
-      const validCodes = [...new Set(valid)].filter((c) => matchedByCode.has(c));
+      const validCodes = [...new Set(valid)].filter((c) =>
+        matchedByCode.has(c),
+      );
       if (validCodes.length === 0) {
         toast("没有匹配到任何编号，请检查输入");
         return;
@@ -1474,15 +1508,13 @@ function openColSet() {
           <button id="csSave" class="btn-teal">保存</button>
         </div>`);
   const recalc = () => {
-    mask
-      .querySelectorAll('[data-g="cur"]')
-      .forEach((cb) => {
-        if (cb.dataset.cfk === "image") {
-          cb.checked = imgVisible;
-        } else {
-          cb.checked = toggle.has(cb.dataset.cfk);
-        }
-      });
+    mask.querySelectorAll('[data-g="cur"]').forEach((cb) => {
+      if (cb.dataset.cfk === "image") {
+        cb.checked = imgVisible;
+      } else {
+        cb.checked = toggle.has(cb.dataset.cfk);
+      }
+    });
   };
   $("csListAll").onclick = () => {
     PRODUCT_FIELDS.forEach((f) => toggle.add(f.key));
@@ -1551,7 +1583,8 @@ function openContextMenu(e, p, field) {
   menu.style.cssText =
     "position:fixed;z-index:70;background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:4px;padding:4px 0;min-width:150px;box-shadow:0 2px 8px rgba(0,0,0,.3)";
   const editable = EDITABLE_FIELDS.has(field);
-  const canPaste = !!appClipboard || !!(navigator.clipboard && navigator.clipboard.readText);
+  const canPaste =
+    !!appClipboard || !!(navigator.clipboard && navigator.clipboard.readText);
   menu.innerHTML =
     `<div class="ctx-cellops">` +
     `<div class="ctx-cellop" data-cellop="copy" title="复制该格 (Ctrl+C)"><span class="cop-icon">📋</span><span>复制</span></div>` +
@@ -1562,8 +1595,8 @@ function openContextMenu(e, p, field) {
     `<div class="ctx-item" data-copy="table">复制整表(筛选后)</div>` +
     `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
     (p.status === 0
-      ? `<div class="ctx-item" data-pctx="off">下架（置灰不删除）</div>`
-      : `<div class="ctx-item" data-pctx="on">上架恢复出售</div>`) +
+      ? `<div class="ctx-item" data-pctx="off">下架</div>`
+      : `<div class="ctx-item" data-pctx="on">上架</div>`) +
     `<div class="ctx-item" data-pctx="clearimg">清空图片文件夹…</div>` +
     `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
     `<div class="ctx-item ctx-danger" data-pctx="delrow">🗑 删除整行（含记录）…</div>`;
@@ -1697,7 +1730,9 @@ function openCoverMenu(e, p) {
 var shopImageBindings = null;
 
 function isImageFile(file) {
-  return !!file && typeof file.type === "string" && file.type.startsWith("image/");
+  return (
+    !!file && typeof file.type === "string" && file.type.startsWith("image/")
+  );
 }
 
 function readFileAsDataURL(file) {
@@ -1765,7 +1800,9 @@ function productFromCoverTarget(el) {
   if (!coverEl) {
     return null;
   }
-  return state.products.find((x) => x.id === Number(coverEl.dataset.id)) || null;
+  return (
+    state.products.find((x) => x.id === Number(coverEl.dataset.id)) || null
+  );
 }
 
 // 拖放/粘贴的目标定位：图片列 → 任意带 data-pid 的行/单元格 → 灯箱
@@ -1780,7 +1817,8 @@ function productForDropOrPaste(e) {
     const coverEl = el.closest("[data-p-act='img']");
     const rowEl = coverEl || el.closest("[data-pid]");
     if (rowEl) {
-      product = state.products.find((x) => x.id === Number(rowEl.dataset.id)) || null;
+      product =
+        state.products.find((x) => x.id === Number(rowEl.dataset.id)) || null;
     }
   }
   const inLb = !!el.closest("#lbBox");
@@ -1795,7 +1833,11 @@ function onImagePasteCapture(e) {
     return;
   }
   const t = e.target;
-  if (t && t.closest && t.closest("input,textarea,select,[contenteditable='true']")) {
+  if (
+    t &&
+    t.closest &&
+    t.closest("input,textarea,select,[contenteditable='true']")
+  ) {
     return;
   }
   const files = collectFiles(e.clipboardData || window.clipboardData || null);
@@ -1838,6 +1880,11 @@ function onImageDragOver(e) {
   const target = coverEl || rowEl;
   if (target) {
     target.classList.add("img-drop-hover");
+  } else if (inLb) {
+    const lb = document.getElementById("lbBox");
+    if (lb) {
+      lb.classList.add("img-drop-hover");
+    }
   }
   const types = (e.dataTransfer && e.dataTransfer.types) || [];
   if (
@@ -1845,7 +1892,9 @@ function onImageDragOver(e) {
     Array.from(types).some((x) => String(x).toLowerCase() === "files")
   ) {
     fileDragHinted = true;
-    toast("松开鼠标即可把图片加到这里（若弹系统提示没反应，请按住 Shift 拖入）");
+    toast(
+      "松开鼠标即可把图片加到这里（若弹系统提示没反应，请按住 Shift 拖入）",
+    );
   }
 }
 
@@ -1863,6 +1912,11 @@ function onImageDrop(e) {
   const target = coverEl || rowEl;
   if (target) {
     target.classList.remove("img-drop-hover");
+  } else if (inLb) {
+    const lb = document.getElementById("lbBox");
+    if (lb) {
+      lb.classList.remove("img-drop-hover");
+    }
   }
   if (!coverEl && !rowEl && !inLb) {
     return;
@@ -1889,25 +1943,24 @@ function clearImgDropHover() {
     .forEach((el) => el.classList.remove("img-drop-hover"));
 }
 
-// document 级监听切走再切回会累积，先解绑旧的再绑新的
+// document 级捕获监听覆盖列表/宫格/灯箱，切走再切回会累积，先解绑旧的再绑新的
 function bindImageDropPaste() {
   if (shopImageBindings) {
     document.removeEventListener("paste", shopImageBindings.paste, true);
-    document.removeEventListener("dragleave", shopImageBindings.dragleave);
+    document.removeEventListener("dragleave", shopImageBindings.dragleave, true);
+    document.removeEventListener("dragover", shopImageBindings.dragover, true);
+    document.removeEventListener("drop", shopImageBindings.drop, true);
   }
   shopImageBindings = {
     paste: onImagePasteCapture,
     dragleave: clearImgDropHover,
+    dragover: onImageDragOver,
+    drop: onImageDrop,
   };
   document.addEventListener("paste", shopImageBindings.paste, true);
-  document.addEventListener("dragleave", shopImageBindings.dragleave);
-  ["productListView", "productGalleryView"].forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) {
-      el.addEventListener("dragover", onImageDragOver);
-      el.addEventListener("drop", onImageDrop);
-    }
-  });
+  document.addEventListener("dragleave", shopImageBindings.dragleave, true);
+  document.addEventListener("dragover", shopImageBindings.dragover, true);
+  document.addEventListener("drop", shopImageBindings.drop, true);
 }
 
 function onProductAct(e) {
