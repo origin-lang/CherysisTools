@@ -512,3 +512,24 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
    - 规划：新增 `stock_adjust_log`（`product_id` / `code` / `old` / `new` / `delta` / `date` / `remark`），清点、批量调整、盘点都落一条明细；商品列表或设置页提供「库存变动台账」查看；清点/盘点类操作前也补 `preOpBackup`（当前只有删除类做事前留档）。
 2. **候选（未确认，暂缓）**：采购（procurementTool）与店铺打通（采买到货自动更新进价/库存/补货入库）；「建议补货清单」导出（缺货 × 补到目标量）；品类/系列维度的销售与利润聚合分析；通用列映射导入对话框（预留接微信/抖音订单明细，`[待确认#3]`）；盘点工作表（按编号 Enter 依次填实存 + 批次写库 + 差异清单）。
 3. **实现基线**（立项时注意）：库存读写已全部收敛到 `stock_manual` 单列 + 各写入路径增量维护（一定别回退到「现算」）；新写入路径要同步 `aggCache`；清点操作建议进撤销栈（现状 `setStockQty` 已 pushUndo，保持）。
+
+## 二十四、商品导入预览（先解析预览、确认后才落库）
+
+> 归档时间：2026-09-16。状态：**已实现**。
+
+- **背景**：导入商品原是「粘贴 → 直接写库」一步到位，批量导入时看不到会改哪些行，「无法解析」的行要到事后日志才看到；误点会把已有商品一次性覆盖，不可逆。
+- **决策（定档）**：做完整版——解析后先展示「将新增/将更新/将跳过」+ 每个 update 行的**字段级 diff**（旧→新），确认后才提交；只做商品导入，粘贴销售（pasteSales）本次不改；品类/系列销售利润分析按指示砍掉并登记进「二十三、待办·规划」。
+- **后端**（`handlers/product.ts`）：
+  - 从原 `importProducts` 抽出**无副作用**纯解析 `buildImportPlan`：逐行决策逻辑与旧版完全一致，只收集"计划"不落库；
+  - 拆两个消息：`previewImportProducts {text, mode, fields}` → 回 `importPreview {token, created, updated, skipped, bad[], rows[], total, truncated}`（rows 上限 200 + `truncated` 防消息体过大）；`commitImportProducts {token}` → 沿用原 `productsImported` 消息体；
+  - 计划暂存模块级 `pendingImport` + 随机 token 防误提交（不匹配直接拒绝）；**预览零副作用**（不写库、不 ensureRule）；
+  - 售价按规则重算的一致性：ensureRule 默认规则是确定性的（expr `cost*1.5` + tail `p88`→`+0.88`），预览用 `IMPORT_DEFAULT_MISSING_RULE` 占位，与 commit 时 ensure 后 `calcPrice` 的结果**完全一致**（不必提交时重算）；
+  - commit 全流程（preOpBackup + 快照 + 缺的等级规则才 ensureRule 并提示 + 写库 + pushUndo + loadAll + productsImported）与旧行为逐条等价；**提交前身份复检**：预览后编号被占用/删除 → 该行跳过并单独提示，避免覆盖；
+  - 语义与旧版一致：表头行整行跳过、缺编号 = `bad`、文本字段 `has` 即写（同值也计 updated）、`touched>0` 才算更新、非手动价时售价列可见或等级/进价有变才按规则重算、status 支持 在售/上架=0·已下架/下架=1。
+- **前端**：
+  - `client-product.js`：`openImportProducts` 两段式——`#ipOptions`（方式 + 字段 + 文本框）→「解析预览」→ `#ipPreview`（汇总「将新增 N · 将更新 M · 将跳过 K」+ 折叠「无法解析」原文 + 表格 `类型|编号|名称|变更` 旧→新 diff）→「确认导入 / ← 返回修改」；
+  - `client-main.js`：新增 `importPreview` 分支渲染预览；`productsImported` 自动关导入弹窗；`dbOpError` 复位按钮防卡「解析中…/导入中…」；
+  - 令牌用 `var pendingImportToken` / `ipMask` 挂全局——**共享全局只能 `var`**，脚本重载同作用域 `let/const` 会 SyntaxError；
+  - `fragment.html`：补 `#ipPreview` 样式（汇总色、粘性表头、max-height 滚动、bad 红色块）。
+- **文档**：`shopTool-manual.md` 导入小节补「先解析预览再确认」；测试指引同步为「解析预览 → 确认导入」两步。
+- 验证：`tsc -p ./` 0 error、`eslint src` 仅既有 4 条存量 warning、`node --check` ×2 通过。测试运行本次押后。

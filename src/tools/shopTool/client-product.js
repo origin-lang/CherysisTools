@@ -27,6 +27,8 @@ function cellValue(p, key) {
 
 var selCell = null; // { pid, field } 列表视图当前选中的单元格
 var appClipboard = null; // { value } 内部单元格剪贴板内容 | null
+var pendingImportToken = ""; // 商品导入「解析预览→确认提交」的令牌
+var ipMask = null; // 当前商品导入弹窗遮罩（提交成功/取消后复位）
 
 const TEXT_FILTER_FIELDS = new Set([
   "code",
@@ -1106,6 +1108,89 @@ function savedFieldSet(settingKey) {
   return s;
 }
 
+function toggleImportStep(mask, previewMode) {
+  const opts = mask.querySelector("#ipOptions");
+  const text = mask.querySelector("#ipText");
+  const prev = mask.querySelector("#ipPreview");
+  const doBtn = mask.querySelector("#ipDo");
+  const backBtn = mask.querySelector("#ipBack");
+  const commitBtn = mask.querySelector("#ipCommit");
+  if (opts) {
+    opts.style.display = previewMode ? "none" : "";
+  }
+  if (text) {
+    text.style.display = previewMode ? "none" : "";
+  }
+  if (prev) {
+    prev.style.display = previewMode ? "" : "none";
+  }
+  if (doBtn) {
+    doBtn.style.display = previewMode ? "none" : "";
+  }
+  if (backBtn) {
+    backBtn.style.display = previewMode ? "" : "none";
+  }
+  if (commitBtn) {
+    commitBtn.style.display = previewMode ? "" : "none";
+    commitBtn.disabled = false;
+    commitBtn.textContent = "确认导入";
+  }
+}
+
+function renderImportPreview(msg) {
+  pendingImportToken = String(msg.token || "");
+  const el = document.getElementById("ipPreview");
+  if (!el) {
+    return;
+  }
+  const rows = Array.isArray(msg.rows) ? msg.rows : [];
+  const rowHtml = rows
+    .map(
+      (r) =>
+        `<tr><td>${r.kind === "new" ? "新增" : "更新"}</td><td>${esc(r.code)}</td><td>${esc(r.name)}</td><td class="muted">${esc(r.detail)}</td></tr>`,
+    )
+    .join("");
+  const badHtml =
+    msg.bad && msg.bad.length
+      ? `<details style="margin:6px 0"><summary class="muted">无法解析 ${msg.bad.length} 行（点击展开）</summary><div class="pre-blocks">${msg.bad.map(esc).join("<br>")}</div></details>`
+      : "";
+  el.innerHTML =
+    `<div class="ip-summ">将<span class="ip-ok">新增 ${msg.created}</span> · 将<span class="ip-upd">更新 ${msg.updated}</span> · 将跳过 ${msg.skipped}</div>` +
+    badHtml +
+    (rows.length
+      ? `<div class="ip-table-wrap"><table class="data-table"><thead><tr><th>类型</th><th>编号</th><th>名称</th><th>变更</th></tr></thead><tbody>${rowHtml}</tbody></table>` +
+        (msg.truncated
+          ? `<p class="muted">不止这些：共 ${msg.total} 行（预览最多显示 ${rows.length} 行）</p>`
+          : "") +
+        `</div>`
+      : `<p class="muted">没有可新增或更新的行</p>`);
+  const mask = el.closest(".modal-mask");
+  if (mask) {
+    toggleImportStep(mask, true);
+  }
+}
+
+function closeImportMask() {
+  pendingImportToken = "";
+  if (ipMask) {
+    closeModal();
+    ipMask = null;
+  }
+}
+
+function resetImportBtns() {
+  const doBtn = document.getElementById("ipDo");
+  if (doBtn) {
+    doBtn.disabled = false;
+    doBtn.textContent = "解析预览";
+  }
+  const commitBtn = document.getElementById("ipCommit");
+  if (commitBtn) {
+    commitBtn.disabled = false;
+    commitBtn.textContent = "确认导入";
+  }
+}
+
 function openImportProducts() {
   let sel = savedFieldSet("import_fields");
   if (sel.size === 0) {
@@ -1135,35 +1220,41 @@ function openImportProducts() {
   };
   const mask = showModal(`
     <h3>📥 导入商品</h3>
-    <div style="margin-bottom:8px">
-      <div class="muted" style="margin-bottom:4px">导入方式</div>
-      <label style="margin-right:10px"><input type="radio" name="ipMode" value="both" ${mode === "both" ? "checked" : ""} />新增＋修改</label>
-      <label style="margin-right:10px"><input type="radio" name="ipMode" value="add" ${mode === "add" ? "checked" : ""} />只新增</label>
-      <label><input type="radio" name="ipMode" value="update" ${mode === "update" ? "checked" : ""} />只修改</label>
-    </div>
-    <div style="margin-bottom:8px">
-      <div class="muted" style="margin-bottom:4px">导入字段（编号固定第 1 列，其余按勾选、顺序固定）</div>
-      <div style="margin-bottom:4px">
-        <button class="mini-btn" id="ipAll">全选</button>
-        <button class="mini-btn" id="ipNone">不选</button>
+    <div id="ipOptions">
+      <div style="margin-bottom:8px">
+        <div class="muted" style="margin-bottom:4px">导入方式</div>
+        <label style="margin-right:10px"><input type="radio" name="ipMode" value="both" ${mode === "both" ? "checked" : ""} />新增＋修改</label>
+        <label style="margin-right:10px"><input type="radio" name="ipMode" value="add" ${mode === "add" ? "checked" : ""} />只新增</label>
+        <label><input type="radio" name="ipMode" value="update" ${mode === "update" ? "checked" : ""} />只修改</label>
       </div>
-      <div class="io-chips">
-        <label class="io-chip" title="编号固定第 1 列"><input type="checkbox" data-ip-k="code" checked disabled />编号</label>
-        ${PRODUCT_FIELDS.filter((f) => IMPORT_WRITABLE_KEYS.includes(f.key))
-          .map(
-            (f) =>
-              `<label class="io-chip"><input type="checkbox" data-ip-k="${f.key}" ${sel.has(f.key) ? "checked" : ""} />${f.label}</label>`,
-          )
-          .join("")}
+      <div style="margin-bottom:8px">
+        <div class="muted" style="margin-bottom:4px">导入字段（编号固定第 1 列，其余按勾选、顺序固定）</div>
+        <div style="margin-bottom:4px">
+          <button class="mini-btn" id="ipAll">全选</button>
+          <button class="mini-btn" id="ipNone">不选</button>
+        </div>
+        <div class="io-chips">
+          <label class="io-chip" title="编号固定第 1 列"><input type="checkbox" data-ip-k="code" checked disabled />编号</label>
+          ${PRODUCT_FIELDS.filter((f) => IMPORT_WRITABLE_KEYS.includes(f.key))
+            .map(
+              (f) =>
+                `<label class="io-chip"><input type="checkbox" data-ip-k="${f.key}" ${sel.has(f.key) ? "checked" : ""} />${f.label}</label>`,
+            )
+            .join("")}
+        </div>
       </div>
+      <p class="muted" id="ipColDesc"></p>
+      <p class="muted" id="ipModeHint"></p>
+      <textarea id="ipText"></textarea>
     </div>
-    <p class="muted" id="ipColDesc"></p>
-    <p class="muted" id="ipModeHint"></p>
-    <textarea id="ipText"></textarea>
+    <div id="ipPreview" style="display:none"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
       <button id="ipCancel">取消</button>
-      <button id="ipDo" class="btn-teal">导入</button>
+      <button id="ipBack" class="mini-btn" style="display:none">← 返回修改</button>
+      <button id="ipDo" class="btn-teal">解析预览</button>
+      <button id="ipCommit" class="btn-teal" style="display:none">确认导入</button>
     </div>`);
+  ipMask = mask;
   const renderIp = () => {
     const cols = ["编号"].concat(impKeys().map((f) => f.label));
     $("ipColDesc").innerHTML =
@@ -1213,20 +1304,39 @@ function openImportProducts() {
     });
     renderIp();
   };
-  $("ipCancel").onclick = closeModal;
+  $("ipCancel").onclick = () => {
+    pendingImportToken = "";
+    ipMask = null;
+    closeModal();
+  };
+  $("ipBack").onclick = () => {
+    pendingImportToken = "";
+    toggleImportStep(mask, false);
+  };
   $("ipDo").onclick = () => {
     const text = $("ipText").value;
     if (!text.trim()) {
       toast("先粘贴内容");
       return;
     }
+    const b = $("ipDo");
+    b.disabled = true;
+    b.textContent = "解析中…";
     post({
-      type: "importProducts",
+      type: "previewImportProducts",
       text,
       mode,
       fields: [...sel],
     });
-    closeModal();
+  };
+  $("ipCommit").onclick = () => {
+    if (!pendingImportToken) {
+      return;
+    }
+    const b = $("ipCommit");
+    b.disabled = true;
+    b.textContent = "导入中…";
+    post({ type: "commitImportProducts", token: pendingImportToken });
   };
 }
 

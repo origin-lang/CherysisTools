@@ -630,11 +630,16 @@ function onMessage(msg) {
       $("pasteHint").textContent = parts.join("，");
       break;
     }
+    case "importPreview": {
+      renderImportPreview(msg);
+      break;
+    }
     case "productsImported": {
       $("pasteHint").textContent = "";
       toast(
         `商品导入完成：新增${msg.created}，更新${msg.updated}${msg.skipped ? `，跳过${msg.skipped}` : ""}`,
       );
+      closeImportMask();
       maybeShowOnboard();
       break;
     }
@@ -747,6 +752,7 @@ function onMessage(msg) {
     }
     case "dbOpError": {
       endExport();
+      resetImportBtns();
       toast(`❌${String(msg.message ?? "操作失败")}`);
       break;
     }

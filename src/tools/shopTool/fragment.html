@@ -459,6 +459,54 @@
         color: var(--vscode-descriptionForeground);
         font-size: 12px;
       }
+      #ipPreview .ip-summ {
+        font-size: 13px;
+        margin-bottom: 6px;
+      }
+      #ipPreview .ip-summ .ip-ok {
+        color: #23a884;
+        font-weight: bold;
+      }
+      #ipPreview .ip-summ .ip-upd {
+        color: var(--vscode-textLink-foreground);
+        font-weight: bold;
+      }
+      #ipPreview .ip-table-wrap {
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 6px;
+        max-height: 320px;
+        overflow: auto;
+        margin-top: 6px;
+      }
+      #ipPreview .ip-table-wrap table {
+        font-size: 12px;
+        border-collapse: collapse;
+        width: 100%;
+      }
+      #ipPreview .ip-table-wrap th,
+      #ipPreview .ip-table-wrap td {
+        text-align: left;
+        padding: 3px 8px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        white-space: nowrap;
+      }
+      #ipPreview .ip-table-wrap th {
+        position: sticky;
+        top: 0;
+        background: var(--vscode-editor-background);
+      }
+      #ipPreview .pre-blocks {
+        font-size: 12px;
+        white-space: pre-wrap;
+        word-break: break-all;
+        color: var(--vscode-errorForeground);
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 4px;
+        padding: 6px 8px;
+        margin-top: 4px;
+        max-height: 140px;
+        overflow: auto;
+      }
       .panel {
         border: 1px solid var(--vscode-panel-border);
         border-radius: 6px;

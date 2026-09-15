@@ -25,9 +25,265 @@ const PRODUCT_FIELD_LABELS: Record<string, string> = {
   remark: "备注",
 };
 
+// 导入预览：解析后先展示「将新增/将更新/将跳过」，确认后才落库
+const IMPORT_PREVIEW_ROW_LIMIT = 200;
+const IMPORT_DEFAULT_MISSING_RULE = (grade: number): SaleRule => ({
+  grade,
+  label: `等级${grade}`,
+  expr: "cost*1.5",
+  tail_mode: "p88",
+  tail_value: "",
+});
+type ImportWritableField =
+  | "name"
+  | "category"
+  | "series"
+  | "purchase_link"
+  | "grade"
+  | "cost_price"
+  | "sale_price"
+  | "price_manual"
+  | "status";
+interface NewImportPlanRow {
+  code: string;
+  name: string;
+  category: string;
+  series: string;
+  grade: number;
+  cost: number;
+  manual: number;
+  purchase_link: string;
+  status: number;
+}
+interface ImportWriteOp {
+  field: ImportWritableField;
+  value: number | string;
+}
+interface UpdateImportPlanRow {
+  code: string;
+  writes: ImportWriteOp[];
+}
+interface PendingImportPlan {
+  token: string;
+  mode: "add" | "update" | "both";
+  modeLabel: string;
+  newRows: NewImportPlanRow[];
+  updateRows: UpdateImportPlanRow[];
+  gradesToEnsure: number[];
+  skipped: number;
+  bad: string[];
+}
+let pendingImport: PendingImportPlan | null = null;
+
 // 商品管理域：新建/编辑/清点/上下架/删除/批量/入库/导入
 export function productHandlers(h: HandlerCtx): Record<string, Handler> {
   const { db, log, post } = h;
+
+  // 无副作用的导入解析：与旧 importProducts 逐行决策一致，但只收集"计划"不落库。
+  // ensureRule 的默认规则是确定性的（cost*1.5 → +0.88），预览用
+  // IMPORT_DEFAULT_MISSING_RULE 代替，结果与 commit 时确保后的规则完全一致。
+  const buildImportPlan = (
+    text: string,
+    mode: "add" | "update" | "both",
+    importFields: string[],
+  ): {
+    newRows: NewImportPlanRow[];
+    updateRows: UpdateImportPlanRow[];
+    gradesToEnsure: number[];
+    skipped: number;
+    bad: string[];
+    displayRows: Array<{
+      kind: "new" | "update";
+      code: string;
+      name: string;
+      detail: string;
+    }>;
+  } => {
+    const rules = db.getRules();
+    const ruleOf = (grade: number): SaleRule | undefined =>
+      rules.find((r) => r.grade === grade) ?? IMPORT_DEFAULT_MISSING_RULE(grade);
+    const parseStatus = (rawv: string): number | null => {
+      const s = String(rawv ?? "").trim();
+      if (!s) {
+        return null;
+      }
+      if (s === "1" || s === "已下架" || s === "下架") {
+        return 1;
+      }
+      if (s === "0" || s === "在售" || s === "上架") {
+        return 0;
+      }
+      return null;
+    };
+    const newRows: NewImportPlanRow[] = [];
+    const updateRows: UpdateImportPlanRow[] = [];
+    const gradesToEnsure = new Set<number>();
+    const bad: string[] = [];
+    const displayRows: Array<{
+      kind: "new" | "update";
+      code: string;
+      name: string;
+      detail: string;
+    }> = [];
+    let skipped = 0;
+    const lines = String(text ?? "").split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i].trim();
+      if (!raw) {
+        continue;
+      }
+      const parts = splitCells(raw);
+      if (parts.length === 0) {
+        continue;
+      }
+      if (isHeaderRow(parts)) {
+        continue;
+      }
+      const code = codeFromCell(parts[0]);
+      if (!code) {
+        bad.push(`行${i + 1}: ${raw}`);
+        continue;
+      }
+      const exist = db.getProductByCode(code);
+      if (exist) {
+        if (mode === "add") {
+          skipped++;
+          continue;
+        }
+        const has = (key: string) => {
+          const idx = importFields.indexOf(key);
+          return idx >= 0 && idx < parts.length;
+        };
+        const getv = (key: string) => {
+          const idx = importFields.indexOf(key);
+          return idx >= 0 ? String(parts[idx] ?? "") : "";
+        };
+        const real = (rawv: string): number | null => {
+          const v = Number(rawv);
+          return Number.isFinite(v) ? v : null;
+        };
+        const writes: ImportWriteOp[] = [];
+        for (const key of ["name", "category", "series", "purchase_link"]) {
+          if (has(key)) {
+            writes.push({
+              field: key as ImportWritableField,
+              value: normText(key as "name" | "category" | "series" | "purchase_link", getv(key)).value,
+            });
+          }
+        }
+        const gradeRaw = has("grade") ? real(getv("grade")) : null;
+        const costRaw = has("cost_price") ? real(getv("cost_price")) : null;
+        const saleRaw = has("sale_price") ? real(getv("sale_price")) : null;
+        const gradeOk = gradeRaw !== null && gradeRaw >= 0 && gradeRaw <= 99;
+        const costOk = costRaw !== null && costRaw >= 0;
+        const gradeChange = gradeOk && gradeRaw !== exist.grade;
+        const costChange = costOk && round2(costRaw as number) !== exist.cost_price;
+        const effGrade = gradeOk ? (gradeRaw as number) : exist.grade;
+        const effCost = costOk ? round2(costRaw as number) : exist.cost_price;
+        if (gradeChange) {
+          writes.push({ field: "grade", value: gradeRaw as number });
+        }
+        if (costChange) {
+          writes.push({ field: "cost_price", value: round2(costRaw as number) });
+        }
+        // 售价：填了 >0 → 手动价；否则非自定义且（售价列可见 或 等级/进价有变）→ 按规则重算
+        const manualSale = saleRaw !== null && saleRaw > 0 ? round2(saleRaw) : null;
+        if (manualSale !== null) {
+          writes.push({ field: "sale_price", value: manualSale });
+          writes.push({ field: "price_manual", value: 1 });
+        } else if (
+          effGrade !== 0 &&
+          (gradeChange ||
+            costChange ||
+            (importFields.includes("sale_price") && exist.price_manual !== 1))
+        ) {
+          const next = calcPrice(effCost, ruleOf(effGrade));
+          if (exist.sale_price !== next || exist.price_manual !== 0) {
+            gradesToEnsure.add(effGrade);
+            writes.push({ field: "sale_price", value: next });
+            writes.push({ field: "price_manual", value: 0 });
+          }
+        }
+        const stRaw = has("status") ? parseStatus(getv("status")) : null;
+        if (stRaw !== null && stRaw !== exist.status) {
+          writes.push({ field: "status", value: stRaw });
+        }
+        if (writes.length === 0) {
+          skipped++;
+          continue;
+        }
+        // 展示只列真实变化，避免同值重写刷屏
+        const diffs: string[] = [];
+        for (const w of writes) {
+          if (w.field === "price_manual") {
+            continue;
+          }
+          const oldVal = String((exist as unknown as Record<string, unknown>)[w.field] ?? "");
+          const newVal = String(w.value);
+          if (oldVal !== newVal) {
+            diffs.push(`${PRODUCT_FIELD_LABELS[w.field] ?? w.field}: ${oldVal || "（空）"}→${newVal || "（空）"}`);
+          }
+        }
+        updateRows.push({ code, writes });
+        displayRows.push({
+          kind: "update",
+          code,
+          name: exist.name,
+          detail: diffs.length ? diffs.join("；") : "（无实际变化，仅重写）",
+        });
+        continue;
+      }
+      if (mode === "update") {
+        skipped++;
+        continue;
+      }
+      const get = (key: string) => {
+        const idx = importFields.indexOf(key);
+        return idx >= 0 ? String(parts[idx] ?? "") : "";
+      };
+      const name = normText("name", get("name")).value || code;
+      const category = normText("category", get("category")).value;
+      const series = normText("series", get("series")).value;
+      const gradeRaw = Math.floor(Number(get("grade") || 1));
+      const grade = Number.isFinite(gradeRaw) && gradeRaw >= 0 && gradeRaw <= 99 ? gradeRaw : 1;
+      const costRaw = Number(get("cost_price") || 0);
+      const cost = Number.isFinite(costRaw) && costRaw >= 0 ? round2(costRaw) : 0;
+      const saleRaw = Number(get("sale_price") || 0);
+      const link = normText("purchase_link", get("purchase_link")).value;
+      const statusRaw = parseStatus(get("status"));
+      const manual = Number.isFinite(saleRaw) && saleRaw > 0 ? round2(saleRaw) : 0;
+      const custom = grade === 0;
+      if (!custom) {
+        gradesToEnsure.add(grade);
+      }
+      newRows.push({
+        code,
+        name,
+        category,
+        series,
+        grade,
+        cost,
+        manual,
+        purchase_link: link,
+        status: statusRaw === null ? 0 : statusRaw,
+      });
+      const sale = custom || manual > 0 ? manual : calcPrice(cost, ruleOf(grade));
+      displayRows.push({
+        kind: "new",
+        code,
+        name: name || code,
+        detail: `等级${grade} · 进价¥${cost.toFixed(2)} · 售价¥${sale.toFixed(2)}`,
+      });
+    }
+    return {
+      newRows,
+      updateRows,
+      gradesToEnsure: Array.from(gradesToEnsure),
+      skipped,
+      bad,
+      displayRows,
+    };
+  };
 
   return {
     addProduct(msg) {
@@ -380,13 +636,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       }
     },
 
-    async importProducts(msg) {
-      await h.preOpBackup();
-      const snap = h.snapshot();
-      const black: string[] = [];
-      let created = 0;
-      let updated = 0;
-      let skipped = 0;
+    previewImportProducts(msg) {
       const mode = msg.mode === "add" || msg.mode === "update" ? msg.mode : "both";
       // 导入列 = “编号” + 客户端勾选的可写字段（优先）；缺省回退 当前可见列∩可写字段
       let importable: Array<{ key: string; label: string }>;
@@ -422,167 +672,111 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       const importFields = ["code"].concat(
         importable.map((f) => f.key),
       );
-      const parseStatus = (rawv: string): number | null => {
-        const s = String(rawv ?? "").trim();
-        if (!s) {
-          return null;
-        }
-        if (s === "1" || s === "已下架" || s === "下架") {
-          return 1;
-        }
-        if (s === "0" || s === "在售" || s === "上架") {
-          return 0;
-        }
-        return null;
+      const plan = buildImportPlan(String(msg.text ?? ""), mode, importFields);
+      // 计划暂存于此（预览无任何落库副作用），凭随机 token 提交防误触发
+      const token = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+      pendingImport = {
+        token,
+        mode,
+        modeLabel: mode === "add" ? "只新增" : mode === "update" ? "只修改" : "新增＋修改",
+        newRows: plan.newRows,
+        updateRows: plan.updateRows,
+        gradesToEnsure: plan.gradesToEnsure,
+        skipped: plan.skipped,
+        bad: plan.bad,
       };
-      const lines = String(msg.text ?? "").split(/\r?\n/);
-      for (let i = 0; i < lines.length; i++) {
-        const raw = lines[i].trim();
-        if (!raw) {
-          continue;
+      post({
+        type: "importPreview",
+        ok: true,
+        token,
+        created: plan.newRows.length,
+        updated: plan.updateRows.length,
+        skipped: plan.skipped,
+        bad: plan.bad,
+        rows: plan.displayRows.slice(0, IMPORT_PREVIEW_ROW_LIMIT),
+        total: plan.displayRows.length,
+        truncated: plan.displayRows.length > IMPORT_PREVIEW_ROW_LIMIT,
+      });
+      log(
+        `🔍预览商品导入：将新增 ${plan.newRows.length}、将更新 ${plan.updateRows.length}` +
+          (plan.skipped ? `，将跳过 ${plan.skipped}` : "") +
+          (plan.bad.length ? `，无法解析 ${plan.bad.length} 行` : ""),
+      );
+    },
+
+    async commitImportProducts(msg) {
+      if (!pendingImport || String(msg.token ?? "") !== pendingImport.token) {
+        log("❌导入预览已失效：请重新打开「导入商品」并先解析预览");
+        return;
+      }
+      const plan = pendingImport;
+      pendingImport = null;
+      await h.preOpBackup();
+      const snap = h.snapshot();
+      let created = 0;
+      let updated = 0;
+      let skipped = plan.skipped;
+      let identitySkipped = 0;
+      // 预览把应该确保的等级记下来了，这里统一创建（缺的才创建，与旧行为一致）
+      for (const grade of plan.gradesToEnsure) {
+        if (db.ensureRule(grade)) {
+          log(`ℹ️等级 ${grade} 无规则，已自动创建默认规则（cost*1.5 → +0.88）`);
         }
-        const parts = splitCells(raw);
-        if (parts.length === 0) {
-          continue;
-        }
-        if (isHeaderRow(parts)) {
-          continue;
-        }
-        const code = codeFromCell(parts[0]);
-        if (!code) {
-          black.push(`行${i + 1}: ${raw}`);
-          continue;
-        }
-        const exist = db.getProductByCode(code);
-        if (exist) {
-          if (mode === "add") {
-            skipped++;
-            continue;
-          }
-          const has = (key: string) => {
-            const idx = importFields.indexOf(key);
-            return idx >= 0 && idx < parts.length;
-          };
-          const getv = (key: string) => {
-            const idx = importFields.indexOf(key);
-            return idx >= 0 ? String(parts[idx] ?? "") : "";
-          };
-          const real = (rawv: string): number | null => {
-            const v = Number(rawv);
-            return Number.isFinite(v) ? v : null;
-          };
-          let touched = 0;
-          for (const key of ["name", "category", "series", "purchase_link"]) {
-            if (has(key)) {
-              db.updateProductField(exist.id, key, normText(key as "name" | "category" | "series" | "purchase_link", getv(key)).value);
-              touched++;
-            }
-          }
-          const gradeRaw = has("grade") ? real(getv("grade")) : null;
-          const costRaw = has("cost_price") ? real(getv("cost_price")) : null;
-          const saleRaw = has("sale_price") ? real(getv("sale_price")) : null;
-          const gradeOk = gradeRaw !== null && gradeRaw >= 0 && gradeRaw <= 99;
-          const costOk = costRaw !== null && costRaw >= 0;
-          const gradeChange = gradeOk && gradeRaw !== exist.grade;
-          const costChange = costOk && round2(costRaw as number) !== exist.cost_price;
-          const effGrade = gradeOk ? (gradeRaw as number) : exist.grade;
-          const effCost = costOk ? round2(costRaw as number) : exist.cost_price;
-          if (gradeChange) {
-            db.updateProductField(exist.id, "grade", gradeRaw);
-            touched++;
-          }
-          if (costChange) {
-            db.updateProductField(exist.id, "cost_price", round2(costRaw as number));
-            touched++;
-          }
-          // 售价：填了 >0 → 手动价；否则非自定义且（售价列可见 或 等级/进价有变）→ 按规则重算
-          const manualSale = saleRaw !== null && saleRaw > 0 ? round2(saleRaw) : null;
-          if (manualSale !== null) {
-            db.updateProductField(exist.id, "sale_price", manualSale);
-            db.updateProductField(exist.id, "price_manual", 1);
-            touched++;
-          } else if (
-            effGrade !== 0 &&
-            (gradeChange ||
-              costChange ||
-              (importFields.includes("sale_price") && exist.price_manual !== 1))
-          ) {
-            if (db.ensureRule(effGrade)) {
-              log(`ℹ️等级 ${effGrade} 无规则，已自动创建默认规则（cost*1.5 → +0.88）`);
-            }
-            const rule = db.getRules().find((r) => r.grade === effGrade);
-            const next = calcPrice(effCost, rule);
-            if (exist.sale_price !== next || exist.price_manual !== 0) {
-              touched++;
-            }
-            db.updateProductField(exist.id, "sale_price", next);
-            db.updateProductField(exist.id, "price_manual", 0);
-          }
-          const stRaw = has("status") ? parseStatus(getv("status")) : null;
-          if (stRaw !== null && stRaw !== exist.status) {
-            db.updateProductField(exist.id, "status", stRaw);
-            touched++;
-          }
-          if (touched > 0) {
-            updated++;
-          } else {
-            skipped++;
-          }
-          continue;
-        }
-        if (mode === "update") {
+      }
+      const ruleOf = (grade: number): SaleRule | undefined =>
+        db.getRules().find((r) => r.grade === grade);
+      for (const row of plan.newRows) {
+        // 提交前身份复检：预览后该编号被占用 → 跳过，避免覆盖
+        if (db.getProductByCode(row.code)) {
+          identitySkipped++;
           skipped++;
           continue;
         }
-        const get = (key: string) => {
-          const idx = importFields.indexOf(key);
-          return idx >= 0 ? String(parts[idx] ?? "") : "";
-        };
-        const name = normText("name", get("name")).value || code;
-        const category = normText("category", get("category")).value;
-        const series = normText("series", get("series")).value;
-        const gradeRaw = Math.floor(Number(get("grade") || 1));
-        const grade = Number.isFinite(gradeRaw) && gradeRaw >= 0 && gradeRaw <= 99 ? gradeRaw : 1;
-        const costRaw = Number(get("cost_price") || 0);
-        const cost = Number.isFinite(costRaw) && costRaw >= 0 ? round2(costRaw) : 0;
-        const saleRaw = Number(get("sale_price") || 0);
-        const link = normText("purchase_link", get("purchase_link")).value;
-        const statusRaw = parseStatus(get("status"));
-        const manual = Number.isFinite(saleRaw) && saleRaw > 0 ? round2(saleRaw) : 0;
-        const custom = grade === 0;
-        if (!custom && db.ensureRule(grade)) {
-          log(`ℹ️等级 ${grade} 无规则，已自动创建默认规则（cost*1.5 → +0.88）`);
-        }
-        const rule = custom
-          ? undefined
-          : db.getRules().find((r) => r.grade === grade);
+        const custom = row.grade === 0;
+        const rule = custom ? undefined : ruleOf(row.grade);
+        const sale = custom || row.manual > 0 ? row.manual : calcPrice(row.cost, rule);
         db.addProduct({
-          code,
-          name: name || code,
-          category,
-          series,
-          grade,
-          cost_price: cost,
-          sale_price: custom || manual > 0 ? manual : calcPrice(cost, rule),
-          price_manual: custom || manual > 0 ? 1 : 0,
-          purchase_link: link,
-          status: statusRaw === null ? 0 : statusRaw,
+          code: row.code,
+          name: row.name || row.code,
+          category: row.category,
+          series: row.series,
+          grade: row.grade,
+          cost_price: row.cost,
+          sale_price: sale,
+          price_manual: custom || row.manual > 0 ? 1 : 0,
+          purchase_link: row.purchase_link,
+          status: row.status,
           remark: "",
           stock_manual: 0,
         });
         created++;
       }
-      const modeLabel = mode === "add" ? "只新增" : mode === "update" ? "只修改" : "新增＋修改";
+      for (const row of plan.updateRows) {
+        const exist = db.getProductByCode(row.code);
+        // 提交前身份复检：预览后该编号被删除 → 跳过
+        if (!exist) {
+          identitySkipped++;
+          skipped++;
+          continue;
+        }
+        for (const op of row.writes) {
+          db.updateProductField(exist.id, op.field, op.value);
+        }
+        updated++;
+      }
       log(
-        `📥商品导入（${modeLabel}）：新增 ${created}，更新 ${updated}` +
+        `📥商品导入（${plan.modeLabel}）：新增 ${created}，更新 ${updated}` +
           (skipped ? `，跳过 ${skipped}` : "") +
-          (black.length ? `，无法解析 ${black.length} 行` : ""),
+          (plan.bad.length ? `，无法解析 ${plan.bad.length} 行` : ""),
       );
-      for (const b of black) {
+      if (identitySkipped > 0) {
+        log(`  ⚠️${identitySkipped} 行因预览后商品编号已被占用/删除而未应用`);
+      }
+      for (const b of plan.bad) {
         log(`  ⚠️${b}`);
       }
       if (created > 0 || updated > 0) {
-        h.pushUndo(snap, `商品导入（${modeLabel} 新增 ${created}、更新 ${updated}）`);
+        h.pushUndo(snap, `商品导入（${plan.modeLabel} 新增 ${created}、更新 ${updated}）`);
       }
       post({
         type: "productsImported",
@@ -590,8 +784,8 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         created,
         updated,
         skipped,
-        bad: black,
-        mode: mode as string,
+        bad: plan.bad,
+        mode: plan.mode as string,
       });
       h.loadAll();
     },
