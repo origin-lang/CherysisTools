@@ -365,6 +365,7 @@ async function handleAppendSuffixExport(
 
 export const imageBatchTool: ToolDefinition = {
   toolName: "imageBatchTool",
+  category: "utility",
   title: "🗂️图片批量工具箱",
   fragmentPath: "tools/imageBatchTool/fragment.html",
   async handleMessage(msg, ctx) {

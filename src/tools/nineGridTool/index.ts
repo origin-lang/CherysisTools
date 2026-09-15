@@ -140,6 +140,7 @@ export async function scanImageFiles(folderPath: string): Promise<string[]> {
 
 export const nineGridTool: ToolDefinition = {
   toolName: "nineGridTool",
+  category: "utility",
   title: "🧩九宫格工具箱",
   fragmentPath: "tools/nineGridTool/fragment.html",
   clientScriptPath: "tools/nineGridTool/client.js",

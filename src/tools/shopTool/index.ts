@@ -136,6 +136,7 @@ const redoStack: Array<{ snap: ShopDBSnapshot; desc: string }> = [];
 
 export const shopTool: ToolDefinition = {
   toolName: "shopTool",
+  category: "system",
   title: "🏪商品店铺管理",
   fragmentPath: "tools/shopTool/fragment.html",
   clientScriptPath: [

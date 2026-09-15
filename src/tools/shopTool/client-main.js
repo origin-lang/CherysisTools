@@ -117,6 +117,7 @@
       $("productListView").addEventListener("contextmenu", onProductCtx);
       $("productGalleryView").addEventListener("click", onProductAct);
       $("productGalleryView").addEventListener("contextmenu", onProductCtx);
+      bindImageDropPaste();
       document.addEventListener("mousedown", (e) => {
         if (!e.target.closest("#productListView td[data-pid]") && selCell) {
           selCell = null;

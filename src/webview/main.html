@@ -19,14 +19,6 @@
         border-bottom: 1px solid var(--vscode-panel-border);
         padding-bottom: 12px;
       }
-      .nav-bar {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-        flex: 1;
-        min-width: 0;
-      }
-      .nav-btn,
       .toggle-btn {
         padding: 6px 14px;
         border: 1px solid var(--vscode-button-background);
@@ -35,7 +27,6 @@
         border-radius: 4px;
         cursor: pointer;
       }
-      .nav-btn.active,
       .toggle-btn.active {
         background: var(--vscode-button-background);
         color: var(--vscode-button-foreground);
@@ -154,14 +145,13 @@
   </head>
   <body>
     <div class="top-row">
-      <div class="nav-bar" id="navBar"></div>
       <button class="toggle-btn" id="logPanelToggle" title="显示/隐藏右侧运行日志">📋 运行日志</button>
     </div>
     <div id="mainRow">
       <div id="contentArea">
         <div id="view-home" class="tool-view show">
           <h3>Cherysis-tools 工具集</h3>
-          <p>上方导航栏选择要运行的工具</p>
+          <p>在左侧活动栏选择要运行的工具</p>
         </div>
         <div id="fragmentContainer"></div>
       </div>
@@ -179,9 +169,11 @@
       window.__vscode = vscode;
       let currentToolName = "";
       let currentToolClient = null;
-      let toolListData = [];
       // 在工具客户端尚未初始化时，先暂存需要投递的消息
       let pendingClientMessages = [];
+      // 小工具（utility）切走时保留其 DOM，切回时原样恢复，避免输入内容被清空
+      const utilityTools = new Set();
+      const toolHolders = {};
 
       const logPanelEl = document.getElementById("logPanel");
       const logPanelToggle = document.getElementById("logPanelToggle");
@@ -230,37 +222,48 @@
       };
       setLogCollapsed(true);
 
-      function renderNav(list) {
-        toolListData = list;
-        const navDom = document.getElementById("navBar");
-        navDom.innerHTML = "";
-        list.forEach((item) => {
-          const btn = document.createElement("button");
-          btn.className = "nav-btn";
-          btn.innerText = item.title;
-          btn.dataset.tool = item.toolName;
-          btn.onclick = () => {
-            currentToolName = item.toolName;
-            document
-              .querySelectorAll(".nav-btn")
-              .forEach((b) => b.classList.remove("active"));
-            btn.classList.add("active");
-            if (item.toolName === "home") {
-              currentToolClient = null;
-              document.getElementById("fragmentContainer").innerHTML = "";
-              document
-                .querySelectorAll(".tool-view")
-                .forEach((v) => v.classList.remove("show"));
-              document.getElementById("view-home").classList.add("show");
-            } else {
-              vscode.postMessage({ type: "switchTool", toolName: item.toolName });
-              document
-                .querySelectorAll(".tool-view")
-                .forEach((v) => v.classList.remove("show"));
-            }
-          };
-          navDom.appendChild(btn);
-        });
+      function getHolder(toolName) {
+        if (!toolHolders[toolName]) {
+          const holder = document.createElement("div");
+          holder.style.display = "none";
+          document.body.appendChild(holder);
+          toolHolders[toolName] = holder;
+        }
+        return toolHolders[toolName];
+      }
+
+      /** 显示某个小工具的 fragment。首次渲染走正常流程；再次切回则从 holder 恢复原 DOM，不重新 init */
+      function showUtilityFragment(msg) {
+        const container = document.getElementById("fragmentContainer");
+        const holder = getHolder(msg.toolName);
+        if (holder.children.length > 0) {
+          container.replaceChildren(...holder.children);
+          currentToolClient =
+            (window.toolClients && window.toolClients[msg.toolName]) || null;
+          return;
+        }
+        container.innerHTML = msg.html;
+        bindFragmentGenericEvents();
+        loadToolClient(msg.clientScript);
+      }
+
+      /** 切走当前小工具时，把它的 DOM 原样挪进专属 holder 保留 */
+      function stashCurrentUtility() {
+        if (!currentToolName || currentToolName === "home") return;
+        if (!utilityTools.has(currentToolName)) return;
+        const container = document.getElementById("fragmentContainer");
+        if (container.children.length === 0) return;
+        const holder = getHolder(currentToolName);
+        holder.replaceChildren(...container.children);
+      }
+
+      function switchTool(toolName) {
+        stashCurrentUtility();
+        currentToolName = toolName;
+        document
+          .querySelectorAll(".tool-view")
+          .forEach((v) => v.classList.remove("show"));
+        vscode.postMessage({ type: "switchTool", toolName });
       }
 
       // 通用事件绑定：适用于用 data-action 声明的表单型工具（如图片批量工具）
@@ -373,21 +376,23 @@
 
       function handleMessage(msg) {
         if (msg.type === "initToolList") {
-          renderNav(msg.toolList);
-          // 渲染完导航后，如果日志面板当前展开，回到顶部以显示完整内容
-          if (!logPanelEl.classList.contains("collapsed")) {
-            const logDom = document.getElementById("logArea");
-            if (logDom) logDom.scrollTop = 0;
-          }
+          // 顶部导航已移除，工具入口改到活动栏侧边目录树，这里只记录小工具名单
+          utilityTools.clear();
+          (msg.toolList || []).forEach((t) => {
+            if (t.category === "utility") utilityTools.add(t.toolName);
+          });
         } else if (msg.type === "autoOpenTool") {
-          const btn = Array.from(document.querySelectorAll(".nav-btn")).find(
-            (b) => b.dataset.tool === msg.toolName,
-          );
-          if (btn) btn.onclick();
+          switchTool(msg.toolName);
         } else if (msg.type === "switchFragment") {
-          document.getElementById("fragmentContainer").innerHTML = msg.html;
-          bindFragmentGenericEvents();
-          loadToolClient(msg.clientScript);
+          stashCurrentUtility();
+          if (msg.toolName) currentToolName = msg.toolName;
+          if (utilityTools.has(msg.toolName)) {
+            showUtilityFragment(msg);
+          } else {
+            document.getElementById("fragmentContainer").innerHTML = msg.html;
+            bindFragmentGenericEvents();
+            loadToolClient(msg.clientScript);
+          }
         } else if (msg.type === "log") {
           const logDom = document.getElementById("logArea");
           if (logDom) {

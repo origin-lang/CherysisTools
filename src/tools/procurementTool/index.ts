@@ -42,6 +42,7 @@ const FIELD_LABELS: Record<string, Record<string, string>> = {
 
 export const procurementTool: ToolDefinition = {
   toolName: "procurementTool",
+  category: "system",
   title: "📦供应商采购管理",
   fragmentPath: "tools/procurementTool/fragment.html",
   clientScriptPath: "tools/procurementTool/client.js",

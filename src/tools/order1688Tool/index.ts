@@ -331,6 +331,7 @@ export function exportOrdersExcel(orders: OrderRecord[], outDir: string): string
 
 export const order1688Tool: ToolDefinition = {
   toolName: "order1688Tool",
+  category: "system",
   title: "📥1688订单提取",
   fragmentPath: "tools/order1688Tool/fragment.html",
   clientScriptPath: "tools/order1688Tool/client.js",

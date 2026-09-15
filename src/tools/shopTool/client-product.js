@@ -403,8 +403,8 @@ function renderList(list) {
       const low = lowStock(p);
       const coverData = state.coverCache[p.code] || "";
       const cover = coverData
-        ? `<img class="thumb" data-p-act="img" data-id="${p.id}" src="${coverData}" />`
-        : `<span class="thumb placeholder" data-p-act="img" data-id="${p.id}">无图</span>`;
+        ? `<img class="thumb" data-p-act="img" data-id="${p.id}" src="${coverData}" title="查看大图 · 可拖入或粘贴图片到此" />`
+        : `<span class="thumb placeholder" data-p-act="img" data-id="${p.id}" title="查看大图 · 可拖入或粘贴图片到此">无图</span>`;
       const starred = state.liveStars && state.liveStars.has(p.code);
       const tds = [];
       const isSelected = state.selectedProducts.has(p.id);
@@ -1691,6 +1691,223 @@ function openCoverMenu(e, p) {
   }
   items.push({ label: "🔍 查看大图", run: () => openLightbox(p) });
   showImageCtxMenu(e.clientX, e.clientY, items);
+}
+
+// 图片列：支持「拖入图片文件 / 粘贴剪贴板图片」，落到当前商品（表格列 / 卡片 / 灯箱）
+var shopImageBindings = null;
+
+function isImageFile(file) {
+  return !!file && typeof file.type === "string" && file.type.startsWith("image/");
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("read error"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function filesToImageItems(fileList) {
+  const files = Array.from(fileList || []).filter(isImageFile);
+  const items = [];
+  for (const f of files) {
+    try {
+      const data = await readFileAsDataURL(f);
+      if (data) {
+        items.push({ name: f.name || "", data });
+      }
+    } catch {
+      /* 忽略单张读取失败 */
+    }
+  }
+  return items;
+}
+
+// 从 DataTransfer/ClipboardEvent 里收集文件，items 与 files 会重复，按 name+size+lastModified 去重
+function collectFiles(dt) {
+  const seen = new Set();
+  const out = [];
+  const add = (f) => {
+    if (!f) {
+      return;
+    }
+    const key = `${f.name || ""}|${f.size}|${f.lastModified}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    out.push(f);
+  };
+  if (dt) {
+    if (dt.items) {
+      for (const it of Array.from(dt.items)) {
+        if (it.kind === "file") {
+          add(it.getAsFile());
+        }
+      }
+    }
+    if (dt.files) {
+      for (const f of Array.from(dt.files)) {
+        add(f);
+      }
+    }
+  }
+  return out;
+}
+
+function productFromCoverTarget(el) {
+  if (!el || !el.closest) {
+    return null;
+  }
+  const coverEl = el.closest("[data-p-act='img']");
+  if (!coverEl) {
+    return null;
+  }
+  return state.products.find((x) => x.id === Number(coverEl.dataset.id)) || null;
+}
+
+// 拖放/粘贴的目标定位：图片列 → 任意带 data-pid 的行/单元格 → 灯箱
+function productForDropOrPaste(e) {
+  if (!document.getElementById("productListView")) {
+    return null;
+  }
+  const t = e.target;
+  const el = t && t.closest ? t : document.activeElement;
+  let product = null;
+  if (el && el.closest) {
+    const coverEl = el.closest("[data-p-act='img']");
+    const rowEl = coverEl || el.closest("[data-pid]");
+    if (rowEl) {
+      product = state.products.find((x) => x.id === Number(rowEl.dataset.id)) || null;
+    }
+  }
+  const inLb = !!el.closest("#lbBox");
+  if (!product && inLb && state.lbCode) {
+    product = state.products.find((x) => x.code === state.lbCode) || null;
+  }
+  return product || null;
+}
+
+function onImagePasteCapture(e) {
+  if (!document.getElementById("productListView")) {
+    return;
+  }
+  const t = e.target;
+  if (t && t.closest && t.closest("input,textarea,select,[contenteditable='true']")) {
+    return;
+  }
+  const files = collectFiles(e.clipboardData || window.clipboardData || null);
+  if (!files.length) {
+    return;
+  }
+  const product = productForDropOrPaste(e);
+  if (!product) {
+    toast("先点开某个商品的图片看大图，再把图片 Ctrl+V 粘贴进来");
+    return;
+  }
+  filesToImageItems(files).then((items) => {
+    if (items.length) {
+      post({ type: "receiveImageData", code: product.code, items });
+    } else {
+      toast("剪贴板里未检测到图片");
+    }
+  });
+  e.preventDefault();
+}
+
+let fileDragHinted = false;
+
+function onImageDragOver(e) {
+  const t = e.target;
+  if (!t || !t.closest) {
+    return;
+  }
+  const coverEl = t.closest("[data-p-act='img']");
+  const rowEl = t.closest("[data-pid]");
+  const inLb = !!t.closest("#lbBox");
+  if (!coverEl && !rowEl && !inLb) {
+    return;
+  }
+  if (!document.getElementById("productListView")) {
+    return;
+  }
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+  const target = coverEl || rowEl;
+  if (target) {
+    target.classList.add("img-drop-hover");
+  }
+  const types = (e.dataTransfer && e.dataTransfer.types) || [];
+  if (
+    !fileDragHinted &&
+    Array.from(types).some((x) => String(x).toLowerCase() === "files")
+  ) {
+    fileDragHinted = true;
+    toast("松开鼠标即可把图片加到这里（若弹系统提示没反应，请按住 Shift 拖入）");
+  }
+}
+
+function onImageDrop(e) {
+  if (!document.getElementById("productListView")) {
+    return;
+  }
+  const t = e.target;
+  if (!t || !t.closest) {
+    return;
+  }
+  const coverEl = t.closest("[data-p-act='img']");
+  const rowEl = t.closest("[data-pid]");
+  const inLb = !!t.closest("#lbBox");
+  const target = coverEl || rowEl;
+  if (target) {
+    target.classList.remove("img-drop-hover");
+  }
+  if (!coverEl && !rowEl && !inLb) {
+    return;
+  }
+  const product = productForDropOrPaste(e);
+  if (!product) {
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+  filesToImageItems(collectFiles(e.dataTransfer)).then((items) => {
+    if (items.length) {
+      post({ type: "receiveImageData", code: product.code, items });
+    } else {
+      toast("未检测到图片文件");
+    }
+  });
+}
+
+function clearImgDropHover() {
+  fileDragHinted = false;
+  document
+    .querySelectorAll(".img-drop-hover")
+    .forEach((el) => el.classList.remove("img-drop-hover"));
+}
+
+// document 级监听切走再切回会累积，先解绑旧的再绑新的
+function bindImageDropPaste() {
+  if (shopImageBindings) {
+    document.removeEventListener("paste", shopImageBindings.paste, true);
+    document.removeEventListener("dragleave", shopImageBindings.dragleave);
+  }
+  shopImageBindings = {
+    paste: onImagePasteCapture,
+    dragleave: clearImgDropHover,
+  };
+  document.addEventListener("paste", shopImageBindings.paste, true);
+  document.addEventListener("dragleave", shopImageBindings.dragleave);
+  ["productListView", "productGalleryView"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener("dragover", onImageDragOver);
+      el.addEventListener("drop", onImageDrop);
+    }
+  });
 }
 
 function onProductAct(e) {

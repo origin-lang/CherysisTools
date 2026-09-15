@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { toolRegistry } from "./core/toolRegistry.js";
+import { toolTreeProvider } from "./webview/toolTree.js";
 import { imageBatchTool } from "./tools/imageBatchTool/index.js";
 import { nineGridTool } from "./tools/nineGridTool/index.js";
 import { excelAnalyzeTool } from "./tools/excelAnalyzeTool/index.js";
@@ -20,6 +21,17 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("Cherysis.openToolPanel", () => {
       toolRegistry.openPanel(context);
+    }),
+    vscode.commands.registerCommand(
+      "Cherysis.openTool",
+      (toolName: string | undefined) => {
+        if (toolName) {
+          toolRegistry.openTool(toolName, context);
+        }
+      },
+    ),
+    vscode.window.createTreeView("cherysis.tools", {
+      treeDataProvider: toolTreeProvider,
     }),
   );
 }

@@ -240,6 +240,15 @@
         border: 1px solid var(--vscode-panel-border);
         vertical-align: middle;
       }
+      .thumb.img-drop-hover {
+        outline: 2px dashed var(--vscode-focusBorder, #0078d4);
+        outline-offset: 1px;
+      }
+      td[data-pid].img-drop-hover {
+        outline: 2px dashed var(--vscode-focusBorder, #0078d4);
+        outline-offset: -2px;
+        background: var(--vscode-list-hoverBackground, transparent);
+      }
       .thumb.placeholder {
         display: inline-flex;
         align-items: center;

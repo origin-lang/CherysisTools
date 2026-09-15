@@ -230,6 +230,7 @@ function openFolderInExplorer(target: string, log: (text: string) => void): Prom
 
 export const excelAnalyzeTool: ToolDefinition = {
   toolName: "excelAnalyzeTool",
+  category: "utility",
   title: "📊Excel清洗统计绘图",
   fragmentPath: "tools/excelAnalyzeTool/fragment.html",
   clientScriptPath: "tools/excelAnalyzeTool/client.js",

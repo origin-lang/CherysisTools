@@ -15,13 +15,39 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onView:cherysis.tools",
+    "onCommand:Cherysis.openToolPanel",
+    "onCommand:Cherysis.openTool"
+  ],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cherysis",
+          "title": "Cherysis 小工具集",
+          "icon": "images/cherysis.svg"
+        }
+      ]
+    },
+    "views": {
+      "cherysis": [
+        {
+          "type": "tree",
+          "id": "cherysis.tools",
+          "name": "工具"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "Cherysis.openToolPanel",
         "title": "Cherysis:打开工具面板"
+      },
+      {
+        "command": "Cherysis.openTool",
+        "title": "Cherysis:打开指定工具"
       }
     ],
     "configuration": {
@@ -38,6 +64,10 @@
       "commandPalette": [
         {
           "command": "Cherysis.openToolPanel"
+        },
+        {
+          "command": "Cherysis.openTool",
+          "when": "false"
         }
       ]
     }

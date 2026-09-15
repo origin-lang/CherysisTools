@@ -11,6 +11,32 @@ import {
 } from "../images.js";
 
 // 图片域：封面/图库缩略图/大图/上传/清空/删除/打开文件夹
+const IMG_MIME_EXT: Record<string, string> = {
+  png: ".png",
+  jpeg: ".jpg",
+  jpg: ".jpg",
+  gif: ".gif",
+  webp: ".webp",
+  bmp: ".bmp",
+};
+const MAX_IMG_BYTES = 25 * 1024 * 1024;
+
+const stamp = (): string => {
+  const d = new Date();
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+};
+
+const uniqueTargetPath = (folder: string, base: string, ext: string): string => {
+  let target = path.join(folder, `${base}${ext}`);
+  let n = 2;
+  while (fs.existsSync(target)) {
+    target = path.join(folder, `${base}_${n}${ext}`);
+    n++;
+  }
+  return target;
+};
+
 export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
   const { log, post } = h;
   const ctx = h.ctx;
@@ -107,21 +133,10 @@ export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
       if (!picked.length) {
         return;
       }
-      const stamp = (): string => {
-        const d = new Date();
-        const p2 = (n: number) => String(n).padStart(2, "0");
-        return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
-      };
       let added = 0;
       for (const src of picked) {
         const ext = path.extname(src).toLowerCase() || ".jpg";
-        const base = `${code}_${stamp()}`;
-        let target = path.join(folder, `${base}${ext}`);
-        let n = 2;
-        while (fs.existsSync(target)) {
-          target = path.join(folder, `${base}_${n}${ext}`);
-          n++;
-        }
+        const target = uniqueTargetPath(folder, `${code}_${stamp()}`, ext);
         try {
           fs.copyFileSync(src, target);
           added++;
@@ -133,6 +148,62 @@ export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
       await reloadImages(code);
       h.invalidateCover(code);
       h.loadAll();
+    },
+
+    async receiveImageData(msg) {
+      const code = String(msg.code ?? "");
+      const dir = imageDir();
+      if (!dir) {
+        log("❌请先在「规则与设置」里选择图片根目录");
+        return;
+      }
+      const items: Array<{ name?: string; data?: string }> = Array.isArray(
+        msg.items,
+      )
+        ? msg.items
+        : [];
+      if (!items.length) {
+        return;
+      }
+      const folder = path.join(dir, code);
+      fs.mkdirSync(folder, { recursive: true });
+      let added = 0;
+      for (const it of items) {
+        const data = String(it?.data ?? "");
+        const m = /^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/.exec(data);
+        if (!m) {
+          continue;
+        }
+        const ext = IMG_MIME_EXT[m[1].toLowerCase()] || ".png";
+        const bytes = Buffer.from(m[2], "base64");
+        if (!bytes.length) {
+          continue;
+        }
+        if (bytes.length > MAX_IMG_BYTES) {
+          log(`⚠️跳过超大图片（${(bytes.length / 1024 / 1024).toFixed(1)}MB，上限 25MB）`);
+          continue;
+        }
+        const originName = it?.name
+          ? path.basename(it.name).replace(/\.[^.]+$/, "")
+          : "";
+        const base = (originName || `${code}_${stamp()}`).replace(
+          /[\\/:*?"<>|]/g,
+          "_",
+        );
+        const target = uniqueTargetPath(folder, base, ext);
+        try {
+          fs.writeFileSync(target, bytes);
+          added++;
+        } catch (err: any) {
+          log(`⚠️写入失败：${err.message}`);
+        }
+      }
+      if (added) {
+        log(`🖼已粘贴/拖入 ${added} 张图 → ${code} 文件夹`);
+        await reloadImages(code);
+        h.invalidateCover(code);
+        h.loadAll();
+      }
     },
 
     async clearImages(msg) {
