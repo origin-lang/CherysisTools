@@ -4,4 +4,5 @@ allowBuilds:
   keytar: false
   sharp: false
 patchedDependencies:
+  lazystream@1.0.1: patches/lazystream@1.0.1.patch
   vsce-pnpm@0.1.0: patches/vsce-pnpm@0.1.0.patch

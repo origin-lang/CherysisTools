@@ -5,6 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
+  lazystream@1.0.1: 3940cf5407c260e96ac7f7ea33194ee307940ffe5cc991e50fba98045eab61c3
   vsce-pnpm@0.1.0: 6915d218760df4564c8f00707e433483be460f25ecb247873822207904ae22c0
 
 importers:
@@ -2892,7 +2893,7 @@ snapshots:
     dependencies:
       glob: 7.2.3
       graceful-fs: 4.2.11
-      lazystream: 1.0.1
+      lazystream: 1.0.1(patch_hash=3940cf5407c260e96ac7f7ea33194ee307940ffe5cc991e50fba98045eab61c3)
       lodash.defaults: 4.2.0
       lodash.difference: 4.5.0
       lodash.flatten: 4.4.0
@@ -2905,7 +2906,7 @@ snapshots:
     dependencies:
       glob: 7.2.3
       graceful-fs: 4.2.11
-      lazystream: 1.0.1
+      lazystream: 1.0.1(patch_hash=3940cf5407c260e96ac7f7ea33194ee307940ffe5cc991e50fba98045eab61c3)
       lodash.defaults: 4.2.0
       lodash.difference: 4.5.0
       lodash.flatten: 4.4.0
@@ -3728,7 +3729,7 @@ snapshots:
     dependencies:
       json-buffer: 3.0.1
 
-  lazystream@1.0.1:
+  lazystream@1.0.1(patch_hash=3940cf5407c260e96ac7f7ea33194ee307940ffe5cc991e50fba98045eab61c3):
     dependencies:
       readable-stream: 2.3.8
 
