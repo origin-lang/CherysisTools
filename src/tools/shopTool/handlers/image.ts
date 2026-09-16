@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
+import * as crypto from "crypto";
 import { Handler, HandlerCtx } from "./types.js";
 import { readImageToBase64 } from "../../../core/utils.js";
 import {
@@ -35,6 +36,23 @@ const uniqueTargetPath = (folder: string, base: string, ext: string): string => 
     n++;
   }
   return target;
+};
+
+/** 文件夹里是否已有一张内容完全相同的图（按字节 SHA1 比对）——拖入/粘贴同一张图不再产生副本 */
+const sameContentExists = (folder: string, bytes: Buffer): boolean => {
+  const hash = crypto.createHash("sha1").update(bytes).digest("hex");
+  for (const name of listImageFiles(folder)) {
+    try {
+      const existing =
+        crypto.createHash("sha1").update(fs.readFileSync(path.join(folder, name))).digest("hex") === hash;
+      if (existing) {
+        return true;
+      }
+    } catch {
+      /* 单个文件读不到就跳过 */
+    }
+  }
+  return false;
 };
 
 export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
@@ -168,6 +186,7 @@ export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
       const folder = path.join(dir, code);
       fs.mkdirSync(folder, { recursive: true });
       let added = 0;
+      let skipped = 0;
       for (const it of items) {
         const data = String(it?.data ?? "");
         const m = /^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/.exec(data);
@@ -181,6 +200,11 @@ export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
         }
         if (bytes.length > MAX_IMG_BYTES) {
           log(`⚠️跳过超大图片（${(bytes.length / 1024 / 1024).toFixed(1)}MB，上限 25MB）`);
+          continue;
+        }
+        // 内容已在文件夹里 → 不落盘，避免粘贴/拖入同一张图生成副本
+        if (sameContentExists(folder, bytes)) {
+          skipped++;
           continue;
         }
         const originName = it?.name
@@ -199,10 +223,15 @@ export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
         }
       }
       if (added) {
-        log(`🖼已粘贴/拖入 ${added} 张图 → ${code} 文件夹`);
+        log(
+          `🖼已粘贴/拖入 ${added} 张图 → ${code} 文件夹` +
+            (skipped ? `，${skipped} 张与已有图片重复已忽略` : ""),
+        );
         await reloadImages(code);
         h.invalidateCover(code);
         h.loadAll();
+      } else if (skipped) {
+        log(`🖼${skipped} 张图与已有内容重复，未新增（${code}）`);
       }
     },
 

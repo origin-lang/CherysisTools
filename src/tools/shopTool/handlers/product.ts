@@ -72,6 +72,7 @@ interface PendingImportPlan {
   gradesToEnsure: number[];
   skipped: number;
   bad: string[];
+  dup: string[];
 }
 let pendingImport: PendingImportPlan | null = null;
 
@@ -92,6 +93,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
     gradesToEnsure: number[];
     skipped: number;
     bad: string[];
+    dupLines: string[];
     displayRows: Array<{
       kind: "new" | "update";
       code: string;
@@ -119,6 +121,10 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
     const updateRows: UpdateImportPlanRow[] = [];
     const gradesToEnsure = new Set<number>();
     const bad: string[] = [];
+    const dupLines: string[] = [];
+    // 同一批粘贴内的编号去重：预览不落库，库里查不到的同号两行都会判"新增"，
+    // 提交时第二行走身份复检又被跳过——预览与结果不一致。约定：只取第一条，其余计入跳过。
+    const newCodes = new Set<string>();
     const displayRows: Array<{
       kind: "new" | "update";
       code: string;
@@ -237,6 +243,13 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         skipped++;
         continue;
       }
+      // 编号在本批粘贴里已计划过新增 → 重复，只取第一条，其余计入跳过
+      if (newCodes.has(code)) {
+        skipped++;
+        dupLines.push(`行${i + 1}: 编号 ${code} 重复，仅保留第一条`);
+        continue;
+      }
+      newCodes.add(code);
       const get = (key: string) => {
         const idx = importFields.indexOf(key);
         return idx >= 0 ? String(parts[idx] ?? "") : "";
@@ -281,6 +294,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       gradesToEnsure: Array.from(gradesToEnsure),
       skipped,
       bad,
+      dupLines,
       displayRows,
     };
   };
@@ -684,6 +698,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         gradesToEnsure: plan.gradesToEnsure,
         skipped: plan.skipped,
         bad: plan.bad,
+        dup: plan.dupLines,
       };
       post({
         type: "importPreview",
@@ -693,6 +708,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         updated: plan.updateRows.length,
         skipped: plan.skipped,
         bad: plan.bad,
+        duplicates: plan.dupLines.length,
         rows: plan.displayRows.slice(0, IMPORT_PREVIEW_ROW_LIMIT),
         total: plan.displayRows.length,
         truncated: plan.displayRows.length > IMPORT_PREVIEW_ROW_LIMIT,
@@ -700,8 +716,12 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       log(
         `🔍预览商品导入：将新增 ${plan.newRows.length}、将更新 ${plan.updateRows.length}` +
           (plan.skipped ? `，将跳过 ${plan.skipped}` : "") +
+          (plan.dupLines.length ? `，其中重复编号 ${plan.dupLines.length} 行已忽略` : "") +
           (plan.bad.length ? `，无法解析 ${plan.bad.length} 行` : ""),
       );
+      for (const d of plan.dupLines) {
+        log(`  ⚠️${d}`);
+      }
     },
 
     async commitImportProducts(msg) {
@@ -774,6 +794,9 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       }
       for (const b of plan.bad) {
         log(`  ⚠️${b}`);
+      }
+      for (const d of plan.dup) {
+        log(`  ⚠️${d}`);
       }
       if (created > 0 || updated > 0) {
         h.pushUndo(snap, `商品导入（${plan.modeLabel} 新增 ${created}、更新 ${updated}）`);

@@ -274,6 +274,29 @@
         opacity: 0.5;
         cursor: default;
       }
+      .mode-tabs {
+        display: inline-flex;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 6px;
+        overflow: hidden;
+        margin-bottom: 10px;
+      }
+      .mode-tab {
+        padding: 5px 14px;
+        font-size: 12px;
+        border: none;
+        background: transparent;
+        color: var(--vscode-descriptionForeground);
+        cursor: pointer;
+      }
+      .mode-tab + .mode-tab {
+        border-left: 1px solid var(--vscode-panel-border);
+      }
+      .mode-tab.active {
+        background: rgba(35, 168, 132, 0.15);
+        color: #23a884;
+        font-weight: bold;
+      }
       #productPager {
         align-items: center;
         flex-wrap: wrap;

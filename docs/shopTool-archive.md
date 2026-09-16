@@ -527,9 +527,26 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
   - commit 全流程（preOpBackup + 快照 + 缺的等级规则才 ensureRule 并提示 + 写库 + pushUndo + loadAll + productsImported）与旧行为逐条等价；**提交前身份复检**：预览后编号被占用/删除 → 该行跳过并单独提示，避免覆盖；
   - 语义与旧版一致：表头行整行跳过、缺编号 = `bad`、文本字段 `has` 即写（同值也计 updated）、`touched>0` 才算更新、非手动价时售价列可见或等级/进价有变才按规则重算、status 支持 在售/上架=0·已下架/下架=1。
 - **前端**：
-  - `client-product.js`：`openImportProducts` 两段式——`#ipOptions`（方式 + 字段 + 文本框）→「解析预览」→ `#ipPreview`（汇总「将新增 N · 将更新 M · 将跳过 K」+ 折叠「无法解析」原文 + 表格 `类型|编号|名称|变更` 旧→新 diff）→「确认导入 / ← 返回修改」；
+  - `client-product.js`：`openImportProducts`**单页弹窗**（V1 是两页切换，有「返回修改」卡在「解析中…」的缺陷，本轮一并修掉并去掉 `#ipOptions/#ipBack/toggleImportStep`）——**导入方式改为顶部三段式 Tab**（`.mode-tabs`），粘贴框常驻、预览表直接渲染在**下方**不再整页跳走；按钮态 `[取消][解析预览]` ⇄ `[取消][重新解析][确认导入]`；**改内容/换字段/切 Tab 即作废旧预览**（`invalidatePreview`，切 Tab 时按新方式自动重解析），确认导入永不落旧计划；`dbOpError` 时 `resetImportBtns` 顺带清空预览与令牌；
   - `client-main.js`：新增 `importPreview` 分支渲染预览；`productsImported` 自动关导入弹窗；`dbOpError` 复位按钮防卡「解析中…/导入中…」；
   - 令牌用 `var pendingImportToken` / `ipMask` 挂全局——**共享全局只能 `var`**，脚本重载同作用域 `let/const` 会 SyntaxError；
-  - `fragment.html`：补 `#ipPreview` 样式（汇总色、粘性表头、max-height 滚动、bad 红色块）。
+  - `fragment.html`：补 `.mode-tabs/.mode-tab` 分段控键样式 + `#ipPreview` 样式（汇总色、粘性表头、max-height 滚动、bad 红色块）。
 - **文档**：`shopTool-manual.md` 导入小节补「先解析预览再确认」；测试指引同步为「解析预览 → 确认导入」两步。
 - 验证：`tsc -p ./` 0 error、`eslint src` 仅既有 4 条存量 warning、`node --check` ×2 通过。测试运行本次押后。
+
+## 二十五、导入重复编号去重 + 图片「同内容不再复制」
+
+> 归档时间：2026-09-16。状态：**已实现**。
+
+- **A 导入商品：同批粘贴重复编号只取第一条**（`handlers/product.ts`）
+  - 现象：预览不落库、只查库 → 库里不存在的同号两行预览都判「新增」（将新增 2），提交时第二行走「身份复检」被跳过（实际只加 1 条）——预览数字与结果不一致；
+  - 约定（与 pasteSales 同批重复忽略的口径一致）：**只取第一次出现的行，其余计入「跳过」并标注**；`buildImportPlan` 加 `newCodes` 集合收集 `dupLines`；
+  - `importPreview` 消息带 `duplicates` 计数 → 前端汇总行显示「重复编号 N 行已忽略」；预览/提交日志都逐条 `⚠️行N: 编号 X 重复，仅保留第一条`；
+  - 已存在编号的重复行行为不变（仍各计一次更新，幂等）。
+- **B 图片粘贴/拖入：同内容不再落副本**（`handlers/image.ts` `receiveImageData`）
+  - 现象：画册大图浮层里把已存在的图再拖入/V 过去，`uniqueTargetPath` 只按文件名去重 → 又生成一个 `xxx_2.jpg` 副本，越拖越多；
+  - 修复（两层）：
+    - 前端**源头掐断**（`client-product.js`）：拖拽的是画册/灯箱里**已经显示出来的图本身**时，Chromium 默认会把 `<img>` 当一个文件塞进 `dataTransfer.files`，一松手就被 `receiveImageData` 再写一份 → document 捕获层新增 `dragstart` 拦截（`onInternalImgDragStart`），命中 `<img>` 直接 `preventDefault` 取消拖拽并提示「这张图已经在这里了」，外部 OS 文件拖入不受影响；
+    - 后端**同内容守卫**：`receiveImageData` 写盘前 `sameContentExists`（字节 SHA1 比对该商品文件夹全部现有图）→ 命中则跳过并计数，日志「已粘贴/拖入 N 张 → 文件夹（M 张与已有图片重复已忽略）」；只重复无新增时不刷新。
+  - 语义口径：**前端拦截的是「拖已显示的图」，后端守卫兜底「任何路径碰到同内容图」**；`uploadImages`（picker 显式选择）保持现状不动。
+- 验证：`tsc -p ./` 0 error、`eslint src` 仅既有 4 条存量 warning、`node --check` 通过；前端刷新面板、后端 F5 生效。
