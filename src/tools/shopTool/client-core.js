@@ -309,22 +309,29 @@ window.toolClients = window.toolClients || {};
       toastTimer = setTimeout(() => (el.style.display = "none"), 1800);
     }
 
+    let _modalEscHandler = null;
+
     function showModal(html) {
       closeModal();
       const mask = document.createElement("div");
       mask.className = "modal-mask";
       mask.id = "dynModalMask";
       mask.innerHTML = `<div class="modal">${html}</div>`;
-      mask.addEventListener("click", (e) => {
-        if (e.target === mask) {
+      _modalEscHandler = (ev) => {
+        if (ev.key === "Escape") {
           closeModal();
         }
-      });
+      };
+      document.addEventListener("keydown", _modalEscHandler);
       document.body.appendChild(mask);
       return mask;
     }
 
     function closeModal() {
+      if (_modalEscHandler) {
+        document.removeEventListener("keydown", _modalEscHandler);
+        _modalEscHandler = null;
+      }
       const m = document.getElementById("dynModalMask");
       if (m) {
         m.remove();

@@ -104,11 +104,12 @@ export async function renderLiveGrid(
   return outFile;
 }
 
-// 星标封面总览图：方阵自动密度（传入侧边数 side），每格封面 + 编号/售价标签
+// 星标封面总览图：自定义排版 cols×rows（每格封面 + 编号/售价标签）
 // 内存版：预览用（不落盘）；写文件版 renderStarOverviewGrid 复用它
 export async function renderStarOverviewBuffer(
   rows: Array<{ code: string; img: string | null; price: number }>,
-  side: number,
+  cols: number,
+  rowsN: number,
 ): Promise<Buffer> {
   let tileW = 300;
   let tileH = 300;
@@ -129,12 +130,12 @@ export async function renderStarOverviewBuffer(
       /* 尺寸读取失败用默认 */
     }
   }
-  const canvasW = tileW * side;
-  const canvasH = tileH * side;
+  const canvasW = tileW * cols;
+  const canvasH = tileH * rowsN;
   const layers: Parameters<sharp.Sharp["composite"]>[0] = [];
   for (let idx = 0; idx < rows.length; idx++) {
-    const col = idx % side;
-    const row = Math.floor(idx / side);
+    const col = idx % cols;
+    const row = Math.floor(idx / cols);
     const cell = rows[idx];
     let input: Buffer;
     if (cell.img) {
@@ -173,9 +174,10 @@ export async function renderStarOverviewGrid(
   rows: Array<{ code: string; img: string | null; price: number }>,
   outDir: string,
   fileName: string,
-  side: number,
+  cols: number,
+  rowsN: number,
 ): Promise<string> {
-  const buf = await renderStarOverviewBuffer(rows, side);
+  const buf = await renderStarOverviewBuffer(rows, cols, rowsN);
   const outFile = path.join(outDir, fileName);
   fs.writeFileSync(outFile, buf);
   return outFile;

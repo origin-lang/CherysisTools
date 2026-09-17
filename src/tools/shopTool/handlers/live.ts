@@ -50,12 +50,41 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
   };
 
   type StarRow = { code: string; img: string | null; price: number };
-  const chunksOf = (rows: StarRow[]) => {
+  // 排版解析：0/缺省＝自动（方形）；否则每张固定 cols×rows，末页留空
+  const resolveGrid = (msg: any): { cols: number; rows: number } => {
+    const fromMsg =
+      Number(msg?.cols) > 0 && Number(msg?.rows) > 0
+        ? { cols: Number(msg.cols), rows: Number(msg.rows) }
+        : null;
+    const fromSettings =
+      Number(db.getSetting("star_grid_cols") || "0") > 0 &&
+      Number(db.getSetting("star_grid_rows") || "0") > 0
+        ? { cols: Number(db.getSetting("star_grid_cols")), rows: Number(db.getSetting("star_grid_rows")) }
+        : null;
+    const g = fromMsg ?? fromSettings;
+    if (!g) {
+      return { cols: 0, rows: 0 };
+    }
+    return { cols: Math.min(10, Math.max(1, g.cols)), rows: Math.min(10, Math.max(1, g.rows)) };
+  };
+  const chunksOf = (
+    rows: StarRow[],
+    cols: number,
+    rowsN: number,
+  ): Array<{ rows: StarRow[]; cols: number; rowsN: number }> => {
+    if (cols > 0 && rowsN > 0) {
+      const cap = cols * rowsN;
+      const chunks: Array<{ rows: StarRow[]; cols: number; rowsN: number }> = [];
+      for (let i = 0; i < rows.length; i += cap) {
+        chunks.push({ rows: rows.slice(i, i + cap), cols, rowsN });
+      }
+      return chunks;
+    }
     const side = Math.max(3, Math.ceil(Math.sqrt(rows.length)));
     const cap = side * side;
-    const chunks: Array<{ rows: StarRow[]; side: number }> = [];
+    const chunks: Array<{ rows: StarRow[]; cols: number; rowsN: number }> = [];
     for (let i = 0; i < rows.length; i += cap) {
-      chunks.push({ rows: rows.slice(i, i + cap), side });
+      chunks.push({ rows: rows.slice(i, i + cap), cols: side, rowsN: side });
     }
     return chunks;
   };
@@ -217,16 +246,17 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
     },
 
     // 星标总览图：两组 handler 逻辑见工厂顶部 buildStarRows/chunksOf
-    async previewStarOverview() {
+    async previewStarOverview(msg) {
       const rows = buildStarRows();
       if (!rows) {
         return;
       }
+      const g = resolveGrid(msg);
       const previews: Array<{ name: string; data: string }> = [];
       const total = rows.length;
-      for (const [i, chunk] of chunksOf(rows).entries()) {
+      for (const [i, chunk] of chunksOf(rows, g.cols, g.rows).entries()) {
         try {
-          const buf = await renderStarOverviewBuffer(chunk.rows, chunk.side);
+          const buf = await renderStarOverviewBuffer(chunk.rows, chunk.cols, chunk.rowsN);
           const small = await sharp(buf)
             .resize({ width: 900, withoutEnlargement: true })
             .jpeg({ quality: 82 })
@@ -239,14 +269,27 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
           log(`⚠️第 ${i + 1} 张预览失败：${err.message}`);
         }
       }
-      post({ type: "starOverviewPreview", total, count: previews.length, previews });
+      post({
+        type: "starOverviewPreview",
+        total,
+        count: previews.length,
+        previews,
+        cols: g.cols || 0,
+        rows: g.rows || 0,
+      });
     },
 
     // 预览确认后才落盘（弹目录确认/另选 → 写文件 → 打开输出目录）
-    async generateStarOverview() {
+    async generateStarOverview(msg) {
       const rows = buildStarRows();
       if (!rows) {
         return;
+      }
+      const g = resolveGrid(msg);
+      // 弹窗里选过排版 → 记住，下次预览/生成直接用
+      if (Number(msg?.cols) > 0 && Number(msg?.rows) > 0) {
+        db.setSetting("star_grid_cols", String(g.cols));
+        db.setSetting("star_grid_rows", String(g.rows));
       }
       let outDir = String(h.getSetting("live_out_dir") || "").trim();
       if (outDir && fs.existsSync(outDir)) {
@@ -274,10 +317,10 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       }
       const files: string[] = [];
       const total = rows.length;
-      for (const [i, chunk] of chunksOf(rows).entries()) {
+      for (const [i, chunk] of chunksOf(rows, g.cols, g.rows).entries()) {
         const fileName = `星标总览_${total}款_第${i + 1}张_${localYmd()}.jpg`;
         try {
-          files.push(await renderStarOverviewGrid(chunk.rows, outDir, fileName, chunk.side));
+          files.push(await renderStarOverviewGrid(chunk.rows, outDir, fileName, chunk.cols, chunk.rowsN));
         } catch (err: any) {
           log(`❌第 ${i + 1} 张生成失败：${err.message}`);
         }

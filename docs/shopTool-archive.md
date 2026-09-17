@@ -582,3 +582,14 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
 - **backend 约束修正**：handlers 由 `await fn(msg, h)` 裸调用（`index.ts`），`this` 为 `undefined` → `buildStarRows`/`chunksOf`/`type StarRow` 提到**工厂闭包**顶层，两个 handler 直接复用同份解析/分页逻辑。
 - **文档**：manual §2.6 补批量星标、§2.7 重写为「⭐ 星标 ▾」四项口径。
 - 验证：`tsc -p ./` 0 error、`eslint src` 0 error（188 条存量风格 warning）、`node --check` ×2 通过。
+
+### 二十六·补记 2（可设每张几行×几列 · 弹窗点外部不再关 · 取消全部星标仅留下拉，2026-09-17）
+
+三点追加修订（推翻上一条补记里的两处描述）：
+
+- **每张排版可自定义（`liveGrid.ts` / `handlers/live.ts`）**：`renderStarOverviewBuffer`/`renderStarOverviewGrid` 参数由 `side`（只能方阵）改为 **`cols × rows`**（`idx→col=idx%cols, row=⌊idx/cols⌋`；预览/写盘同源）。`chunksOf(rows, cols, rowsN)`：固定排版时 `cap=cols·rows` 分页、末页留白格，不再自动膨胀；0/0=仍是自动方形（旧逻辑）。`resolveGrid(msg)` 收前端传入并夹取 1..10，缺省回退后端设置 `star_grid_cols`/`star_grid_rows`；`generateStarOverview` 把弹窗选中的排版 `setSetting` 持久化，下次预览/生成直接用。
+- **前端弹窗排版控件（`client-product.js`）**：预览弹窗顶部「每张排版」下拉（自动 / 3×3 / 4×3 / 3×4 / 4×4 / 5×5 / 自定义…，自定义展开行×列数字框）。**改动即带 `cols/rows` 重发 `previewStarOverview`，弹窗原地换数据不重建不闪烁**（`starOv.reloading` 期间禁用控件、状态行「正在按…重新排版预览…」）；「✅ 生成」同参发给 `generateStarOverview`。`starOverviewPreview` 回带实际排版，弹窗标题/下拉按它回显。
+- **弹窗不再一点外部就关（`client-core.js`）**：`showModal` 里 `mask` 点击关闭逻辑**删除**，改为挂 document `keydown` **Esc → `closeModal()`**（关闭时 `removeEventListener` 防泄漏）。所有弹窗统一：误点空白不丢内容，关靠按钮/Esc；右键菜单（`showImageCtxMenu`）点外部关闭保留。
+- **列表行右键删「🗑 取消全部星标…」**（`client-product.js`）：菜单项与其 handler 一并删除，「取消全部星标」**只在「⭐ 星标 ▾」下拉**一处。
+- **文档**：manual §2.7 补排版/弹窗说明、删列表右键口径、加「弹窗点空白不关」提示。
+- 验证：`tsc -p ./` 0 error、`eslint src` 0 error、`node --check` ×2 通过。

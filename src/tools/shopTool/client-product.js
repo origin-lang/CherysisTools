@@ -813,10 +813,10 @@ function showStarMenu(btn) {
       label: `${starOnlyOn ? "✓ " : ""}只看星标（${starCount} 个）`,
       run: toggleStarOnly,
     },
-    { label: "⭐ 复制星标清单", run: () => copyStarList() },
-    { label: "🖼 星标总览图（先预览）", run: () => post({ type: "previewStarOverview" }) },
+    { label: "复制星标清单", run: () => copyStarList() },
+    { label: "星标总览图", run: () => post({ type: "previewStarOverview" }) },
     { sep: true },
-    { label: "🗑 取消全部星标…", run: () => clearAllStars(), danger: true },
+    { label: "取消全部星标", run: () => clearAllStars(), danger: true },
   ]);
 }
 
@@ -853,11 +853,107 @@ function setStarsForSelected(on) {
   state.liveStars = set;
   post({ type: "setLiveStars", codes: [...set] });
   renderProducts();
-  toast(on ? `已标记 ${codes.length} 个商品星标 ✅` : `已取消 ${codes.length} 个商品星标`);
+  toast(
+    on
+      ? `已标记 ${codes.length} 个商品星标 ✅`
+      : `已取消 ${codes.length} 个商品星标`,
+  );
 }
 
 // ===== 星标总览图「先预览，点生成才落盘」 =====
 var starOv = { mask: null, idx: 0, previews: [], total: 0, generating: false };
+
+var starOv = {
+  mask: null,
+  idx: 0,
+  previews: [],
+  total: 0,
+  generating: false,
+  reloading: false,
+  cols: 0,
+  rows: 0,
+};
+
+const STAR_GRID_PRESETS = [
+  ["0", "自动（智能）"],
+  ["3x3", "3 × 3"],
+  ["4x3", "4 × 3"],
+  ["3x4", "3 × 4"],
+  ["4x4", "4 × 4"],
+  ["5x5", "5 × 5"],
+];
+
+function starOvDims() {
+  const sel = starOv.mask.querySelector("[data-so-grid]");
+  if (sel && sel.value === "custom") {
+    const c = parseInt(starOv.mask.querySelector("[data-so-cc]").value || "0", 10);
+    const r = parseInt(starOv.mask.querySelector("[data-so-cr]").value || "0", 10);
+    return {
+      cols: Number.isFinite(c) ? Math.min(10, Math.max(1, c)) : 0,
+      rows: Number.isFinite(r) ? Math.min(10, Math.max(1, r)) : 0,
+    };
+  }
+  if (sel && sel.value && sel.value !== "0") {
+    const [c, r] = sel.value.split("x").map((x) => parseInt(x, 10));
+    return { cols: c || 0, rows: r || 0 };
+  }
+  return { cols: 0, rows: 0 };
+}
+
+function starOvDimsLabel(d) {
+  if (!d || !d.cols || !d.rows) {
+    return "自动方阵";
+  }
+  return `${d.rows} 行 × ${d.cols} 列`;
+}
+
+function starOvSyncGrid() {
+  const mask = starOv.mask;
+  const sel = mask.querySelector("[data-so-grid]");
+  const cc = mask.querySelector("[data-so-cc]");
+  const cr = mask.querySelector("[data-so-cr]");
+  const cust = mask.querySelector("[data-so-cust]");
+  const key = starOv.cols && starOv.rows ? `${starOv.cols}x${starOv.rows}` : "0";
+  const preset = sel.querySelector(`option[value="${key}"]`);
+  if (preset) {
+    sel.value = key;
+    cust.style.display = "none";
+  } else {
+    sel.value = "custom";
+    cr.value = starOv.rows || 1;
+    cc.value = starOv.cols || 1;
+    cust.style.display = "inline-flex";
+  }
+}
+
+function starOvSetEnabled(on) {
+  const q = (s) => starOv.mask.querySelector(s);
+  ["[data-so-grid]", "[data-so-cc]", "[data-so-cr]", "[data-so-prev]", "[data-so-next]", "[data-so-gen]"].forEach((s) => {
+    const el = q(s);
+    if (el) {
+      el.disabled = !on;
+    }
+  });
+}
+
+function starOvRequestPreview() {
+  if (starOv.generating || starOv.reloading) {
+    return;
+  }
+  const d = starOvDims();
+  if ((d.cols && !d.rows) || (!d.cols && d.rows)) {
+    toast("自定义排版要同时填「行」和「列」");
+    return;
+  }
+  starOv.reloading = true;
+  starOvSetEnabled(false);
+  const status = starOv.mask.querySelector("[data-so-status]");
+  if (status) {
+    status.style.display = "block";
+    status.textContent = `正在按「${starOvDimsLabel(d)}」重新排版预览…`;
+  }
+  post({ type: "previewStarOverview", cols: d.cols || 0, rows: d.rows || 0 });
+}
 
 function starOvFrame() {
   const p = starOv.previews[starOv.idx];
@@ -881,23 +977,71 @@ function starOvFrame() {
 function showStarOverviewPreview(msg) {
   const previews = Array.isArray(msg.previews) ? msg.previews : [];
   if (previews.length === 0) {
-    toast("没有星标商品可预览（先去 ⭐ 标记）");
+    if (starOv.mask && starOv.mask.isConnected) {
+      starOv.reloading = false;
+      starOvSetEnabled(true);
+      const status = starOv.mask.querySelector("[data-so-status]");
+      if (status) {
+        status.style.display = "none";
+      }
+      toast("该排版没有可用预览");
+    } else {
+      toast("没有星标商品可预览（先去 ⭐ 标记）");
+    }
+    return;
+  }
+  // 弹窗已开（换个排版重预览）→ 原地换数据，不重建不闪烁
+  if (starOv.mask && starOv.mask.isConnected) {
+    starOv.previews = previews;
+    starOv.idx = 0;
+    starOv.total = Number(msg.total || 0);
+    starOv.cols = Number(msg.cols || 0);
+    starOv.rows = Number(msg.rows || 0);
+    starOv.generating = false;
+    starOv.reloading = false;
+    starOvSyncGrid();
+    starOvSetEnabled(true);
+    const status = starOv.mask.querySelector("[data-so-status]");
+    if (status) {
+      status.style.display = "none";
+    }
+    const h3 = starOv.mask.querySelector("h3");
+    if (h3) {
+      h3.textContent = `⭐ 星标总览图（${starOv.total} 款 · ${previews.length} 张 · ${starOvDimsLabel(msg)})`;
+    }
+    starOvFrame();
     return;
   }
   closeModal();
-  starOv.mask = null;
   starOv.idx = 0;
   starOv.previews = previews;
   starOv.total = Number(msg.total || 0);
+  starOv.cols = Number(msg.cols || 0);
+  starOv.rows = Number(msg.rows || 0);
   starOv.generating = false;
+  starOv.reloading = false;
   const mask = showModal(`
-    <h3>⭐ 星标总览图（${starOv.total} 款 · ${previews.length} 张）</h3>
+    <h3>⭐ 星标总览图（${starOv.total} 款 · ${previews.length} 张 · ${starOvDimsLabel(msg)}）</h3>
     <div class="muted" style="margin-bottom:6px">预览未落盘——满意后点「✅ 生成」才写入输出目录。</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+      <span class="muted">每张排版</span>
+      <select data-so-grid style="min-width:110px">
+        ${STAR_GRID_PRESETS.map(
+          ([v, t]) => `<option value="${v}">${t}</option>`,
+        ).join("")}
+        <option value="custom">自定义…</option>
+      </select>
+      <span data-so-cust style="display:none;align-items:center;gap:4px" class="muted">
+        <input data-so-cr type="number" min="1" max="10" style="width:56px" title="行数" />行
+        × <input data-so-cc type="number" min="1" max="10" style="width:56px" title="列数" />列
+      </span>
+    </div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
       <button data-so-prev class="mini-btn">‹ 上一张</button>
       <span data-so-ctr style="min-width:44px;text-align:center"></span>
       <button data-so-next class="mini-btn">下一张 ›</button>
     </div>
+    <div data-so-status class="muted" style="display:none;margin-bottom:4px"></div>
     <div style="text-align:center">
       <img data-so-img style="max-width:min(720px,86vw);max-height:62vh;border:1px solid var(--vscode-panel-border);border-radius:4px" />
       <div data-so-cap class="muted" style="margin-top:4px;font-size:12px"></div>
@@ -907,15 +1051,27 @@ function showStarOverviewPreview(msg) {
       <button data-so-gen class="btn-teal">✅ 生成</button>
     </div>`);
   starOv.mask = mask;
+  starOvSyncGrid();
+  mask.querySelector("[data-so-grid]").onchange = () => {
+    const cust = mask.querySelector("[data-so-cust]");
+    if (mask.querySelector("[data-so-grid]").value === "custom") {
+      cust.style.display = "inline-flex";
+    } else {
+      cust.style.display = "none";
+    }
+    starOvRequestPreview();
+  };
+  mask.querySelector("[data-so-cr]").onchange = () => starOvRequestPreview();
+  mask.querySelector("[data-so-cc]").onchange = () => starOvRequestPreview();
   mask.querySelector("[data-so-prev]").onclick = () => {
-    if (starOv.generating) {
+    if (starOv.generating || starOv.reloading) {
       return;
     }
     starOv.idx = Math.max(0, starOv.idx - 1);
     starOvFrame();
   };
   mask.querySelector("[data-so-next]").onclick = () => {
-    if (starOv.generating) {
+    if (starOv.generating || starOv.reloading) {
       return;
     }
     starOv.idx = Math.min(starOv.previews.length - 1, starOv.idx + 1);
@@ -923,7 +1079,12 @@ function showStarOverviewPreview(msg) {
   };
   mask.querySelector("[data-so-close]").onclick = () => closeModal();
   mask.querySelector("[data-so-gen]").onclick = () => {
-    if (starOv.generating) {
+    if (starOv.generating || starOv.reloading) {
+      return;
+    }
+    const d = starOvDims();
+    if ((d.cols && !d.rows) || (!d.cols && d.rows)) {
+      toast("自定义排版要同时填「行」和「列」");
       return;
     }
     starOv.generating = true;
@@ -932,7 +1093,7 @@ function showStarOverviewPreview(msg) {
       `<div class="muted" style="align-self:center;margin-right:auto">正在生成…（会弹目录确认）</div>` +
       `<button data-so-close>取消</button>`;
     footer.querySelector("[data-so-close]").onclick = () => closeModal();
-    post({ type: "generateStarOverview" });
+    post({ type: "generateStarOverview", cols: d.cols || 0, rows: d.rows || 0 });
   };
   starOvFrame();
 }
@@ -942,6 +1103,7 @@ function onStarOverviewDone(msg) {
   const count = Number(msg.count || 0);
   if (starOv.mask && starOv.mask.isConnected) {
     starOv.generating = false;
+    starOv.reloading = false;
     const footer = starOv.mask.querySelector("[data-so-footer]");
     if (footer) {
       footer.innerHTML =
@@ -1529,9 +1691,9 @@ function openImportProducts() {
         return;
       }
       mode = tb.dataset.tab;
-      mask.querySelectorAll(".mode-tab").forEach((x) =>
-        x.classList.toggle("active", x.dataset.tab === mode),
-      );
+      mask
+        .querySelectorAll(".mode-tab")
+        .forEach((x) => x.classList.toggle("active", x.dataset.tab === mode));
       renderIp();
       // 切方式＝结果会变：已有预览则按新方式自动重解析
       if (pendingImportToken) {
@@ -1948,8 +2110,6 @@ function openContextMenu(e, p, field) {
     `<div class="ctx-item" data-copy="row">复制整行</div>` +
     `<div class="ctx-item" data-copy="table">复制整表(筛选后)</div>` +
     `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
-    `<div class="ctx-item" data-pctx="clearstars">🗑 取消全部星标…</div>` +
-    `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
     (p.status === 0
       ? `<div class="ctx-item" data-pctx="off">下架</div>`
       : `<div class="ctx-item" data-pctx="on">上架</div>`) +
@@ -2001,13 +2161,6 @@ function openContextMenu(e, p, field) {
   if (offBtn) {
     offBtn.onclick = () => {
       post({ type: "setStatus", id: p.id, status: 1 });
-      close();
-    };
-  }
-  const clearStarsBtn = menu.querySelector('[data-pctx="clearstars"]');
-  if (clearStarsBtn) {
-    clearStarsBtn.onclick = () => {
-      clearAllStars();
       close();
     };
   }
@@ -2324,10 +2477,18 @@ function clearImgDropHover() {
 function bindImageDropPaste() {
   if (shopImageBindings) {
     document.removeEventListener("paste", shopImageBindings.paste, true);
-    document.removeEventListener("dragleave", shopImageBindings.dragleave, true);
+    document.removeEventListener(
+      "dragleave",
+      shopImageBindings.dragleave,
+      true,
+    );
     document.removeEventListener("dragover", shopImageBindings.dragover, true);
     document.removeEventListener("drop", shopImageBindings.drop, true);
-    document.removeEventListener("dragstart", shopImageBindings.dragstart, true);
+    document.removeEventListener(
+      "dragstart",
+      shopImageBindings.dragstart,
+      true,
+    );
   }
   shopImageBindings = {
     paste: onImagePasteCapture,
