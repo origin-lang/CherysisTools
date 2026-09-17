@@ -1,3 +1,4 @@
+import * as fs from "fs";
 import * as path from "path";
 import sharp from "sharp";
 
@@ -104,12 +105,11 @@ export async function renderLiveGrid(
 }
 
 // 星标封面总览图：方阵自动密度（传入侧边数 side），每格封面 + 编号/售价标签
-export async function renderStarOverviewGrid(
+// 内存版：预览用（不落盘）；写文件版 renderStarOverviewGrid 复用它
+export async function renderStarOverviewBuffer(
   rows: Array<{ code: string; img: string | null; price: number }>,
-  outDir: string,
-  fileName: string,
   side: number,
-): Promise<string> {
+): Promise<Buffer> {
   let tileW = 300;
   let tileH = 300;
   const firstImg = rows.find((r) => r.img);
@@ -155,8 +155,7 @@ export async function renderStarOverviewGrid(
       });
     }
   }
-  const outFile = path.join(outDir, fileName);
-  await sharp({
+  return await sharp({
     create: {
       width: canvasW,
       height: canvasH,
@@ -166,6 +165,18 @@ export async function renderStarOverviewGrid(
   })
     .composite(layers)
     .jpeg({ quality: 95 })
-    .toFile(outFile);
+    .toBuffer();
+}
+
+// 写文件版：内存渲染结果落盘到 outDir/fileName
+export async function renderStarOverviewGrid(
+  rows: Array<{ code: string; img: string | null; price: number }>,
+  outDir: string,
+  fileName: string,
+  side: number,
+): Promise<string> {
+  const buf = await renderStarOverviewBuffer(rows, side);
+  const outFile = path.join(outDir, fileName);
+  fs.writeFileSync(outFile, buf);
   return outFile;
 }

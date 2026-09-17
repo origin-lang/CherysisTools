@@ -569,3 +569,16 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
   - `openStarOutDir`：前端预览弹窗里「📂 打开文件夹」触发（`revealFileInOS` `live_out_dir`）；
   - 图内价格只标**售价**（直播前扫款用），进价不进图。
 - 验证：`tsc -p ./` 0 error、`eslint src` 仅既有 4 条存量 warning、`node --check` ×2 通过。测试运行本次押后。
+
+### 二十六·补记（星标交互第 4 版形态，2026-09-17）
+
+用户试用心得的**收敛性修订**（此前 `e2569c1`、`029564c` 的入口冗余/一步到位被推翻）：
+
+- **入口合并**：顶栏 4 个按钮（只看星标 / 复制星标 / 总览图 / 取消全部）→ 合并为单个「**⭐ 星标 ▾**」（`#starMenuBtn`）下拉子菜单（复用图片右键菜单组件 `showImageCtxMenu`：只想看（带 ✓ 回显数量）/ 复制星标清单 / 星标总览图（先预览）/ 取消全部…）；「✕ 取消全部星标」按钮删除，「取消全部」仅留**列表行右键**与**下拉子菜单**两处同一入口。
+- **画册/行右键回退**：画册（封面）右键**不再放星标菜单**（恢复原样）；列表行右键删掉「标记/取消该商品星标」（操作列已有 ⭐ 按钮），**保留**「🗑 取消全部星标…」。相应删除 `setLiveStar`（取消本地持久化函数）与 `staron/stardoff` 两分支。
+- **总览图「先预览，点生成才落盘」**：`renderStarOverview` 一分为二——`previewStarOverview`（`renderStarOverviewBuffer` 内存渲染 → 900px JPEG base64 回传，**不写盘不弹目录**）与 `generateStarOverview`（预览确认后同样弹输出目录确认/另选 → `renderStarOverviewGrid` 写盘 → `revealFileInOS` → `🖼` 日志 → `starOverviewDone`）。`liveGrid.ts` 把同一渲染拆成**内存 Buffer 版**（预览复用）与写文件包装版。
+  - **前端弹窗**（`showStarOverviewPreview` / `onStarOverviewDone` + `starOv` 全局态）：多张可 `‹ 上一张 / 下一张 ›` **翻页**（N/M）；「✅ 生成」后按钮禁置、文案「正在生成…（会弹目录确认）」；完成后 footer 切「已生成 N 张 → 目录 [📂 打开文件夹] [完成]」；弹窗已关则只 toast。
+- **批量标星**：批量栏新增「⭐ 标星」「☆ 取消星标」两个按钮（`setStarsForSelected(true/false)`：勾选商品全量标记/取消，本地 Set + `setLiveStars` 持久化）。
+- **backend 约束修正**：handlers 由 `await fn(msg, h)` 裸调用（`index.ts`），`this` 为 `undefined` → `buildStarRows`/`chunksOf`/`type StarRow` 提到**工厂闭包**顶层，两个 handler 直接复用同份解析/分页逻辑。
+- **文档**：manual §2.6 补批量星标、§2.7 重写为「⭐ 星标 ▾」四项口径。
+- 验证：`tsc -p ./` 0 error、`eslint src` 0 error（188 条存量风格 warning）、`node --check` ×2 通过。

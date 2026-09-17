@@ -6,7 +6,7 @@ import { Handler, HandlerCtx } from "./types.js";
 import { LivePlanRow, Product } from "../db.js";
 import { canonicalCode } from "../pricing.js";
 import { firstImageFile } from "../images.js";
-import { renderLiveGrid, renderStarOverviewGrid } from "../liveGrid.js";
+import { renderLiveGrid, renderStarOverviewBuffer, renderStarOverviewGrid } from "../liveGrid.js";
 
 function localYmd(): string {
   const d = new Date();
@@ -18,6 +18,47 @@ function localYmd(): string {
 export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
   const { db, log, post } = h;
   const ctx = h.ctx;
+
+  // 星标总览图＝「先预览，点生成才落盘」：两份 handler 共用解析星标行/分页逻辑
+  const buildStarRows = () => {
+    const dir = String(h.getSetting("image_dir") || "").trim();
+    if (!dir || !fs.existsSync(dir)) {
+      log("❌未设置有效的图片根目录（规则与设置里选）");
+      return null;
+    }
+    const stars = db.getLiveStars();
+    const byCode = new Map<string, Product>();
+    for (const p of db.getProducts()) {
+      byCode.set(p.code, p);
+    }
+    const rows = stars
+      .filter((code) => byCode.has(code))
+      .sort()
+      .map((code) => {
+        const p = byCode.get(code)!;
+        return {
+          code,
+          img: firstImageFile(dir, code),
+          price: Number(p.sale_price || 0),
+        };
+      });
+    if (rows.length === 0) {
+      log("❌还没有打星标的商品（列表/画册点 ⭐，或右键商品行标记）");
+      return null;
+    }
+    return rows as Array<{ code: string; img: string | null; price: number }>;
+  };
+
+  type StarRow = { code: string; img: string | null; price: number };
+  const chunksOf = (rows: StarRow[]) => {
+    const side = Math.max(3, Math.ceil(Math.sqrt(rows.length)));
+    const cap = side * side;
+    const chunks: Array<{ rows: StarRow[]; side: number }> = [];
+    for (let i = 0; i < rows.length; i += cap) {
+      chunks.push({ rows: rows.slice(i, i + cap), side });
+    }
+    return chunks;
+  };
 
   return {
     toggleLiveStar(msg) {
@@ -175,31 +216,36 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       h.postLiveState();
     },
 
-    // 星标商品封面拼总览图：自动密度（≤9 用 3×3，再多按 4×4/5×5…），超过一张自动分页
-    async renderStarOverview() {
-      const dir = String(h.getSetting("image_dir") || "").trim();
-      if (!dir || !fs.existsSync(dir)) {
-        log("❌未设置有效的图片根目录（规则与设置里选）");
+    // 星标总览图：两组 handler 逻辑见工厂顶部 buildStarRows/chunksOf
+    async previewStarOverview() {
+      const rows = buildStarRows();
+      if (!rows) {
         return;
       }
-      const stars = db.getLiveStars();
-      const byCode = new Map<string, Product>();
-      for (const p of db.getProducts()) {
-        byCode.set(p.code, p);
+      const previews: Array<{ name: string; data: string }> = [];
+      const total = rows.length;
+      for (const [i, chunk] of chunksOf(rows).entries()) {
+        try {
+          const buf = await renderStarOverviewBuffer(chunk.rows, chunk.side);
+          const small = await sharp(buf)
+            .resize({ width: 900, withoutEnlargement: true })
+            .jpeg({ quality: 82 })
+            .toBuffer();
+          previews.push({
+            name: `星标总览_${total}款_第${i + 1}张.jpg`,
+            data: `data:image/jpeg;base64,${small.toString("base64")}`,
+          });
+        } catch (err: any) {
+          log(`⚠️第 ${i + 1} 张预览失败：${err.message}`);
+        }
       }
-      const rows = stars
-        .filter((code) => byCode.has(code))
-        .sort()
-        .map((code) => {
-          const p = byCode.get(code)!;
-          return {
-            code,
-            img: firstImageFile(dir, code),
-            price: Number(p.sale_price || 0),
-          };
-        });
-      if (rows.length === 0) {
-        log("❌还没有打星标的商品（列表/画册点 ⭐，或右键商品行标记）");
+      post({ type: "starOverviewPreview", total, count: previews.length, previews });
+    },
+
+    // 预览确认后才落盘（弹目录确认/另选 → 写文件 → 打开输出目录）
+    async generateStarOverview() {
+      const rows = buildStarRows();
+      if (!rows) {
         return;
       }
       let outDir = String(h.getSetting("live_out_dir") || "").trim();
@@ -226,36 +272,18 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
           return;
         }
       }
-      const side = Math.max(3, Math.ceil(Math.sqrt(rows.length)));
-      const cap = side * side;
       const files: string[] = [];
       const total = rows.length;
-      for (let i = 0; i < total; i += cap) {
-        const chunk = rows.slice(i, i + cap);
-        const fileName = `星标总览_${total}款_第${files.length + 1}张_${localYmd()}.jpg`;
+      for (const [i, chunk] of chunksOf(rows).entries()) {
+        const fileName = `星标总览_${total}款_第${i + 1}张_${localYmd()}.jpg`;
         try {
-          files.push(await renderStarOverviewGrid(chunk, outDir, fileName, side));
+          files.push(await renderStarOverviewGrid(chunk.rows, outDir, fileName, chunk.side));
         } catch (err: any) {
-          log(`❌第 ${files.length + 1} 张生成失败：${err.message}`);
+          log(`❌第 ${i + 1} 张生成失败：${err.message}`);
         }
       }
       if (files.length === 0) {
         return;
-      }
-      const previews: Array<{ name: string; data: string }> = [];
-      for (const f of files) {
-        try {
-          const buf = await sharp(f)
-            .resize({ width: 900, withoutEnlargement: true })
-            .jpeg({ quality: 82 })
-            .toBuffer();
-          previews.push({
-            name: path.basename(f),
-            data: `data:image/jpeg;base64,${buf.toString("base64")}`,
-          });
-        } catch {
-          /* 单张预览失败跳过 */
-        }
       }
       try {
         await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(outDir));
@@ -263,7 +291,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
         /* 忽略打开失败 */
       }
       log(`🖼星标总览：${total} 款，已生成 ${files.length} 张 → ${outDir}`);
-      post({ type: "starOverviewDone", dir: outDir, count: files.length, previews });
+      post({ type: "starOverviewDone", dir: outDir, count: files.length });
     },
 
     openStarOutDir() {

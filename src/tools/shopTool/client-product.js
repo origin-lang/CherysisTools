@@ -530,6 +530,8 @@ function renderList(list) {
                      <button class="mini-btn" id="batchCopy" title="把选中的商品按当前可见列复制到剪贴板（带表头）">📋 复制选中</button>
                      <button class="mini-btn" id="batchOn" title="上架选中的商品">🔺 上架</button>
                     <button class="mini-btn" id="batchOff" title="下架选中的商品">🔻 下架</button>
+                    <button class="mini-btn" id="batchStar" title="给选中的商品全部标记星标">⭐ 标星</button>
+                    <button class="mini-btn" id="batchUnstar" title="取消选中的商品星标">☆ 取消星标</button>
                     <button class="mini-btn btn-danger" id="batchDel" title="删除选中的商品（含记录，不可恢复）">🗑 删除</button>
                     <button class="mini-btn" id="batchClear" title="取消全部选择">✕ 取消</button>
                   </div>`
@@ -672,6 +674,16 @@ function bindBatchOps() {
     };
   });
 
+  const batchStar = $("batchStar");
+  const batchUnstar = $("batchUnstar");
+
+  if (batchStar) {
+    batchStar.onclick = () => setStarsForSelected(true);
+  }
+  if (batchUnstar) {
+    batchUnstar.onclick = () => setStarsForSelected(false);
+  }
+
   const batchOn = $("batchOn");
   const batchOff = $("batchOff");
   const batchDel = $("batchDel");
@@ -775,22 +787,7 @@ function copyStarList() {
 }
 
 // 显式把某商品设为/取消星标（右键菜单用；按钮点按仍走 toggleLiveStar 翻转）
-function setLiveStar(code, on) {
-  if (!state.liveStars) {
-    state.liveStars = new Set();
-  }
-  const set = new Set(state.liveStars);
-  if (on) {
-    set.add(code);
-  } else {
-    set.delete(code);
-  }
-  state.liveStars = set;
-  post({ type: "setLiveStars", codes: [...set] });
-  renderProducts();
-}
-
-// 取消全部星标（列表/画册右键、顶栏按钮共用）
+// 取消全部星标（列表右键、⭐ 星标 ▾ 子菜单共用）
 function clearAllStars() {
   confirmBox("确认取消全部商品的星标？").then((ok) => {
     if (!ok) {
@@ -799,48 +796,165 @@ function clearAllStars() {
     if (state.liveStars) {
       state.liveStars = new Set();
     }
-    const so = document.getElementById("starOnlyBtn");
-    if (so) {
-      so.classList.remove("btn-teal");
-      delete filters.f_stared;
-      syncClearFilterBtn();
-    }
+    delete filters.f_stared;
+    syncClearFilterBtn();
     post({ type: "clearLiveStars" });
     renderProducts();
   });
 }
 
-// 星标总览图预览弹窗：后端回传缩略 base64，看效果 + 一键打开输出文件夹
-function showStarOverview(msg) {
-  const previews = Array.isArray(msg.previews) ? msg.previews : [];
-  if (previews.length === 0) {
-    toast(
-      msg.count
-        ? `已生成 ${msg.count} 张总览图（预览失败）→ ${msg.dir || ""}`
-        : "没有可预览的总览图",
-    );
+// ⭐ 星标 ▾ 下拉：工具栏只保留一个入口（复用图片右键菜单组件）
+function showStarMenu(btn) {
+  const rect = btn.getBoundingClientRect();
+  const starOnlyOn = !!filters.f_stared;
+  const starCount = state.liveStars ? state.liveStars.size : 0;
+  showImageCtxMenu(rect.left, rect.bottom, [
+    {
+      label: `${starOnlyOn ? "✓ " : ""}只看星标（${starCount} 个）`,
+      run: toggleStarOnly,
+    },
+    { label: "⭐ 复制星标清单", run: () => copyStarList() },
+    { label: "🖼 星标总览图（先预览）", run: () => post({ type: "previewStarOverview" }) },
+    { sep: true },
+    { label: "🗑 取消全部星标…", run: () => clearAllStars(), danger: true },
+  ]);
+}
+
+function toggleStarOnly() {
+  if (filters.f_stared) {
+    delete filters.f_stared;
+  } else {
+    filters.f_stared = "1";
+  }
+  syncClearFilterBtn();
+  renderProducts();
+}
+
+// 批量栏：把勾选商品全部标记/取消星标（本地 Set + setLiveStars 持久化）
+function setStarsForSelected(on) {
+  const codes = state.products
+    .filter((p) => state.selectedProducts.has(p.id))
+    .map((p) => p.code);
+  if (codes.length === 0) {
+    toast("先勾选要操作的商品");
     return;
   }
-  const figs = previews
-    .map(
-      (p) =>
-        `<figure style="margin:0 0 10px;text-align:center">
-          <img src="${p.data}" style="max-width:min(720px,86vw);max-height:70vh;border:1px solid var(--vscode-panel-border);border-radius:4px" />
-          <figcaption class="muted" style="margin-top:4px;font-size:12px">${esc(p.name)}</figcaption>
-        </figure>`,
-    )
-    .join("");
+  if (!state.liveStars) {
+    state.liveStars = new Set();
+  }
+  const set = new Set(state.liveStars);
+  for (const c of codes) {
+    if (on) {
+      set.add(c);
+    } else {
+      set.delete(c);
+    }
+  }
+  state.liveStars = set;
+  post({ type: "setLiveStars", codes: [...set] });
+  renderProducts();
+  toast(on ? `已标记 ${codes.length} 个商品星标 ✅` : `已取消 ${codes.length} 个商品星标`);
+}
+
+// ===== 星标总览图「先预览，点生成才落盘」 =====
+var starOv = { mask: null, idx: 0, previews: [], total: 0, generating: false };
+
+function starOvFrame() {
+  const p = starOv.previews[starOv.idx];
+  if (!p || !starOv.mask || !starOv.mask.isConnected) {
+    return;
+  }
+  starOv.mask.querySelector("[data-so-img]").src = p.data;
+  starOv.mask.querySelector("[data-so-cap]").textContent = p.name;
+  starOv.mask.querySelector("[data-so-ctr]").textContent =
+    `${starOv.idx + 1} / ${starOv.previews.length}`;
+  const prev = starOv.mask.querySelector("[data-so-prev]");
+  const next = starOv.mask.querySelector("[data-so-next]");
+  if (prev) {
+    prev.disabled = starOv.idx === 0;
+  }
+  if (next) {
+    next.disabled = starOv.idx === starOv.previews.length - 1;
+  }
+}
+
+function showStarOverviewPreview(msg) {
+  const previews = Array.isArray(msg.previews) ? msg.previews : [];
+  if (previews.length === 0) {
+    toast("没有星标商品可预览（先去 ⭐ 标记）");
+    return;
+  }
+  closeModal();
+  starOv.mask = null;
+  starOv.idx = 0;
+  starOv.previews = previews;
+  starOv.total = Number(msg.total || 0);
+  starOv.generating = false;
   const mask = showModal(`
-    <h3>⭐ 星标总览图（${msg.count || previews.length} 张）</h3>
-    <div class="muted" style="margin-bottom:8px">存到输出目录：${esc(msg.dir || "")}</div>
-    <div style="max-height:72vh;overflow:auto">${figs}</div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-      <button data-so="open" title="在系统文件管理器中打开输出目录">📂 打开文件夹</button>
-      <button data-so="close" class="btn-teal">关闭</button>
+    <h3>⭐ 星标总览图（${starOv.total} 款 · ${previews.length} 张）</h3>
+    <div class="muted" style="margin-bottom:6px">预览未落盘——满意后点「✅ 生成」才写入输出目录。</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <button data-so-prev class="mini-btn">‹ 上一张</button>
+      <span data-so-ctr style="min-width:44px;text-align:center"></span>
+      <button data-so-next class="mini-btn">下一张 ›</button>
+    </div>
+    <div style="text-align:center">
+      <img data-so-img style="max-width:min(720px,86vw);max-height:62vh;border:1px solid var(--vscode-panel-border);border-radius:4px" />
+      <div data-so-cap class="muted" style="margin-top:4px;font-size:12px"></div>
+    </div>
+    <div data-so-footer style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button data-so-close>关闭</button>
+      <button data-so-gen class="btn-teal">✅ 生成</button>
     </div>`);
-  mask.querySelector('[data-so="open"]').onclick = () =>
-    post({ type: "openStarOutDir" });
-  mask.querySelector('[data-so="close"]').onclick = () => closeModal();
+  starOv.mask = mask;
+  mask.querySelector("[data-so-prev]").onclick = () => {
+    if (starOv.generating) {
+      return;
+    }
+    starOv.idx = Math.max(0, starOv.idx - 1);
+    starOvFrame();
+  };
+  mask.querySelector("[data-so-next]").onclick = () => {
+    if (starOv.generating) {
+      return;
+    }
+    starOv.idx = Math.min(starOv.previews.length - 1, starOv.idx + 1);
+    starOvFrame();
+  };
+  mask.querySelector("[data-so-close]").onclick = () => closeModal();
+  mask.querySelector("[data-so-gen]").onclick = () => {
+    if (starOv.generating) {
+      return;
+    }
+    starOv.generating = true;
+    const footer = mask.querySelector("[data-so-footer]");
+    footer.innerHTML =
+      `<div class="muted" style="align-self:center;margin-right:auto">正在生成…（会弹目录确认）</div>` +
+      `<button data-so-close>取消</button>`;
+    footer.querySelector("[data-so-close]").onclick = () => closeModal();
+    post({ type: "generateStarOverview" });
+  };
+  starOvFrame();
+}
+
+function onStarOverviewDone(msg) {
+  const dir = String(msg.dir || "");
+  const count = Number(msg.count || 0);
+  if (starOv.mask && starOv.mask.isConnected) {
+    starOv.generating = false;
+    const footer = starOv.mask.querySelector("[data-so-footer]");
+    if (footer) {
+      footer.innerHTML =
+        `<div class="muted" style="align-self:center;margin-right:auto">已生成 ${count} 张 → ${esc(dir)}</div>` +
+        `<button data-so-open title="在系统文件管理器中打开输出目录">📂 打开文件夹</button>` +
+        `<button data-so-close class="btn-teal">完成</button>`;
+      footer.querySelector("[data-so-open]").onclick = () =>
+        post({ type: "openStarOutDir" });
+      footer.querySelector("[data-so-close]").onclick = () => closeModal();
+    }
+  } else {
+    toast(`已生成 ${count} 张星标总览图 → ${dir}`);
+  }
 }
 
 function renderGallery(list) {
@@ -1823,7 +1937,6 @@ function openContextMenu(e, p, field) {
   menu.style.cssText =
     "position:fixed;z-index:70;background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:4px;padding:4px 0;min-width:150px;box-shadow:0 2px 8px rgba(0,0,0,.3)";
   const editable = EDITABLE_FIELDS.has(field);
-  const starred = !!(state.liveStars && state.liveStars.has(p.code));
   const canPaste =
     !!appClipboard || !!(navigator.clipboard && navigator.clipboard.readText);
   menu.innerHTML =
@@ -1835,9 +1948,6 @@ function openContextMenu(e, p, field) {
     `<div class="ctx-item" data-copy="row">复制整行</div>` +
     `<div class="ctx-item" data-copy="table">复制整表(筛选后)</div>` +
     `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
-    (starred
-      ? `<div class="ctx-item" data-pctx="stardoff">☆ 取消该商品星标</div>`
-      : `<div class="ctx-item" data-pctx="staron">⭐ 标记星标</div>`) +
     `<div class="ctx-item" data-pctx="clearstars">🗑 取消全部星标…</div>` +
     `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
     (p.status === 0
@@ -1891,20 +2001,6 @@ function openContextMenu(e, p, field) {
   if (offBtn) {
     offBtn.onclick = () => {
       post({ type: "setStatus", id: p.id, status: 1 });
-      close();
-    };
-  }
-  const starOnBtn = menu.querySelector('[data-pctx="staron"]');
-  if (starOnBtn) {
-    starOnBtn.onclick = () => {
-      setLiveStar(p.code, true);
-      close();
-    };
-  }
-  const starOffBtn = menu.querySelector('[data-pctx="stardoff"]');
-  if (starOffBtn) {
-    starOffBtn.onclick = () => {
-      setLiveStar(p.code, false);
       close();
     };
   }
@@ -1978,7 +2074,6 @@ function onProductCtx(e) {
 
 function openCoverMenu(e, p) {
   const coverData = state.coverCache[p.code] || "";
-  const starred = !!(state.liveStars && state.liveStars.has(p.code));
   const items = [];
   if (coverData) {
     items.push({
@@ -1991,14 +2086,6 @@ function openCoverMenu(e, p) {
     });
   }
   items.push({ label: "🔍 查看大图", run: () => openLightbox(p) });
-  items.push({
-    label: starred ? "☆ 取消该商品星标" : "⭐ 标记星标",
-    run: () => setLiveStar(p.code, !starred),
-  });
-  items.push({
-    label: "🗑 取消全部星标…",
-    run: () => clearAllStars(),
-  });
   showImageCtxMenu(e.clientX, e.clientY, items);
 }
 
