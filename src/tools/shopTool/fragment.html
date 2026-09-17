@@ -112,7 +112,7 @@
       .data-table {
         width: 100%;
         border-collapse: collapse;
-        font-size: 12px;
+        font-size: 13px;
       }
       .data-table th,
       .data-table td {
@@ -194,6 +194,10 @@
       }
       .data-table td.num {
         text-align: right;
+      }
+      .data-table td[data-f="cost_price"],
+      .data-table td[data-f="sale_price"] {
+        font-weight: 600;
       }
       .data-table td.num-neg {
         color: var(--vscode-errorForeground, #e0404b);

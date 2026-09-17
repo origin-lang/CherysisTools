@@ -389,7 +389,14 @@ function renderList(list) {
   const vis = PRODUCT_FIELDS.filter((f) => visList.has(f.key));
   const showImg = showImageList;
   const plIdx = vis.findIndex((f) => f.key === "purchase_link");
-  const imgAt = showImg ? (plIdx >= 0 ? plIdx : vis.length) : -1;
+  const stIdx = vis.findIndex((f) => f.key === "status");
+  const imgAt = showImg
+    ? stIdx >= 0
+      ? stIdx
+      : plIdx >= 0
+        ? plIdx
+        : vis.length
+    : -1;
   const headCols = [];
   const filterCells = [];
   for (let i = 0; i < vis.length; i++) {
@@ -832,9 +839,9 @@ function openInlineEditor(td) {
     editor.onchange = () => finish(true);
   } else if (field === "cost_price" || field === "sale_price") {
     editor = document.createElement("input");
-    editor.type = "number";
+    editor.type = "text";
+    editor.inputMode = "decimal";
     editor.min = "0";
-    editor.step = "0.01";
     editor.value = product[field];
   } else if (field === "stockTotal") {
     editor = document.createElement("input");
@@ -922,7 +929,7 @@ function openNewProduct() {
         <h3>＋ 新建商品</h3>
         <div class="form-grid">
           <label>编号 *</label><input id="npCode" placeholder="L001 或 L076，自动补零到 3 位" />
-          <label>名称 *</label><input id="npName" maxlength="100" placeholder="如：铜合金锆石手链 四叶花" />
+          <label>名称</label><input id="npName" maxlength="100" placeholder="如：铜合金锆石手链 四叶花" />
           <label>品类</label><input id="npCategory" list="shopCatList" maxlength="50" placeholder="手链 / 项链 / 耳环 / 戒指 / 手镯…可自定义" />
           <label>系列</label><input id="npSeries" maxlength="50" placeholder="A类 / B类 / C类…（平台链接系列，可空）" />
           <label>等级</label><select id="npGrade"><option value="0">自定义（售价手动定）</option>${selGrades
@@ -1407,12 +1414,12 @@ function openExportProducts() {
           if (f.key === "code") {
             continue;
           }
-          if (f.key === "purchase_link") {
+          if (f.key === "status") {
             parts.push(
               chip(
                 "_image",
                 "图片",
-                "图片列：在采购链接前插入每行首张图",
+                "图片列：插在状态列前；状态与采购链接都取消时在末列",
                 checked.has("_image"),
                 false,
               ),
@@ -1470,26 +1477,23 @@ function openExportProducts() {
   };
   const renderEoCols = () => {
     const imgOn = checked.has("_image");
-    const linkOn = checked.has("purchase_link");
     const cols = [];
+    let imgInserted = false;
     for (const f of PRODUCT_FIELDS) {
       if (f.key === "code") {
         continue;
       }
-      if (f.key === "purchase_link") {
+      if (!imgInserted && (f.key === "status" || f.key === "purchase_link")) {
         if (imgOn) {
           cols.push("图片");
+          imgInserted = true;
         }
-        if (linkOn) {
-          cols.push(f.label);
-        }
-        continue;
       }
       if (checked.has(f.key)) {
         cols.push(f.label);
       }
     }
-    if (imgOn && !linkOn) {
+    if (imgOn && !imgInserted) {
       cols.push("图片");
     }
     $("eoColDesc").textContent = `导出列（顺序固定）＝编号、${cols.join("、")}`;

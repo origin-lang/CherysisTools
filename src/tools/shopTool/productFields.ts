@@ -18,8 +18,8 @@ export interface ProductFieldSpec {
 // 商品字段规格主表：字段顺序、标签、文本长度/空格/必填、数值类型，一处定义多处使用。
 // 与前端 client-core.js 的 FIELD_SPECS 保持一致（结构相同时两条防线同时生效）。
 export const PRODUCT_FIELDS: ProductFieldSpec[] = [
-  { key: "code", label: "编号" },
-  { key: "name", label: "名称", max: 100, noSpace: true, required: true },
+  { key: "code", label: "编号", required: true },
+  { key: "name", label: "名称", max: 100, noSpace: true },
   { key: "category", label: "品类", max: 50, noSpace: true },
   { key: "series", label: "系列", max: 50, noSpace: true },
   { key: "grade", label: "等级", kind: "grade" },
@@ -59,7 +59,7 @@ function specOf(key: string): ProductFieldSpec | undefined {
   return PRODUCT_FIELDS.find((f) => f.key === key);
 }
 
-// 字段规整：name 必填无空格；category/series/purchase_link 无空格；文字超长截断；金额 round2；库存整数。
+// 字段规整：编号必填；category/series/purchase_link/name 无空格；文字超长截断；金额 round2；库存整数。
 // 与前端 sanitizeProductField（client-core.js）同规则，这里是入库前最后一道拦截。
 export function normText(
   field: TextFieldKey,
@@ -87,7 +87,7 @@ export function normMoney(
   field: "cost_price" | "sale_price",
   raw: unknown,
 ): { ok: boolean; msg: string; value: number } {
-  const n = Number(raw ?? 0);
+  const n = Number(String(raw ?? "").trim().replace(/^[¥￥]\s*/, ""));
   const label = specOf(field)?.label ?? field;
   if (!Number.isFinite(n) || n < 0) {
     return { ok: false, msg: `${label}需为 ≥0 的数字`, value: 0 };

@@ -165,7 +165,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
           return idx >= 0 ? String(parts[idx] ?? "") : "";
         };
         const real = (rawv: string): number | null => {
-          const v = Number(rawv);
+          const v = Number(String(rawv ?? "").trim().replace(/^[¥￥]\s*/, ""));
           return Number.isFinite(v) ? v : null;
         };
         const writes: ImportWriteOp[] = [];
@@ -259,9 +259,9 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       const series = normText("series", get("series")).value;
       const gradeRaw = Math.floor(Number(get("grade") || 1));
       const grade = Number.isFinite(gradeRaw) && gradeRaw >= 0 && gradeRaw <= 99 ? gradeRaw : 1;
-      const costRaw = Number(get("cost_price") || 0);
+      const costRaw = Number(String(get("cost_price") ?? "").trim().replace(/^[¥￥]\s*/, "") || 0);
       const cost = Number.isFinite(costRaw) && costRaw >= 0 ? round2(costRaw) : 0;
-      const saleRaw = Number(get("sale_price") || 0);
+      const saleRaw = Number(String(get("sale_price") ?? "").trim().replace(/^[¥￥]\s*/, "") || 0);
       const link = normText("purchase_link", get("purchase_link")).value;
       const statusRaw = parseStatus(get("status"));
       const manual = Number.isFinite(saleRaw) && saleRaw > 0 ? round2(saleRaw) : 0;
@@ -310,7 +310,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         log(`❌编号 ${code} 已存在`);
         return;
       }
-      const nameR = normText("name", msg.name, { required: true });
+      const nameR = normText("name", msg.name);
       if (!nameR.ok) {
         log(`❌${nameR.msg}`);
         return;
@@ -401,7 +401,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         }
         db.updateProductField(id, "code", code);
       } else if (field === "name" || field === "category" || field === "series" || field === "purchase_link" || field === "remark") {
-        const r = normText(field, msg.value, field === "name" ? { required: true } : undefined);
+        const r = normText(field, msg.value);
         if (!r.ok) {
           log(`❌${r.msg}`);
           return;

@@ -107,8 +107,10 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
         const outFile = path.join(dir, `商品清单_${fileStamp()}.xlsx`);
         if (withImages) {
           const imageDir = String(h.getSetting("image_dir") || "").trim();
+          const stIdx = cols.findIndex((c) => c.key === "status");
           const plIdx = cols.findIndex((c) => c.key === "purchase_link");
-          const imgColIdx = plIdx >= 0 ? plIdx : cols.length;
+          const imgColIdx =
+            stIdx >= 0 ? stIdx : plIdx >= 0 ? plIdx : cols.length;
           const displayCols = cols.slice();
           displayCols.splice(imgColIdx, 0, { key: "_image", label: "图片" });
           const wb = new Workbook();
@@ -122,6 +124,8 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
           displayCols.forEach((_, i) => {
             ws.getColumn(i + 1).width = i === imgColIdx ? 16 : 13;
           });
+          let embedded = 0;
+          let failed = 0;
           for (let i = 0; i < list.length; i++) {
             const p = list[i];
             const rowIndex = i + 2;
@@ -154,11 +158,21 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
               ws.addImage(imgId, {
                 tl: { col: imgColIdx, row: rowIndex - 1 },
                 ext: { width: dw, height: dh },
+                editAs: "oneCell",
               });
               ws.getRow(rowIndex).height = Math.ceil((dh * 72) / 96) + 6;
+              embedded++;
             } catch {
-              /* 该行图片缺失或损坏则留空 */
+              failed++;
+              ws.getRow(rowIndex).height = 22;
             }
+          }
+          if (!imageDir) {
+            log("‼导出勾选了图片，但「规则与设置」中未设置图片目录，所有图片列留空");
+          } else if (embedded === 0) {
+            log(`‼导出未嵌入任何图片：图片目录「${imageDir}」下找不到匹配商品文件夹的第一张图`);
+          } else if (failed > 0) {
+            log(`⚠${list.length} 行中有 ${failed} 行图片读取失败已留空，成功嵌入 ${embedded} 行`);
           }
           const raw = (await wb.xlsx.writeBuffer()) as unknown as Uint8Array;
           await fs.promises.writeFile(outFile, raw);

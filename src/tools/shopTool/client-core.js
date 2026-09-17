@@ -56,8 +56,8 @@ window.toolClients = window.toolClients || {};
     // 商品字段规格主表：顺序/标签/文本长度/空格/必填/数值类型，一处定义。
     // 与后端 src/tools/shopTool/productFields.ts 保持一致。
     var FIELD_SPECS = [
-      { key: "code", label: "编号" },
-      { key: "name", label: "名称", max: 100, noSpace: true, required: true },
+      { key: "code", label: "编号", required: true },
+      { key: "name", label: "名称", max: 100, noSpace: true },
       { key: "category", label: "品类", max: 50, noSpace: true },
       { key: "series", label: "系列", max: 50, noSpace: true },
       { key: "grade", label: "等级", kind: "grade" },
@@ -120,6 +120,8 @@ window.toolClients = window.toolClients || {};
     var money = (n) =>
       (Math.round(Number(n || 0) * 100) / 100).toLocaleString("zh-CN");
     var qty = (n) => String(Math.floor(Number(n || 0)));
+    var parseMoneyInput = (raw) =>
+      Number(String(raw ?? "").trim().replace(/^[¥￥]\s*/, ""));
 
     var sanitizeProductField = (field, raw) => {
       const spec = FIELD_SPECS.find((f) => f.key === field);
@@ -140,7 +142,7 @@ window.toolClients = window.toolClients || {};
         if (raw === "" || raw === null || raw === undefined) {
           return { ok: true, value: 0 };
         }
-        const n = Number(raw);
+        const n = parseMoneyInput(raw);
         if (!Number.isFinite(n) || n < 0) {
           return { ok: false, msg: `${spec.label}需为 ≥0 的数字` };
         }
