@@ -124,6 +124,7 @@ function bindEvents() {
   };
   $("copyStarsBtn").onclick = copyStarList;
   $("starGridBtn").onclick = () => post({ type: "renderStarOverview" });
+  $("clearAllStarsBtn").onclick = clearAllStars;
 
   $("productListView").addEventListener("dblclick", (e) => {
     const td = e.target.closest("td[data-edit]");
@@ -724,6 +725,10 @@ function onMessage(msg) {
     }
     case "liveGenerated": {
       toast(`已生成 ${msg.count || 0} 张九宫格 → ${msg.dir || ""}`);
+      break;
+    }
+    case "starOverviewDone": {
+      showStarOverview(msg);
       break;
     }
     case "exportDone": {

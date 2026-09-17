@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
+import sharp from "sharp";
 import { Handler, HandlerCtx } from "./types.js";
 import { LivePlanRow, Product } from "../db.js";
 import { canonicalCode } from "../pricing.js";
@@ -241,13 +242,41 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       if (files.length === 0) {
         return;
       }
+      const previews: Array<{ name: string; data: string }> = [];
+      for (const f of files) {
+        try {
+          const buf = await sharp(f)
+            .resize({ width: 900, withoutEnlargement: true })
+            .jpeg({ quality: 82 })
+            .toBuffer();
+          previews.push({
+            name: path.basename(f),
+            data: `data:image/jpeg;base64,${buf.toString("base64")}`,
+          });
+        } catch {
+          /* 单张预览失败跳过 */
+        }
+      }
       try {
         await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(outDir));
       } catch {
         /* 忽略打开失败 */
       }
       log(`🖼星标总览：${total} 款，已生成 ${files.length} 张 → ${outDir}`);
-      post({ type: "starOverviewDone", dir: outDir, count: files.length });
+      post({ type: "starOverviewDone", dir: outDir, count: files.length, previews });
+    },
+
+    openStarOutDir() {
+      const dir = String(h.getSetting("live_out_dir") || "").trim();
+      if (!dir || !fs.existsSync(dir)) {
+        log("❌还没生成过总览图/九宫格（未设置输出目录）");
+        return;
+      }
+      try {
+        vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(dir));
+      } catch {
+        /* 忽略打开失败 */
+      }
     },
   };
 }

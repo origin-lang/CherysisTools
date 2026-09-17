@@ -790,6 +790,59 @@ function setLiveStar(code, on) {
   renderProducts();
 }
 
+// 取消全部星标（列表/画册右键、顶栏按钮共用）
+function clearAllStars() {
+  confirmBox("确认取消全部商品的星标？").then((ok) => {
+    if (!ok) {
+      return;
+    }
+    if (state.liveStars) {
+      state.liveStars = new Set();
+    }
+    const so = document.getElementById("starOnlyBtn");
+    if (so) {
+      so.classList.remove("btn-teal");
+      delete filters.f_stared;
+      syncClearFilterBtn();
+    }
+    post({ type: "clearLiveStars" });
+    renderProducts();
+  });
+}
+
+// 星标总览图预览弹窗：后端回传缩略 base64，看效果 + 一键打开输出文件夹
+function showStarOverview(msg) {
+  const previews = Array.isArray(msg.previews) ? msg.previews : [];
+  if (previews.length === 0) {
+    toast(
+      msg.count
+        ? `已生成 ${msg.count} 张总览图（预览失败）→ ${msg.dir || ""}`
+        : "没有可预览的总览图",
+    );
+    return;
+  }
+  const figs = previews
+    .map(
+      (p) =>
+        `<figure style="margin:0 0 10px;text-align:center">
+          <img src="${p.data}" style="max-width:min(720px,86vw);max-height:70vh;border:1px solid var(--vscode-panel-border);border-radius:4px" />
+          <figcaption class="muted" style="margin-top:4px;font-size:12px">${esc(p.name)}</figcaption>
+        </figure>`,
+    )
+    .join("");
+  const mask = showModal(`
+    <h3>⭐ 星标总览图（${msg.count || previews.length} 张）</h3>
+    <div class="muted" style="margin-bottom:8px">存到输出目录：${esc(msg.dir || "")}</div>
+    <div style="max-height:72vh;overflow:auto">${figs}</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button data-so="open" title="在系统文件管理器中打开输出目录">📂 打开文件夹</button>
+      <button data-so="close" class="btn-teal">关闭</button>
+    </div>`);
+  mask.querySelector('[data-so="open"]').onclick = () =>
+    post({ type: "openStarOutDir" });
+  mask.querySelector('[data-so="close"]').onclick = () => closeModal();
+}
+
 function renderGallery(list) {
   $("productGalleryView").innerHTML =
     list.length === 0
@@ -1858,15 +1911,7 @@ function openContextMenu(e, p, field) {
   const clearStarsBtn = menu.querySelector('[data-pctx="clearstars"]');
   if (clearStarsBtn) {
     clearStarsBtn.onclick = () => {
-      confirmBox("确认取消全部商品的星标？").then((ok) => {
-        if (ok) {
-          if (state.liveStars) {
-            state.liveStars = new Set();
-          }
-          post({ type: "clearLiveStars" });
-          renderProducts();
-        }
-      });
+      clearAllStars();
       close();
     };
   }
@@ -1933,6 +1978,7 @@ function onProductCtx(e) {
 
 function openCoverMenu(e, p) {
   const coverData = state.coverCache[p.code] || "";
+  const starred = !!(state.liveStars && state.liveStars.has(p.code));
   const items = [];
   if (coverData) {
     items.push({
@@ -1945,6 +1991,14 @@ function openCoverMenu(e, p) {
     });
   }
   items.push({ label: "🔍 查看大图", run: () => openLightbox(p) });
+  items.push({
+    label: starred ? "☆ 取消该商品星标" : "⭐ 标记星标",
+    run: () => setLiveStar(p.code, !starred),
+  });
+  items.push({
+    label: "🗑 取消全部星标…",
+    run: () => clearAllStars(),
+  });
   showImageCtxMenu(e.clientX, e.clientY, items);
 }
 
