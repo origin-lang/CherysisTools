@@ -102,9 +102,28 @@ function bindEvents() {
     if (fs) {
       fs.value = "";
     }
+    const so = $("starOnlyBtn");
+    if (so) {
+      so.classList.remove("btn-teal");
+    }
     syncClearFilterBtn();
     renderProducts();
   };
+  $("starOnlyBtn").onclick = () => {
+    const on = !filters.f_stared;
+    const so = $("starOnlyBtn");
+    if (on) {
+      filters.f_stared = "1";
+      so.classList.add("btn-teal");
+    } else {
+      delete filters.f_stared;
+      so.classList.remove("btn-teal");
+    }
+    syncClearFilterBtn();
+    renderProducts();
+  };
+  $("copyStarsBtn").onclick = copyStarList;
+  $("starGridBtn").onclick = () => post({ type: "renderStarOverview" });
 
   $("productListView").addEventListener("dblclick", (e) => {
     const td = e.target.closest("td[data-edit]");

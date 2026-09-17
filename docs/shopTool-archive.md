@@ -550,3 +550,19 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
     - 后端**同内容守卫**：`receiveImageData` 写盘前 `sameContentExists`（字节 SHA1 比对该商品文件夹全部现有图）→ 命中则跳过并计数，日志「已粘贴/拖入 N 张 → 文件夹（M 张与已有图片重复已忽略）」；只重复无新增时不刷新。
   - 语义口径：**前端拦截的是「拖已显示的图」，后端守卫兜底「任何路径碰到同内容图」**；`uploadImages`（picker 显式选择）保持现状不动。
 - 验证：`tsc -p ./` 0 error、`eslint src` 仅既有 4 条存量 warning、`node --check` 通过；前端刷新面板、后端 F5 生效。
+
+## 二十六、星标升级为通用标记 + 批量导出 / 封面总览拼图
+
+> 归档时间：2026-09-16。状态：**已实现**。
+
+- **用户决策（访谈定稿）**：直播排品用得少、星标不该只服务它；选定「**通用单星标**」——星标 = 标记商品，直播排品备选池**继续复用同一份星标**，不另建体系；拼图格式选「**自动密度**」，星标不分组、不备注。
+- **前端交互**（`client-product.js` / `client-main.js` / `fragment.html`）
+  - 列表末列与画册卡片 ⭐ 工具提示改为「标记星标（直播排品备选同用）」；
+  - 顶栏新增：`⭐ 只看星标`（写 `filters.f_stared`，`filteredProducts()` 里挡掉未打星的；再次点击/清除筛选取消）、`⭐ 复制星标`（`copyStarList`——不依赖当前勾选/筛选，全部星标商品按**当前可见列**拼 TSV，随「清除筛选」一起复位高亮）、`🖼 星标总览图`；
+  - 行右键菜单：**标记/取消该商品星标**（`setLiveStar`：本地 Set 更新 + `setLiveStars` 全量持久化）+ **取消全部星标…**（confirm → `clearLiveStars`）；
+  - 画册卡片原本就按 `visGallery` 显示 `编号/售价/进价`（¥ 前缀、低库存高亮）——无需改动，仅文档补说明。
+- **后端**（`handlers/live.ts` / `liveGrid.ts`）
+  - `clearLiveStars`：清空 `live_star` 表回推 `liveState`；
+  - `renderStarOverview`：读星标优先序 → 过滤已删商品 → 解析输出目录（沿用 `live_out_dir` 复用确认/另选的流程）→ **自动密度** `side = max(3, ⌈√n⌉)`，超出 `side×side` 自动分页多张 → `renderStarOverviewGrid`（白底 sharp 合成，逐格封面 `fit:fill` + SVG 标签压 `编号`(大)与 `¥售价`(黄) 双行，无图灰底）→ 文件名 `星标总览_{N}款_第{K}张_{ymd}.jpg` → `revealFileInOS` 打开 + `🖼` 日志气泡；
+  - 图内价格只标**售价**（直播前扫款用），进价不进图。
+- 验证：`tsc -p ./` 0 error、`eslint src` 仅既有 4 条存量 warning、`node --check` ×2 通过。测试运行本次押后。

@@ -175,6 +175,15 @@ function filteredProducts() {
       }
       return true;
     })
+    .filter((p) => {
+      if (
+        filters.f_stared &&
+        !(state.liveStars && state.liveStars.has(p.code))
+      ) {
+        return false;
+      }
+      return true;
+    })
     .sort((a, b) => {
       let r = 0;
       if (sortKey === "code") {
@@ -500,7 +509,7 @@ function renderList(list) {
         tds.push(`<td>${cover}</td>`);
       }
       tds.push(`<td>
-              <button class="mini-btn" data-s-act="toggle" data-code="${esc(p.code)}" data-id="${p.id}" title="${starred ? "取消星标" : "加入直播排品备选"}">${starred ? "★" : "☆"}</button>
+              <button class="mini-btn" data-s-act="toggle" data-code="${esc(p.code)}" data-id="${p.id}" title="${starred ? "取消星标" : "标记星标（直播排品备选同用）"}">${starred ? "★" : "☆"}</button>
               <button class="mini-btn" data-p-act="copy" data-id="${p.id}" title="复制完整名称">📋</button>
               <button class="mini-btn" data-p-act="stockin" data-id="${p.id}" title="补货入库">📦</button>
               <button class="mini-btn btn-danger" data-p-act="del" data-id="${p.id}" title="删除(含记录)">🗑</button>
@@ -742,6 +751,45 @@ function copySelectedProducts() {
   copyText(lines.join("\n"), `已复制 ${rows.length} 行到剪贴板 ✅`);
 }
 
+// 复制全部星标商品（不依赖当前勾选/筛选），列跟随列表可见列
+function copyStarList() {
+  const stars = state.liveStars ? [...state.liveStars] : [];
+  const rows = state.products
+    .filter((p) => stars.includes(p.code))
+    .sort(
+      (a, b) =>
+        Number(a.code.replace(/^\D+/, "")) - Number(b.code.replace(/^\D+/, "")),
+    );
+  if (rows.length === 0) {
+    toast("还没有打星标的商品（列表/画册点 ⭐ 标记）");
+    return;
+  }
+  const keys = PRODUCT_FIELDS.map((f) => f.key).filter((k) => visList.has(k));
+  const lines = [
+    keys.map((k) => PRODUCT_FIELDS.find((f) => f.key === k).label).join("\t"),
+  ];
+  for (const row of rows) {
+    lines.push(keys.map((k) => cellValue(row, k)).join("\t"));
+  }
+  copyText(lines.join("\n"), `已复制 ${rows.length} 个星标商品到剪贴板 ✅`);
+}
+
+// 显式把某商品设为/取消星标（右键菜单用；按钮点按仍走 toggleLiveStar 翻转）
+function setLiveStar(code, on) {
+  if (!state.liveStars) {
+    state.liveStars = new Set();
+  }
+  const set = new Set(state.liveStars);
+  if (on) {
+    set.add(code);
+  } else {
+    set.delete(code);
+  }
+  state.liveStars = set;
+  post({ type: "setLiveStars", codes: [...set] });
+  renderProducts();
+}
+
 function renderGallery(list) {
   $("productGalleryView").innerHTML =
     list.length === 0
@@ -784,7 +832,7 @@ function renderGallery(list) {
             const coverData = state.coverCache[p.code] || "";
             const starred = state.liveStars && state.liveStars.has(p.code);
             return `<div class="card ${off ? "off" : ""}" data-p-act="img" data-id="${p.id}">
-                  <button class="star ${starred ? "on" : ""}" data-s-act="toggle" data-code="${esc(p.code)}" data-id="${p.id}" title="${starred ? "取消星标" : "加入直播排品备选"}">${starred ? "★" : "☆"}</button>
+                  <button class="star ${starred ? "on" : ""}" data-s-act="toggle" data-code="${esc(p.code)}" data-id="${p.id}" title="${starred ? "取消星标" : "标记星标（直播排品备选同用）"}">${starred ? "★" : "☆"}</button>
                   <span class="card-badge ${off ? "off" : ""}">${off ? "已下架" : p.code}</span>
                   ${showImageGallery ? (coverData ? `<img src="${coverData}" />` : `<div class="ph">暂无图片</div>`) : ""}
                   <div class="card-body">${lines}</div>
@@ -1722,6 +1770,7 @@ function openContextMenu(e, p, field) {
   menu.style.cssText =
     "position:fixed;z-index:70;background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:4px;padding:4px 0;min-width:150px;box-shadow:0 2px 8px rgba(0,0,0,.3)";
   const editable = EDITABLE_FIELDS.has(field);
+  const starred = !!(state.liveStars && state.liveStars.has(p.code));
   const canPaste =
     !!appClipboard || !!(navigator.clipboard && navigator.clipboard.readText);
   menu.innerHTML =
@@ -1732,6 +1781,11 @@ function openContextMenu(e, p, field) {
     `</div>` +
     `<div class="ctx-item" data-copy="row">复制整行</div>` +
     `<div class="ctx-item" data-copy="table">复制整表(筛选后)</div>` +
+    `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
+    (starred
+      ? `<div class="ctx-item" data-pctx="stardoff">☆ 取消该商品星标</div>`
+      : `<div class="ctx-item" data-pctx="staron">⭐ 标记星标</div>`) +
+    `<div class="ctx-item" data-pctx="clearstars">🗑 取消全部星标…</div>` +
     `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
     (p.status === 0
       ? `<div class="ctx-item" data-pctx="off">下架</div>`
@@ -1784,6 +1838,35 @@ function openContextMenu(e, p, field) {
   if (offBtn) {
     offBtn.onclick = () => {
       post({ type: "setStatus", id: p.id, status: 1 });
+      close();
+    };
+  }
+  const starOnBtn = menu.querySelector('[data-pctx="staron"]');
+  if (starOnBtn) {
+    starOnBtn.onclick = () => {
+      setLiveStar(p.code, true);
+      close();
+    };
+  }
+  const starOffBtn = menu.querySelector('[data-pctx="stardoff"]');
+  if (starOffBtn) {
+    starOffBtn.onclick = () => {
+      setLiveStar(p.code, false);
+      close();
+    };
+  }
+  const clearStarsBtn = menu.querySelector('[data-pctx="clearstars"]');
+  if (clearStarsBtn) {
+    clearStarsBtn.onclick = () => {
+      confirmBox("确认取消全部商品的星标？").then((ok) => {
+        if (ok) {
+          if (state.liveStars) {
+            state.liveStars = new Set();
+          }
+          post({ type: "clearLiveStars" });
+          renderProducts();
+        }
+      });
       close();
     };
   }
