@@ -1230,9 +1230,14 @@ function openProductDrawer(product) {
   }
   if (!drawerKeyHandler) {
     drawerKeyHandler = (e) => {
-      if (e.key === "Escape" && drawerPid) {
-        closeProductDrawer();
+      if (e.key !== "Escape" || !drawerPid) {
+        return;
       }
+      // 有模态框/大图灯箱时，先让它们各自处理 Esc，不连带关掉抽屉
+      if (document.getElementById("dynModalMask") || document.getElementById("lbBox")) {
+        return;
+      }
+      closeProductDrawer();
     };
     document.addEventListener("keydown", drawerKeyHandler);
   }
@@ -1319,14 +1324,18 @@ function drawerControl(p, key) {
 
 function renderProductDrawer() {
   const box = $("productDrawer");
-  if (!box) {
+  if (!box || !drawerPid) {
     return;
   }
-  const p = drawerPid ? state.products.find((x) => x.id === drawerPid) : null;
+  const p = state.products.find((x) => x.id === drawerPid);
   if (!p) {
     closeProductDrawer();
     return;
   }
+  // 重绘前记住焦点字段，重绘后恢复：避免「改一个存一个」数据回推时抢走焦点
+  const active = document.activeElement;
+  const activeKey =
+    active && box.contains(active) ? active.dataset.dF || null : null;
   const off = p.status === 1;
   const coverData = state.coverCache[p.code] || "";
   const groups = DRAWER_GROUPS.map(
@@ -1356,7 +1365,7 @@ function renderProductDrawer() {
       ${
         showImageGallery
           ? `<div class="d-group-title">④ 图片</div>
-             <div class="d-cover" data-d-act="bigimg" title="点击查看大图 · 可拖入或粘贴图片到此">${
+             <div class="d-cover" data-d-act="bigimg" data-p-act="img" data-id="${p.id}" title="点击查看大图 · 可拖入或粘贴图片到此">${
                coverData ? `<img src="${coverData}" />` : `<div class="ph">暂无图片</div>`
              }</div>
              <div class="d-thumbs" id="drawerThumbs"><span class="muted">图片加载中…</span></div>
@@ -1390,6 +1399,19 @@ function renderProductDrawer() {
     redo.onclick = () => post({ type: "redoRequest" });
   }
   bindDrawerFields(box, p);
+  if (activeKey) {
+    const again = box.querySelector(`.d-field[data-d-f="${activeKey}"]`);
+    if (again) {
+      again.focus();
+      if (again.setSelectionRange && typeof again.value === "string") {
+        try {
+          again.setSelectionRange(again.value.length, again.value.length);
+        } catch {
+          /* number 输入不支持 setSelectionRange，忽略 */
+        }
+      }
+    }
+  }
 }
 
 function bindDrawerFields(box, p) {
@@ -1415,7 +1437,10 @@ function commitDrawerField(pid, field, raw) {
     post({ type: "setStatus", id: pid, status: Number(raw) === 1 ? 1 : 0 });
     return;
   }
-  saveFieldValue(pid, field, raw);
+  if (saveFieldValue(pid, field, raw) === false) {
+    // 校验失败：重绘回显原值
+    renderProductDrawer();
+  }
 }
 
 function onDrawerAct(e, p) {
@@ -2070,7 +2095,7 @@ function exportGroupHtml(checked, withImageChip) {
         ? `<label class="io-chip" title="图片列：插在状态列前；状态与采购链接都取消时在末列"><input type="checkbox" data-io-e="_image" ${checked.has("_image") ? "checked" : ""} />图片</label>`
         : "";
     }
-    const f = PRODUCT_FIELDS.find((x) => x.key === k);
+    const f = PRODUCT_FIELDS.find((x) => x.key === key);
     return `<label class="io-chip" title=""><input type="checkbox" data-io-e="${key}" ${checked.has(key) ? "checked" : ""} />${f ? f.label : key}</label>`;
   };
   return (
@@ -2321,7 +2346,7 @@ function checkGroupHtml(prefix, set, imgVisible, withOps) {
           `<input type="checkbox" data-g="${prefix}" data-cfk="image" ${imgVisible ? "checked" : ""} />图片</label>`
         );
       }
-      const f = PRODUCT_FIELDS.find((x) => x.key === k);
+const f = PRODUCT_FIELDS.find((x) => x.key === k);
       return chipHtml(k, f ? f.label : k, prefix, set, k === "code");
     }).join("");
   return (
@@ -2686,6 +2711,9 @@ function productForDropOrPaste(e) {
   const inLb = !!el.closest("#lbBox");
   if (!product && inLb && state.lbCode) {
     product = state.products.find((x) => x.code === state.lbCode) || null;
+  }
+  if (!product && drawerPid) {
+    product = state.products.find((x) => x.id === drawerPid) || null;
   }
   return product || null;
 }
