@@ -670,3 +670,17 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
   - `client-main.js`：`applyFontSize`（钳制 12..16、写 `body` 级 CSS 变量，覆盖商品/销售/月报/规则所有表格）+ `saveFontSize`（post `saveSettings`），绑定 `onchange`；`settingsLoaded` 时应用；`client-report.js` `renderSettings` 回显；
   - 后端：`client-core.js` defaults 加 `font_size:"13"`、`handlers/settings.ts` 白名单加 `font_size`、`index.ts` `settingsLoaded` payload 加 `font_size`。
 - 文档：manual §6.2、shopTool.md settings 列表同步。验证：`tsc -p ./`、`eslint`、`node --check` 通过。
+
+## 三十一、字段显示弹窗按组分类
+
+> 归档时间：2026-09-18。状态：**已实现**。
+
+- 用户嫌字段显示里 14 个 chip 全挤一行（编号/名称/品类/系列/等级/进价/售价/库存/累计售出/累计净售/状态/采购链接/备注/图片），要求分类；分组由我拟定：
+  - **① 商品档案**：编号·名称·品类·系列·等级
+  - **② 价格与销售**：进价·售价·库存·累计售出·累计净售
+  - **③ 状态与辅助**：状态·采购链接·备注
+  - **④ 图片**：图片
+- `client-product.js`：新增 `CS_GROUPS` 常量；`checkGroupHtml` 改为按组渲染（每组 `div.cs-group` + `div.cs-group-title` + 各自 `.io-chips`），拆出 `chipHtml` 复用单 chip 模板；`openColSet` 去掉外面那层多余的 `.io-chips` 包壳。
+- `fragment.html`：新增 `.cs-group`（间距）/`.cs-group-title`（小字描述色）样式。
+- **纯展示改动**：columns 顺序（`PRODUCT_FIELDS`）、全选/不选/复原循环、`data-g="cur"` 勾选收集、保存流程全部不动；编号 locked 逻辑保留。
+- 文档：manual §2.2 补分组说明。验证：`node --check`、`eslint`、`tsc -p ./` 通过。

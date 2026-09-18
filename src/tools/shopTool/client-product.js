@@ -2004,17 +2004,32 @@ function openStockIn(product) {
   };
 }
 
+const CS_GROUPS = [
+  { title: "① 商品档案", keys: ["code", "name", "category", "series", "grade"] },
+  { title: "② 价格与销售", keys: ["cost_price", "sale_price", "stockTotal", "soldTotal", "netTotal"] },
+  { title: "③ 状态与辅助", keys: ["status", "purchase_link", "remark"] },
+];
+
+function chipHtml(key, label, prefix, set, locked) {
+  return (
+    `<label class="io-chip" ${locked ? 'title="编号固定显示"' : ""}>` +
+    `<input type="checkbox" data-g="${prefix}" data-cfk="${key}" ${locked || set.has(key) ? "checked" : ""} ${locked ? "disabled" : ""} />${label}</label>`
+  );
+}
+
 function checkGroupHtml(prefix, set, imgVisible) {
   return (
-    PRODUCT_FIELDS.map((f) => {
-      const locked = f.key === "code";
-      return (
-        `<label class="io-chip" ${locked ? 'title="编号固定显示"' : ""}>` +
-        `<input type="checkbox" data-g="${prefix}" data-cfk="${f.key}" ${locked || set.has(f.key) ? "checked" : ""} ${locked ? "disabled" : ""} />${f.label}</label>`
-      );
+    CS_GROUPS.map((g) => {
+      const chips = g.keys.map((k) => {
+        const f = PRODUCT_FIELDS.find((x) => x.key === k);
+        return chipHtml(k, f ? f.label : k, prefix, set, k === "code");
+      }).join("");
+      return `<div class="cs-group"><div class="cs-group-title">${g.title}</div><div class="io-chips">${chips}</div></div>`;
     }).join("") +
+    `<div class="cs-group"><div class="cs-group-title">④ 图片</div><div class="io-chips">` +
     `<label class="io-chip" title="商品图片列（列表为整列，画册为卡片主图）">` +
-    `<input type="checkbox" data-g="${prefix}" data-cfk="image" ${imgVisible ? "checked" : ""} />图片</label>`
+    `<input type="checkbox" data-g="${prefix}" data-cfk="image" ${imgVisible ? "checked" : ""} />图片</label>` +
+    `</div></div>`
   );
 }
 
@@ -2030,7 +2045,7 @@ function openColSet() {
           <button class="mini-btn" id="csListAll">全选</button>
           <button class="mini-btn" id="csListNone">不选</button>
         </div>
-        <div class="io-chips">${checkGroupHtml("cur", toggle, imgVisible)}</div>
+        ${checkGroupHtml("cur", toggle, imgVisible)}
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
           <button id="csReset">复原默认（全部显示）</button>
           <button id="csCancel">取消</button>
