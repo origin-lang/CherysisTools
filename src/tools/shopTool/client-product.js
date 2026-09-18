@@ -435,8 +435,10 @@ function renderList(list) {
     headCols.push(`<th><span class="th-label">图片</span></th>`);
     filterCells.push(`<td></td>`);
   }
-  headCols.push(`<th><span class="th-label">操作</span></th>`);
-  filterCells.push(`<td></td>`);
+  if (showOpsList) {
+    headCols.push(`<th><span class="th-label">操作</span></th>`);
+    filterCells.push(`<td></td>`);
+  }
   const body = list
     .map((p) => {
       const net = p.soldTotal - p.refundTotal;
@@ -520,12 +522,14 @@ function renderList(list) {
       if (imgAt >= vis.length) {
         tds.push(`<td>${cover}</td>`);
       }
-      tds.push(`<td>
+      if (showOpsList) {
+        tds.push(`<td>
               <button class="mini-btn" data-s-act="toggle" data-code="${esc(p.code)}" data-id="${p.id}" title="${starred ? "取消星标" : "标记星标（直播排品备选同用）"}">${starred ? "★" : "☆"}</button>
               <button class="mini-btn" data-p-act="copy" data-id="${p.id}" title="复制完整名称">📋</button>
               <button class="mini-btn" data-p-act="stockin" data-id="${p.id}" title="补货入库">📦</button>
               <button class="mini-btn btn-danger" data-p-act="del" data-id="${p.id}" title="删除(含记录)">🗑</button>
             </td>`);
+      }
       return `<tr class="${off ? "off " : ""}${low ? "lowstock " : ""}" data-id="${p.id}">${tds.join("")}</tr>`;
     })
     .join("");
@@ -537,16 +541,22 @@ function renderList(list) {
       ? `<p class="muted">（无商品，点「＋ 新建商品」添加；也支持「导入商品」批量粘贴）</p>`
       : `${
           selectedCount > 0
-            ? `<div class="batch-ops" id="batchOpsBar" style="margin-bottom:8px;padding:8px;background:var(--vscode-input-background);border:1px solid var(--vscode-panel-border);border-radius:4px;display:flex;gap:8px;align-items:center">
+            ? (() => {
+                let hasOn = false, hasStarred = false;
+                for (const p of list) {
+                  if (state.selectedProducts.has(p.id)) {
+                    if (p.status === 0) hasOn = true;
+                    if (state.liveStars && state.liveStars.has(p.code)) hasStarred = true;
+                    if (hasOn && hasStarred) break;
+                  }
+                }
+                return `<div class="batch-ops" id="batchOpsBar">
 <span>已选 <b data-sel-count>${selectedCount}</b> 个商品</span>
-                     <button class="mini-btn" id="batchCopy" title="把选中的商品按当前可见列复制到剪贴板（带表头）">📋 复制选中</button>
-                     <button class="mini-btn" id="batchOn" title="上架选中的商品">🔺 上架</button>
-                    <button class="mini-btn" id="batchOff" title="下架选中的商品">🔻 下架</button>
-                    <button class="mini-btn" id="batchStar" title="给选中的商品全部标记星标">⭐ 标星</button>
-                    <button class="mini-btn" id="batchUnstar" title="取消选中的商品星标">☆ 取消星标</button>
-                    <button class="mini-btn btn-danger" id="batchDel" title="删除选中的商品（含记录，不可恢复）">🗑 删除</button>
-                    <button class="mini-btn" id="batchClear" title="取消全部选择">✕ 取消</button>
-                  </div>`
+<button class="mini-btn" id="batchCopy" title="把选中的商品按当前可见列复制到剪贴板（带表头）">📋 复制选中</button>
+<button class="mini-btn batch-menu-btn" id="batchMenuBtn" data-has-on="${hasOn}" data-has-starred="${hasStarred}">批量 ▾</button>
+<button class="mini-btn" id="batchClear" title="取消全部选择">✕ 取消</button>
+</div>`;
+              })()
             : ""
         }
              <div class="table-wrap"><table class="data-table"><thead><tr>
@@ -2005,9 +2015,9 @@ function openStockIn(product) {
 }
 
 const CS_GROUPS = [
-  { title: "① 商品档案", keys: ["code", "name", "category", "series", "grade"] },
+  { title: "① 商品档案", keys: ["code", "name", "category", "series", "grade", "purchase_link", "image"] },
   { title: "② 价格与销售", keys: ["cost_price", "sale_price", "stockTotal", "soldTotal", "netTotal"] },
-  { title: "③ 状态与辅助", keys: ["status", "purchase_link", "remark"] },
+  { title: "③ 状态与辅助", keys: ["status", "remark"], ops: true },
 ];
 
 function chipHtml(key, label, prefix, set, locked) {
@@ -2017,19 +2027,28 @@ function chipHtml(key, label, prefix, set, locked) {
   );
 }
 
-function checkGroupHtml(prefix, set, imgVisible) {
+function checkGroupHtml(prefix, set, imgVisible, withOps) {
+  const groupChips = (keys) =>
+    keys.map((k) => {
+      if (k === "image") {
+        return (
+          `<label class="io-chip" title="商品图片列（列表为整列，画册为卡片主图）">` +
+          `<input type="checkbox" data-g="${prefix}" data-cfk="image" ${imgVisible ? "checked" : ""} />图片</label>`
+        );
+      }
+      const f = PRODUCT_FIELDS.find((x) => x.key === k);
+      return chipHtml(k, f ? f.label : k, prefix, set, k === "code");
+    }).join("");
   return (
     CS_GROUPS.map((g) => {
-      const chips = g.keys.map((k) => {
-        const f = PRODUCT_FIELDS.find((x) => x.key === k);
-        return chipHtml(k, f ? f.label : k, prefix, set, k === "code");
-      }).join("");
+      let chips = groupChips(g.keys);
+      if (withOps && g.ops) {
+        chips +=
+          `<label class="io-chip" title="列表每行的快捷按钮列：星标 / 复制完整名称 / 补货入库 / 删除（仅列表视图）">` +
+          `<input type="checkbox" data-g="${prefix}" data-cfk="ops" ${showOpsList ? "checked" : ""} />操作列</label>`;
+      }
       return `<div class="cs-group"><div class="cs-group-title">${g.title}</div><div class="io-chips">${chips}</div></div>`;
-    }).join("") +
-    `<div class="cs-group"><div class="cs-group-title">④ 图片</div><div class="io-chips">` +
-    `<label class="io-chip" title="商品图片列（列表为整列，画册为卡片主图）">` +
-    `<input type="checkbox" data-g="${prefix}" data-cfk="image" ${imgVisible ? "checked" : ""} />图片</label>` +
-    `</div></div>`
+    }).join("")
   );
 }
 
@@ -2045,7 +2064,7 @@ function openColSet() {
           <button class="mini-btn" id="csListAll">全选</button>
           <button class="mini-btn" id="csListNone">不选</button>
         </div>
-        ${checkGroupHtml("cur", toggle, imgVisible)}
+        ${checkGroupHtml("cur", toggle, imgVisible, isList)}
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
           <button id="csReset">复原默认（全部显示）</button>
           <button id="csCancel">取消</button>
@@ -2055,6 +2074,8 @@ function openColSet() {
     mask.querySelectorAll('[data-g="cur"]').forEach((cb) => {
       if (cb.dataset.cfk === "image") {
         cb.checked = imgVisible;
+      } else if (cb.dataset.cfk === "ops") {
+        cb.checked = showOpsList;
       } else {
         cb.checked = toggle.has(cb.dataset.cfk);
       }
@@ -2063,12 +2084,14 @@ function openColSet() {
   $("csListAll").onclick = () => {
     PRODUCT_FIELDS.forEach((f) => toggle.add(f.key));
     imgVisible = true;
+    showOpsList = true;
     recalc();
   };
   $("csListNone").onclick = () => {
     toggle.clear();
     toggle.add("code");
     imgVisible = false;
+    showOpsList = false;
     recalc();
   };
   mask.querySelectorAll('[data-g="cur"]').forEach((cb) => {
@@ -2080,6 +2103,10 @@ function openColSet() {
         imgVisible = cb.checked;
         return;
       }
+      if (cb.dataset.cfk === "ops") {
+        showOpsList = cb.checked;
+        return;
+      }
       cb.checked ? toggle.add(cb.dataset.cfk) : toggle.delete(cb.dataset.cfk);
     };
   });
@@ -2087,6 +2114,7 @@ function openColSet() {
     if (await confirmBox(`复原默认：${keyName}显示全部字段？`)) {
       PRODUCT_FIELDS.forEach((f) => toggle.add(f.key));
       imgVisible = true;
+      showOpsList = true;
       recalc();
     }
   };
@@ -2109,6 +2137,11 @@ function openColSet() {
       type: "saveSettings",
       key: isList ? "col_image_list" : "col_image_gallery",
       value: imgVisible ? "1" : "0",
+    });
+    post({
+      type: "saveSettings",
+      key: "col_show_ops",
+      value: showOpsList ? "1" : "0",
     });
     closeModal();
     renderProducts();

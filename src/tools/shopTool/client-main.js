@@ -622,6 +622,7 @@ function onMessage(msg) {
       // 图片列是否显示（独立设置，默认显示；用户可在「字段显示」里关掉）
       showImageList = state.settings.col_image_list !== "0";
       showImageGallery = state.settings.col_image_gallery !== "0";
+      showOpsList = state.settings.col_show_ops !== "0";
       renderProducts();
       break;
     }

@@ -684,3 +684,14 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
 - `fragment.html`：新增 `.cs-group`（间距）/`.cs-group-title`（小字描述色）样式。
 - **纯展示改动**：columns 顺序（`PRODUCT_FIELDS`）、全选/不选/复原循环、`data-g="cur"` 勾选收集、保存流程全部不动；编号 locked 逻辑保留。
 - 文档：manual §2.2 补分组说明。验证：`node --check`、`eslint`、`tsc -p ./` 通过。
+
+### 三十一·补记（分组再调整 + 可隐藏「操作列」）
+
+> 2026-09-18 用户要求：图片与采购链接并入「商品档案」；并把列表视图的「操作」列也收纳进字段设置，放在「状态与辅助」，可隐藏。
+
+- 新分组：① 商品档案 `code/name/category/series/grade/purchase_link/image`；② 价格与销售（不变）；③ 状态与辅助 `status/remark`（+ 列表视图才出现的「操作列」chip）。删除独立图片组。
+- 「操作列」= 列表每行的 ☆/📋/📦/🗑 快捷按钮列，新增隐藏开关 `col_show_ops`（默认 1）：
+  - `client-product.js`：`showOpsList` 状态；`renderList` 头/行按 `showOpsList` 省略「操作」th/td；`checkGroupHtml` 增 `withOps` 参数（画册视图不显示该 chip）+ `g.ops` 标记；`openColSet` 的 recalc/全选/不选/复原/onchange/save 同步操作。
+  - `client-core.js` defaults、`client-main.js` settingsLoaded 加载、`handlers/settings.ts` 白名单、`index.ts` settingsLoaded payload 均加 `col_show_ops`。
+  - 导出/复制/导入走 `PRODUCT_FIELDS`，与操作列完全无关。
+- 文档：manual §2.2 同步。验证：`node --check`、`eslint`、`tsc -p ./` 通过。

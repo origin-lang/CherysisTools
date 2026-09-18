@@ -14,6 +14,7 @@ window.toolClients = window.toolClients || {};
         font_size: "13",
         col_visible_list: "",
         col_visible_gallery: "",
+        col_show_ops: "1",
         import_fields: "",
         import_mode: "",
         export_fields: "",
@@ -96,6 +97,8 @@ window.toolClients = window.toolClients || {};
     // 图片列是否显示（与「字段显示」分开存储，独立开关，默认显示）
     var showImageList = true;
     var showImageGallery = true;
+    // 列表「操作」列（星标/复制/入库/删除快捷按钮）是否显示，默认显示、可关
+    var showOpsList = true;
     var viewMode = "list";
     var listPage = 1;
     var pageSize = 200;
