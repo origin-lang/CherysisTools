@@ -307,16 +307,8 @@ function renderPager(pd) {
   if (!el) {
     return;
   }
-  const sepL = document.getElementById("pagerSepL");
-  const sepR = document.getElementById("pagerSepR");
   const show = pd.total > 0;
   el.style.display = show ? "" : "none";
-  if (sepL) {
-    sepL.style.display = show ? "" : "none";
-  }
-  if (sepR) {
-    sepR.style.display = show ? "" : "none";
-  }
   if (!show) {
     return;
   }
@@ -332,7 +324,14 @@ function renderPager(pd) {
       `;
 }
 
+function tableScrollTop() {
+  const wrap = document.querySelector("#productListView .table-wrap");
+  return wrap ? wrap.scrollTop : 0;
+}
+
 function renderProducts() {
+  // 列表重渲染前记住内部滚动偏移，渲染后还原——改格子/星标/库存等操作不再被弹回顶部
+  const prevScroll = viewMode === "list" ? tableScrollTop() : 0;
   const list = filteredProducts();
   const sig = filterSig(list);
   if (sig !== lastFilterSig) {
@@ -349,6 +348,10 @@ function renderProducts() {
     $("productListView").style.display = "block";
     $("productGalleryView").style.display = "none";
     renderList(pd.page);
+    const wrap = document.querySelector("#productListView .table-wrap");
+    if (wrap) {
+      wrap.scrollTop = prevScroll;
+    }
   }
   ensureCovers(pd.page);
 }

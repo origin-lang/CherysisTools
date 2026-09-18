@@ -608,3 +608,10 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
   - **顺手清掉历史残留**：`client-report.js` 有行 `$("clearFilterBtn").style.visibility = hasFilter() ? "visible" : "hidden"` —— 月报页根本没有自己的清除按钮，切到月报会反过来覆盖商品页按钮显影，属跨面板串扰 bug，删除。
 - **文档**：manual §2.3 补「清除按钮常驻灰态/分页并入顶栏/空结果自动隐藏分页/提示折叠」口径。
 - 验证：`node --check` ×3（product/main/report）通过、`eslint` 0 error。
+
+### 二十七·补记（滚动位置保留 + 分页移到下方，2026-09-17）
+
+- **滚动弹回顶部根因**：`#tabProducts .table-wrap` 才是列表的实际滚动容器；任何改动（改格子/星标/库存…）→ 后端 `productsDelta` → `renderProducts()` → `renderList` 用 `innerHTML` 整段重建，滚动容器连同其 `scrollTop` 一起销毁 → 视角弹回表格顶部。
+- **修复（A）**：`renderProducts()` 渲染前记 `#productListView .table-wrap.scrollTop`，渲染（列表视图）后还原——全操作受益，位置原地保留；内容变短时由浏览器自动钳制。`renderList` 里 `syncListCellState()` 会重打已选格高亮，不因保留滚动而丢。
+- **分页条移到下方**（用户提出「下一页/上一页放下面更合理」）：`#productPager` 从顶栏内挪出，放到 `#productListView`/`#productGalleryView` 之后独立一行（`margin-top:8px`），删除两侧 `pagerSepL/R` 分隔线与对应显隐逻辑；空结果仍整条隐藏。
+- 验证：`node --check` 通过。

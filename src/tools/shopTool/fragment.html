@@ -306,6 +306,7 @@
         align-items: center;
         gap: 8px;
         flex-wrap: wrap;
+        margin-top: 8px;
       }
       .tb-sep {
         width: 1px;
@@ -877,14 +878,13 @@
         <span class="toolbar-fill"></span>
         <button id="newProductBtn" class="btn-teal">＋ 新建商品</button>
         <button id="ioBtn" title="导入 / 导出商品清单">导入/导出</button>
-        <span class="tb-sep" id="pagerSepL"></span>
-        <div id="productPager"></div>
-        <span class="tb-sep" id="pagerSepR"></span>
+        <span class="tb-sep"></span>
         <button id="undoBtn" disabled title="撤销上一步修改（最多回退 20 步）">↩</button>
         <button id="redoBtn" disabled title="重做上一步被撤销的操作">↪</button>
       </div>
       <div id="productListView" style="display: block"></div>
       <div id="productGalleryView" style="display: none"></div>
+      <div id="productPager"></div>
     </div>
 
     <div id="tabSales" class="sub-panel">
