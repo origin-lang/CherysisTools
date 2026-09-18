@@ -883,6 +883,7 @@ var starOv = {
   reloading: false,
   cols: 0,
   rows: 0,
+  lastDir: "",
 };
 
 const STAR_GRID_PRESETS = [
@@ -1101,7 +1102,7 @@ function showStarOverviewPreview(msg) {
     starOv.generating = true;
     const footer = mask.querySelector("[data-so-footer]");
     footer.innerHTML =
-      `<div class="muted" style="align-self:center;margin-right:auto">正在生成…（会弹目录确认）</div>` +
+      `<div class="muted" style="align-self:center;margin-right:auto">正在生成…（请选择输出目录）</div>` +
       `<button data-so-close>取消</button>`;
     footer.querySelector("[data-so-close]").onclick = () => closeModal();
     post({ type: "generateStarOverview", cols: d.cols || 0, rows: d.rows || 0 });
@@ -1112,6 +1113,7 @@ function showStarOverviewPreview(msg) {
 function onStarOverviewDone(msg) {
   const dir = String(msg.dir || "");
   const count = Number(msg.count || 0);
+  starOv.lastDir = dir;
   if (starOv.mask && starOv.mask.isConnected) {
     starOv.generating = false;
     starOv.reloading = false;
@@ -1122,7 +1124,7 @@ function onStarOverviewDone(msg) {
         `<button data-so-open title="在系统文件管理器中打开输出目录">📂 打开文件夹</button>` +
         `<button data-so-close class="btn-teal">完成</button>`;
       footer.querySelector("[data-so-open]").onclick = () =>
-        post({ type: "openStarOutDir" });
+        post({ type: "openStarOutDir", dir: starOv.lastDir });
       footer.querySelector("[data-so-close]").onclick = () => closeModal();
     }
   } else {

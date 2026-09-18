@@ -635,3 +635,20 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
 - 显示切换不再依赖 `inline display:block/none`：`#productListView/#productGalleryView` 的 markup 去掉内联样式，样式表默认 `display:flex`；`renderProducts()` 里 JS 切换改为 `style.display = ""` / `"none"`（空串回落到 flex）。
 - 画册容器单独 `overflow-y:auto`；滚动位置保留逻辑不受影响（仍记/还原 `.table-wrap.scrollTop`）。
 - 验证：`node --check`、`eslint` 通过。
+
+## 二十八、日志开关改右下角幽灵图标（全局壳）· 星标总览每次弹选目录
+
+> 归档时间：2026-09-18。状态：**已实现**。
+
+### 一、运行日志按钮 → 右下角小图标（`src/webview/main.html`，全局壳、所有工具受益）
+
+- 用户反馈「运行日志按钮好占空间」，选了右下角方案（主要是开发时看，不需日常占位）。
+- 删除顶部整行 `<div class="top-row">`（含边框/留白约 35px）；`#logPanelToggle` 改为 `<body>` 直属、`position:fixed; bottom:14px; right:16px`，`opacity:0.35` 半透明、hover 变 `1`，`z-index:50` 浮于内容之上；label 仍是「📋 运行日志」。JS `setLogCollapsed`/onclick/**`active` 高亮逻辑原样不动**。
+
+### 二、星标总览图：出图目录跟「导出 Excel」一致，每次弹选（`handlers/live.ts` / `client-product.js`）
+
+- 用户要求：不要默认桌面/默认上次目录，要像导出 Excel 一样**每次直接弹文件夹选择框**。
+- `generateStarOverview`：**删掉**「读 `live_out_dir` → 若存在则 `ctx.confirm` 复用、取消才另选」整段，改为无条件 `await ctx.selectFolder("选择星标总览输出目录")`，取消则 `log("❌未选择输出目录，已取消")` 返回；**不再写 `live_out_dir`**——星标总览目录与直播排品九宫格 `live_out_dir` 彻底解耦。
+- `openStarOutDir(msg)`：优先用 `msg.dir`（前端把 `starOverviewDone` 带回的目录存在 `starOv.lastDir`，「📂 打开文件夹」随 `dir` 发出），不存在才退回 `live_out_dir`，再没有才报「还没生成过总览图」。
+- 生成中提示文案「会弹目录确认」→「请选择输出目录」。
+- 验证：`tsc -p ./`、`eslint`、`node --check`。

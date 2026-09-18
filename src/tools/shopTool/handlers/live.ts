@@ -279,7 +279,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       });
     },
 
-    // 预览确认后才落盘（弹目录确认/另选 → 写文件 → 打开输出目录）
+    // 预览确认后才落盘（每次弹文件夹选择器 → 写文件 → 打开输出目录）
     async generateStarOverview(msg) {
       const rows = buildStarRows();
       if (!rows) {
@@ -291,21 +291,10 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
         db.setSetting("star_grid_cols", String(g.cols));
         db.setSetting("star_grid_rows", String(g.rows));
       }
-      let outDir = String(h.getSetting("live_out_dir") || "").trim();
-      if (outDir && fs.existsSync(outDir)) {
-        const ok = await ctx.confirm(`星标总览将输出到：${outDir}`, "点「取消」改为另选输出目录");
-        if (!ok) {
-          outDir = "";
-        }
-      }
+      const outDir = await ctx.selectFolder("选择星标总览输出目录");
       if (!outDir) {
-        const picked = await ctx.selectFolder("选择星标总览输出目录");
-        if (!picked) {
-          log("❌未选择输出目录，已取消");
-          return;
-        }
-        outDir = picked;
-        db.setSetting("live_out_dir", outDir);
+        log("❌未选择输出目录，已取消");
+        return;
       }
       if (!fs.existsSync(outDir)) {
         try {
@@ -337,8 +326,10 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       post({ type: "starOverviewDone", dir: outDir, count: files.length });
     },
 
-    openStarOutDir() {
-      const dir = String(h.getSetting("live_out_dir") || "").trim();
+    openStarOutDir(msg) {
+      const dir =
+        String(msg?.dir || "").trim() ||
+        String(h.getSetting("live_out_dir") || "").trim();
       if (!dir || !fs.existsSync(dir)) {
         log("❌还没生成过总览图/九宫格（未设置输出目录）");
         return;
