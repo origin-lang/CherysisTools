@@ -431,6 +431,10 @@ function bindEvents() {
       }
     };
   }
+  const fsSel = $("setFontSize");
+  if (fsSel) {
+    fsSel.onchange = () => saveFontSize(fsSel.value);
+  }
   $("dbBackupBtn").onclick = () => post({ type: "exportDB" });
   $("dbRestoreBtn").onclick = () =>
     confirmBox(
@@ -478,6 +482,17 @@ function saveRowHeight(raw) {
   const n = Math.max(0, Math.min(50, parseInt(String(raw || "5"), 10) || 5));
   applyRowHeight(n);
   post({ type: "saveSettings", key: "row_height", value: String(n) });
+}
+
+function applyFontSize(raw) {
+  const n = Math.max(12, Math.min(16, parseInt(String(raw || "13"), 10) || 13));
+  document.body.style.setProperty("--table-font-size", n + "px");
+}
+
+function saveFontSize(raw) {
+  const n = Math.max(12, Math.min(16, parseInt(String(raw || "13"), 10) || 13));
+  applyFontSize(n);
+  post({ type: "saveSettings", key: "font_size", value: String(n) });
 }
 
 let exportingBtn = null;
@@ -582,6 +597,7 @@ function onMessage(msg) {
       state.settings = { ...state.settings, ...(msg.settings || {}) };
       renderSettings();
       applyRowHeight(state.settings.row_height);
+      applyFontSize(state.settings.font_size);
       if (typeof updateSalesDeductTip === "function") {
         updateSalesDeductTip();
       }

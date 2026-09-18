@@ -659,4 +659,14 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
 - 用户对筛选交互表态「其实也还行 不换了」，仅改一处：清除筛选按钮**不再常驻灰态**，而是**只在任一筛选生效时显示**（`syncClearFilterBtn` 改 `row.style.display = hasFilter() ? "" : "none"`；`client-product.js:628`）。与「二十七」里 D 项的「常驻 disabled」相反，属用户定夺回退。
 - `fragment.html`：`#clearFilterBtn` 初始去掉 `disabled`、改 `style="display:none"`（初始化走 `syncClearFilterBtn` 定显隐）；点击行为不变（`client-main.js:97` 一键清全部）。
 - manual §2.3 措辞同步为「有任一筛选生效时出现清除筛选按钮」；验证：`node --check`、`eslint` 通过。
-- 验证：`tsc -p ./`、`eslint`、`node --check`。
+
+## 三十、表格字体大小设置
+
+> 归档时间：2026-09-18。状态：**已实现**。
+
+- 用户从「拖列宽 / 全屏缩放 / 字号」里只选「**字体大小设置**」（全屏/缩放交给 VS Code 原生，列宽暂不做）。
+- **设置项**：`规则与设置 → 店铺设置` 新增「表格字体大小」下拉（12/13 默认/14/15/16 px），照「列表行高」模式实现：
+  - `fragment.html`：`.data-table` 的 `font-size:13px` 改 `var(--table-font-size, 13px)`；店铺设置 form 新增 `#setFontSize`；
+  - `client-main.js`：`applyFontSize`（钳制 12..16、写 `body` 级 CSS 变量，覆盖商品/销售/月报/规则所有表格）+ `saveFontSize`（post `saveSettings`），绑定 `onchange`；`settingsLoaded` 时应用；`client-report.js` `renderSettings` 回显；
+  - 后端：`client-core.js` defaults 加 `font_size:"13"`、`handlers/settings.ts` 白名单加 `font_size`、`index.ts` `settingsLoaded` payload 加 `font_size`。
+- 文档：manual §6.2、shopTool.md settings 列表同步。验证：`tsc -p ./`、`eslint`、`node --check` 通过。

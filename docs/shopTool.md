@@ -37,7 +37,7 @@
   - 手动填：`income_amount`（到账收入，口径商家自定）、`extra_expense`（运费/佣金/杂支）
   - 自动算：`goods_cost` = Σ((卖−退) × 快照进价)、`sold_total`、`refund_total`
   - `profit` = income − goods_cost − extra_expense；`locked`(锁定当月 sales_record，可解锁重做)
-- `settings`（key-value）：`image_dir`(图片根目录)、`name_template`(完整名称模板)、`stock_alert`(库存预警阈值)、`sales_deduct_stock`(销售自动扣库存，默认开)、`col_visible_list` / `col_visible_gallery`(列表/画册字段显隐 JSON，分开存分开恢复)、`col_image_list` / `col_image_gallery`(列表/画册图片列显隐)、`import_fields` / `import_mode` / `export_fields`(导入导出列与去重模式记忆)、`live_out_dir`(九宫格输出目录)
+- `settings`（key-value）：`image_dir`(图片根目录)、`name_template`(完整名称模板)、`stock_alert`(库存预警阈值)、`sales_deduct_stock`(销售自动扣库存，默认开)、`row_height`(列表行高)、`font_size`(表格字体大小)、`col_visible_list` / `col_visible_gallery`(列表/画册字段显隐 JSON，分开存分开恢复)、`col_image_list` / `col_image_gallery`(列表/画册图片列显隐)、`import_fields` / `import_mode` / `export_fields`(导入导出列与去重模式记忆)、`live_out_dir`(九宫格输出目录)
 
 **库存口径 = `products.stock_manual`，落库直读**（`getProductsWithTotals` 把该列作为 `stockTotal` 下发）；写入由「补货入库 / 删除入库 / 销售（开关开着）/ 清点」维护，`MAX(0, …)` 保证不为负。
 

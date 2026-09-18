@@ -11,6 +11,7 @@ window.toolClients = window.toolClients || {};
         name_template: "",
         stock_alert: 0,
         row_height: "8",
+        font_size: "13",
         col_visible_list: "",
         col_visible_gallery: "",
         import_fields: "",

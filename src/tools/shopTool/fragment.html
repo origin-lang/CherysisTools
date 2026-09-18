@@ -129,7 +129,7 @@
       .data-table {
         width: 100%;
         border-collapse: collapse;
-        font-size: 13px;
+        font-size: var(--table-font-size, 13px);
       }
       .data-table th,
       .data-table td {
@@ -1154,6 +1154,17 @@ L032,1"></textarea>
             </select>
             <input id="setRowHeightCustom" type="number" min="0" max="50" step="1" style="width: 80px; display: none" title="自定义行高 px" />
             <span class="muted">列表图片高随行高（px）、宽按原图比例自适应不裁剪；名称/品类/系列超长折行、超上限省略号、悬浮看全文，中号 = 默认</span>
+          </div>
+          <label>表格字体大小</label>
+          <div class="rows" style="width: 100%">
+            <select id="setFontSize">
+              <option value="12">12</option>
+              <option value="13" selected>13（默认）</option>
+              <option value="14">14</option>
+              <option value="15">15</option>
+              <option value="16">16</option>
+            </select>
+            <span class="muted">商品/每日销售/分析月报等所有表格的字号（px）</span>
           </div>
         </div>
       </div>

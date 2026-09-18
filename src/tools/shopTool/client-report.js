@@ -188,6 +188,12 @@
       if (sds) {
         sds.checked = Number(state.settings.sales_deduct_stock || 1) !== 0;
       }
+      const fsSel = $("setFontSize");
+      if (fsSel) {
+        fsSel.value = /^\d+$/.test(String(state.settings.font_size || "13"))
+          ? String(state.settings.font_size)
+          : "13";
+      }
       updateNameTemplatePreview();
     }
 
