@@ -621,3 +621,9 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
 - **分页居中**：`#productPager` 加 `justify-content:center`（用户提「移到中间？」即取中，居中更常见；改回右下角只需换成 `justify-content:flex-end`）。
 - **操作提示改静态挂载**：从 `renderList` 的 `innerHTML` 里抽出，作为静态 `<details id="listHints">` 放在 `fragment.html` 中 `#productPager` 之后——顺序为「表格 → 分页 → 操作提示」，且列表/画册两种视图下都常驻（原来仅供列表）。样式（`summary` 光标/字号、内部间距）收进 `#listHints` CSS 而非内联。
 - 验证：`node --check` 通过。
+
+### 二十七·补记3（操作提示挪进「规则与设置」标签，2026-09-17）
+
+- 用户嫌操作提示占列表页位置，指定挪走：「不要放在列表那边」。
+- `fragment.html`：删除列表底部的 `<details id="listHints">` 与其 CSS；在 `#tabSettings` 里新增「**商品列表操作提示**」panel（置于「录入与命名规范」之前），内容原样搬入。
+- 日期/无 JS 改动；manual §2.3 提示语同步。

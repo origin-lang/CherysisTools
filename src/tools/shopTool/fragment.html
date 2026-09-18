@@ -309,17 +309,6 @@
         flex-wrap: wrap;
         margin-top: 8px;
       }
-      #listHints {
-        margin-top: 6px;
-        padding-bottom: 8px;
-      }
-      #listHints summary {
-        cursor: pointer;
-        font-size: 12px;
-      }
-      #listHints div {
-        margin-top: 4px;
-      }
       .tb-sep {
         width: 1px;
         height: 22px;
@@ -897,7 +886,6 @@
       <div id="productListView" style="display: block"></div>
       <div id="productGalleryView" style="display: none"></div>
       <div id="productPager"></div>
-      <details id="listHints"><summary class="muted">ℹ️ 操作提示</summary><div class="muted">表头下小框可筛选对应列；单击单元格框选，Ctrl+C/X/V 复制/剪切/粘贴该格、Esc 取消框选；双击单元格编辑（回车或点击别处即保存）；右键可剪切/复制/粘贴、复制整行/删除整行</div></details>
     </div>
 
     <div id="tabSales" class="sub-panel">
@@ -1159,6 +1147,10 @@ L032,1"></textarea>
           <button id="dbRestoreBtn" class="btn-danger">从备份恢复</button>
         </div>
         <p class="muted" style="margin: 8px 0 0 0">备份会生成一个完整的 .db 快照文件（含 WAL 未落盘数据）；恢复会用所选备份整体替换当前全部数据，操作前建议先备份一次。</p>
+      </div>
+      <div class="panel">
+        <h4 style="margin: 0 0 8px 0">商品列表操作提示</h4>
+        <p class="muted" style="margin: 0; line-height: 1.8">表头下小框可筛选对应列；单击单元格框选，Ctrl+C/X/V 复制/剪切/粘贴该格、Esc 取消框选；双击单元格编辑（回车或点击别处即保存）；右键可剪切/复制/粘贴、复制整行/删除整行</p>
       </div>
       <div class="panel">
         <h4 style="margin: 0 0 8px 0">录入与命名规范</h4>
