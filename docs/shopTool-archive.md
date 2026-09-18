@@ -695,3 +695,10 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
   - `client-core.js` defaults、`client-main.js` settingsLoaded 加载、`handlers/settings.ts` 白名单、`index.ts` settingsLoaded payload 均加 `col_show_ops`。
   - 导出/复制/导入走 `PRODUCT_FIELDS`，与操作列完全无关。
 - 文档：manual §2.2 同步。验证：`node --check`、`eslint`、`tsc -p ./` 通过。
+
+### 三十一·补记2（导出Excel 列选择也分组）
+
+> 2026-09-18 用户要求：导出商品 Excel 弹窗里的列选择也按字段分组排布。
+
+- `client-product.js`：新增 `exportGroupHtml`，复用 `CS_GROUPS` 三组；导出盘里「code」chip 保持锁定第 1 列，导出专用的「图片」列 chip（`_image`，插在状态列前的语义不变）并入①商品档案。分组外层共用 `.cs-group`/`.cs-group-title` 样式，列顺序/导出逻辑全部不动。
+- 文档：manual §2.2 同步。验证：`node --check`、`eslint`、`tsc -p ./` 通过。

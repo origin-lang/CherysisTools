@@ -469,7 +469,7 @@ function renderList(list) {
             cls = "cell-code";
             break;
           case "name":
-            v = `<div class="clip-cell" title="${esc(p.name)}">${esc(p.name)}</div>`;
+            v = `<div class="clip-cell" data-p-act="edit" data-id="${p.id}" title="点击打开详情 / 编辑：${esc(p.name)}">${esc(p.name)}</div>`;
             break;
           case "category":
             v = `<div class="clip-cell" title="${esc(p.category || "")}">${esc(p.category || "")}</div>`;
@@ -1189,6 +1189,7 @@ function renderGallery(list) {
                   <span class="card-badge ${off ? "off" : ""}">${off ? "已下架" : p.code}</span>
                   ${showImageGallery ? (coverData ? `<img src="${coverData}" />` : `<div class="ph">暂无图片</div>`) : ""}
                   <div class="card-body">${lines}</div>
+                  <button class="edit-btn" data-p-act="edit" data-id="${p.id}" title="打开详情 / 编辑">编辑</button>
                 </div>`;
           })
           .join("")}</div>`;
@@ -1196,6 +1197,292 @@ function renderGallery(list) {
 
 function stateProduct(code) {
   return state.products.find((p) => p.code === code);
+}
+
+// ─── 商品详情抽屉（画册「编辑」按钮 / 列表点名称共用）作者：字段改动即存 ───
+const DRAWER_GROUPS = [
+  { title: "① 商品档案", keys: ["code", "name", "category", "series", "grade"] },
+  { title: "② 价格与销售", keys: ["cost_price", "sale_price", "stockTotal", "soldTotal", "netTotal"] },
+  { title: "③ 状态与辅助", keys: ["status", "purchase_link", "remark"] },
+];
+// 抽屉里可编辑的字段（status 走 setStatus，其余走 saveFieldValue）
+const DRAWER_EDITABLE = new Set([...EDITABLE_FIELDS, "status"]);
+let drawerPid = 0;
+let drawerKeyHandler = null;
+
+function fieldLabel(key) {
+  const f = PRODUCT_FIELDS.find((x) => x.key === key);
+  return f ? f.label : key;
+}
+
+function openProductDrawer(product) {
+  if (!product) {
+    return;
+  }
+  drawerPid = product.id;
+  const mask = $("drawerBackdrop");
+  const box = $("productDrawer");
+  if (mask) {
+    mask.style.display = "";
+  }
+  if (box) {
+    box.style.display = "";
+  }
+  if (!drawerKeyHandler) {
+    drawerKeyHandler = (e) => {
+      if (e.key === "Escape" && drawerPid) {
+        closeProductDrawer();
+      }
+    };
+    document.addEventListener("keydown", drawerKeyHandler);
+  }
+  renderProductDrawer();
+  post({ type: "getImages", code: product.code });
+}
+
+function closeProductDrawer() {
+  drawerPid = 0;
+  const mask = $("drawerBackdrop");
+  const box = $("productDrawer");
+  if (mask) {
+    mask.style.display = "none";
+  }
+  if (box) {
+    box.style.display = "none";
+    box.innerHTML = "";
+  }
+}
+
+function drawerFieldValue(p, key) {
+  switch (key) {
+    case "grade":
+      return esc(displayGrade(p));
+    case "cost_price":
+    case "sale_price":
+      return `¥${money(p[key])}`;
+    case "stockTotal":
+      return qty(p.stockTotal || 0);
+    case "soldTotal":
+      return qty(p.soldTotal || 0);
+    case "netTotal":
+      return qty(p.soldTotal - p.refundTotal);
+    case "purchase_link":
+      return p.purchase_link
+        ? `<a href="${esc(p.purchase_link)}" target="_blank">打开</a>`
+        : "";
+    case "status":
+      return `<span class="badge ${p.status === 1 ? "badge-off" : "badge-on"}">${p.status === 1 ? "已下架" : "在售"}</span>`;
+    default:
+      return esc(p[key] ?? "");
+  }
+}
+
+function drawerControl(p, key) {
+  if (key === "grade") {
+    return `<select class="d-field" data-d-f="grade" data-id="${p.id}">
+      <option value="0" ${p.price_manual === 1 ? "selected" : ""}>自定义（不按公式自动算）</option>
+      ${state.rules
+        .map(
+          (r) =>
+            `<option value="${r.grade}" ${p.price_manual !== 1 && r.grade === p.grade ? "selected" : ""}>${esc(gradeLabel(r.grade))}</option>`,
+        )
+        .join("")}
+    </select>`;
+  }
+  if (key === "status") {
+    return `<select class="d-field" data-d-f="status" data-id="${p.id}">
+      <option value="0" ${p.status === 0 ? "selected" : ""}>在售</option>
+      <option value="1" ${p.status === 1 ? "selected" : ""}>已下架</option>
+    </select>`;
+  }
+  if (key === "cost_price" || key === "sale_price") {
+    return `<input class="d-field" data-d-f="${key}" data-id="${p.id}" type="text" inputmode="decimal" value="${esc(String(p[key] ?? ""))}" />`;
+  }
+  if (key === "stockTotal") {
+    return `<input class="d-field" data-d-f="stockTotal" data-id="${p.id}" type="number" min="0" step="1" value="${p.stockTotal || 0}" />`;
+  }
+  if (key === "remark") {
+    return `<textarea class="d-field" data-d-f="remark" data-id="${p.id}" rows="2" spellcheck="false">${esc(p.remark || "")}</textarea>`;
+  }
+  const attrs =
+    key === "category"
+      ? ` list="shopCatList" maxlength="50"`
+      : key === "name"
+        ? ` maxlength="100"`
+        : key === "series"
+          ? ` maxlength="50"`
+          : key === "purchase_link"
+            ? ` maxlength="500"`
+            : "";
+  return `<input class="d-field" data-d-f="${key}" data-id="${p.id}"${attrs} value="${esc(String(p[key] ?? ""))}" />`;
+}
+
+function renderProductDrawer() {
+  const box = $("productDrawer");
+  if (!box) {
+    return;
+  }
+  const p = drawerPid ? state.products.find((x) => x.id === drawerPid) : null;
+  if (!p) {
+    closeProductDrawer();
+    return;
+  }
+  const off = p.status === 1;
+  const coverData = state.coverCache[p.code] || "";
+  const groups = DRAWER_GROUPS.map(
+    (g) =>
+      `<div class="d-group-title">${g.title}</div><div class="d-form">` +
+      g.keys
+        .map((k) =>
+          DRAWER_EDITABLE.has(k)
+            ? `<label>${fieldLabel(k)}</label>${drawerControl(p, k)}`
+            : `<label>${fieldLabel(k)}</label><div class="d-f-val">${drawerFieldValue(p, k)}</div>`,
+        )
+        .join("") +
+      `</div>`,
+  ).join("");
+  box.innerHTML = `
+    <div class="d-head">
+      <div>
+        <div class="d-title"><b>${esc(p.code)}</b>${esc(p.name)}</div>
+        <div class="d-sub">
+          <span>${esc(displayGrade(p))} · 售价 ¥${money(p.sale_price)}</span>
+          <span class="badge ${off ? "badge-off" : "badge-on"}">${off ? "已下架" : "在售"}</span>
+        </div>
+      </div>
+      <button class="d-close" data-d-act="close" title="关闭（Esc）">✕</button>
+    </div>
+    <div class="d-body">
+      ${
+        showImageGallery
+          ? `<div class="d-group-title">④ 图片</div>
+             <div class="d-cover" data-d-act="bigimg" title="点击查看大图 · 可拖入或粘贴图片到此">${
+               coverData ? `<img src="${coverData}" />` : `<div class="ph">暂无图片</div>`
+             }</div>
+             <div class="d-thumbs" id="drawerThumbs"><span class="muted">图片加载中…</span></div>
+             <div style="display:flex;gap:6px">
+               <button class="mini-btn" data-d-act="upload">🖼 上传图片</button>
+               <button class="mini-btn btn-danger" data-d-act="clearimg">清空图片夹</button>
+             </div>`
+          : ""
+      }
+      ${groups}
+    </div>
+    <div class="d-foot">
+      <button class="mini-btn" id="drawerUndoBtn" ${state.canUndo ? "" : "disabled"} title="撤销上一步修改">↩ 撤销</button>
+      <button class="mini-btn" id="drawerRedoBtn" ${state.canRedo ? "" : "disabled"} title="重做上一步">↪ 重做</button>
+      <span class="d-fill"></span>
+      <button class="mini-btn" data-d-act="stockin" title="补货入库">📦 补货</button>
+      <button class="mini-btn btn-danger" data-d-act="del" title="删除(含记录)">🗑 删除</button>
+    </div>`;
+  box.querySelectorAll("[data-d-act]").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      onDrawerAct(e, p);
+    });
+  });
+  const undo = $("drawerUndoBtn");
+  const redo = $("drawerRedoBtn");
+  if (undo) {
+    undo.onclick = () => post({ type: "undoRequest" });
+  }
+  if (redo) {
+    redo.onclick = () => post({ type: "redoRequest" });
+  }
+  bindDrawerFields(box, p);
+}
+
+function bindDrawerFields(box, p) {
+  box.querySelectorAll(".d-field").forEach((el) => {
+    const key = el.dataset.dF;
+    const commit = () => commitDrawerField(p.id, key, el.value);
+    if (el.tagName === "SELECT") {
+      el.onchange = commit;
+      return;
+    }
+    el.onblur = commit;
+    el.onkeydown = (e) => {
+      if (e.key === "Enter" && el.tagName !== "TEXTAREA") {
+        e.preventDefault();
+        el.blur();
+      }
+    };
+  });
+}
+
+function commitDrawerField(pid, field, raw) {
+  if (field === "status") {
+    post({ type: "setStatus", id: pid, status: Number(raw) === 1 ? 1 : 0 });
+    return;
+  }
+  saveFieldValue(pid, field, raw);
+}
+
+function onDrawerAct(e, p) {
+  const el = e.target.closest("[data-d-act]");
+  if (!el) {
+    return;
+  }
+  const act = el.dataset.dAct;
+  if (act === "close") {
+    closeProductDrawer();
+  } else if (act === "bigimg") {
+    openLightbox(stateProduct(p.code) || p);
+  } else if (act === "upload") {
+    post({ type: "uploadImages", code: p.code });
+  } else if (act === "clearimg") {
+    confirmBox(`确认清空 ${p.code} 的图片文件夹？（文件会真的删除）`).then((ok) => {
+      if (ok) {
+        post({ type: "clearImages", code: p.code });
+      }
+    });
+  } else if (act === "stockin") {
+    openStockIn(p);
+  } else if (act === "del") {
+    confirmBox(
+      `确认删除 ${p.code} ${p.name}？\n将同时删除它的销售记录和入库记录，且不可恢复！`,
+    ).then((ok) => {
+      if (ok) {
+        post({ type: "deleteProduct", id: p.id });
+      }
+    });
+  }
+}
+
+// getImages 返回时同步抽屉里的封面与缩略条（灯箱逻辑保持不变）
+function renderDrawerImages(code, images) {
+  if (!drawerPid) {
+    return;
+  }
+  const p = state.products.find((x) => x.id === drawerPid);
+  if (!p || p.code !== code) {
+    return;
+  }
+  const box = $("productDrawer");
+  if (!box) {
+    return;
+  }
+  const cover = box.querySelector(".d-cover");
+  if (cover) {
+    const data = images && images.length ? images[0] : "";
+    cover.innerHTML = data
+      ? `<img src="${data}" />`
+      : `<div class="ph">暂无图片</div>`;
+  }
+  const strip = document.getElementById("drawerThumbs");
+  if (!strip) {
+    return;
+  }
+  if (!images || !images.length) {
+    strip.innerHTML = `<span class="muted">（无图片：点「🖼 上传图片」或把图放到「图片根目录/${esc(code)}」文件夹）</span>`;
+    return;
+  }
+  strip.innerHTML = images
+    .map((u, i) => `<img src="${u}" data-i="${i}" title="点击查看大图" />`)
+    .join("");
+  strip.querySelectorAll("img").forEach((img) => {
+    img.onclick = () => openLightbox(stateProduct(code) || p);
+  });
 }
 
 function openInlineEditor(td) {
@@ -1773,6 +2060,27 @@ function openImportProducts() {
   };
 }
 
+function exportGroupHtml(checked, withImageChip) {
+  const exChip = (key) => {
+    if (key === "code") {
+      return `<label class="io-chip" title="编号固定第 1 列"><input type="checkbox" data-io-e="code" checked disabled />编号</label>`;
+    }
+    if (key === "_image") {
+      return withImageChip
+        ? `<label class="io-chip" title="图片列：插在状态列前；状态与采购链接都取消时在末列"><input type="checkbox" data-io-e="_image" ${checked.has("_image") ? "checked" : ""} />图片</label>`
+        : "";
+    }
+    const f = PRODUCT_FIELDS.find((x) => x.key === k);
+    return `<label class="io-chip" title=""><input type="checkbox" data-io-e="${key}" ${checked.has(key) ? "checked" : ""} />${f ? f.label : key}</label>`;
+  };
+  return (
+    CS_GROUPS.map((g) => {
+      const chips = g.keys.map((k) => (k === "image" ? "_image" : k)).map(exChip).join("");
+      return `<div class="cs-group"><div class="cs-group-title">${g.title}</div><div class="io-chips">${chips}</div></div>`;
+    }).join("")
+  );
+}
+
 function openExportProducts() {
   const checked = new Set();
   visList.forEach((k) => {
@@ -1806,31 +2114,7 @@ function openExportProducts() {
     <textarea id="eoCodes" placeholder="示例：L001，L002  L003、L005；逗号/空格/Tab/换行分隔，编号可省略 L（如 7）" style="display:none;width:100%;box-sizing:border-box;min-height:72px;margin-bottom:6px"></textarea>
     <div id="eoBadWrap" style="display:none;max-height:88px;overflow:auto;margin-bottom:6px;padding:6px 8px;border:1px solid var(--vscode-inputValidation-warningBorder);border-radius:3px;background:var(--vscode-inputValidation-warningBackground);font-size:12px"></div>
     <p class="muted" id="eoScopeDesc" style="margin-bottom:8px"></p>
-    <div class="io-chips">
-      ${(() => {
-        const chip = (key, label, title, on, disabled) =>
-          `<label class="io-chip" title="${esc(title)}"><input type="checkbox" data-io-e="${key}" ${on ? "checked" : ""} ${disabled ? "disabled" : ""} />${label}</label>`;
-        const parts = [chip("code", "编号", "编号固定第 1 列", true, true)];
-        for (const f of PRODUCT_FIELDS) {
-          if (f.key === "code") {
-            continue;
-          }
-          if (f.key === "status") {
-            parts.push(
-              chip(
-                "_image",
-                "图片",
-                "图片列：插在状态列前；状态与采购链接都取消时在末列",
-                checked.has("_image"),
-                false,
-              ),
-            );
-          }
-          parts.push(chip(f.key, f.label, "", checked.has(f.key), false));
-        }
-        return parts.join("");
-      })()}
-    </div>
+    ${exportGroupHtml(checked, true)}
     <p class="muted" id="eoColDesc"></p>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
       <button id="eoCancel">取消</button>
@@ -2619,6 +2903,8 @@ function onProductAct(e) {
   const act = btn.dataset.pAct;
   if (act === "img") {
     openLightbox(product);
+  } else if (act === "edit") {
+    openProductDrawer(product);
   } else if (act === "copy") {
     copyText(fullName(product));
   } else if (act === "stockin") {
