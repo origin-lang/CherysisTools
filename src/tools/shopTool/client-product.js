@@ -342,10 +342,10 @@ function renderProducts() {
   renderPager(pd);
   if (viewMode === "gallery") {
     $("productListView").style.display = "none";
-    $("productGalleryView").style.display = "block";
+    $("productGalleryView").style.display = "";
     renderGallery(pd.page);
   } else {
-    $("productListView").style.display = "block";
+    $("productListView").style.display = "";
     $("productGalleryView").style.display = "none";
     renderList(pd.page);
     const wrap = document.querySelector("#productListView .table-wrap");

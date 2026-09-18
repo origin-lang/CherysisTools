@@ -86,9 +86,26 @@
         border: 1px solid var(--vscode-panel-border);
         border-radius: 4px;
       }
-      #tabProducts .table-wrap {
-        max-height: calc(100vh - 300px);
-        min-height: 320px;
+      #tabProducts.show {
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 112px);
+        overflow: hidden;
+      }
+      #tabProducts.show #productListView,
+      #tabProducts.show #productGalleryView {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+      }
+      #tabProducts.show #productGalleryView {
+        overflow-y: auto;
+      }
+      #tabProducts.show .table-wrap {
+        flex: 1;
+        min-height: 0;
+        max-height: none;
       }
       #tabProducts .data-table tbody tr:not(.filter-row) td {
         padding-top: 0;
@@ -883,8 +900,8 @@
         <button id="undoBtn" disabled title="撤销上一步修改（最多回退 20 步）">↩</button>
         <button id="redoBtn" disabled title="重做上一步被撤销的操作">↪</button>
       </div>
-      <div id="productListView" style="display: block"></div>
-      <div id="productGalleryView" style="display: none"></div>
+      <div id="productListView"></div>
+      <div id="productGalleryView"></div>
       <div id="productPager"></div>
     </div>
 

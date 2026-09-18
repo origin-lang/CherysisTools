@@ -627,3 +627,11 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
 - 用户嫌操作提示占列表页位置，指定挪走：「不要放在列表那边」。
 - `fragment.html`：删除列表底部的 `<details id="listHints">` 与其 CSS；在 `#tabSettings` 里新增「**商品列表操作提示**」panel（置于「录入与命名规范」之前），内容原样搬入。
 - 日期/无 JS 改动；manual §2.3 提示语同步。
+
+### 二十七·补记4（分页贴底 + 表格区撑满，2026-09-18）
+
+- 用户要「上一页/下一页挨到（视图）底部，表格区域大点儿」。
+- **布局改 flex 纵向**：`#tabProducts.show` → `display:flex; flex-direction:column; height:calc(100vh - 112px); overflow:hidden`；工具栏/分页条固定（`flex:1; min-height:0` 给两个视图容器），`.table-wrap` 的 `max-height:calc(100vh - 300px); min-height:320px` 改 `flex:1; max-height:none` → 表格区自动吃满视口余高，滚动发生在表内。
+- 显示切换不再依赖 `inline display:block/none`：`#productListView/#productGalleryView` 的 markup 去掉内联样式，样式表默认 `display:flex`；`renderProducts()` 里 JS 切换改为 `style.display = ""` / `"none"`（空串回落到 flex）。
+- 画册容器单独 `overflow-y:auto`；滚动位置保留逻辑不受影响（仍记/还原 `.table-wrap.scrollTop`）。
+- 验证：`node --check`、`eslint` 通过。
