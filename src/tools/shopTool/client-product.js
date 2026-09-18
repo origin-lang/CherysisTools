@@ -695,77 +695,78 @@ function bindBatchOps() {
     };
   });
 
-  const batchStar = $("batchStar");
-  const batchUnstar = $("batchUnstar");
-
-  if (batchStar) {
-    batchStar.onclick = () => setStarsForSelected(true);
-  }
-  if (batchUnstar) {
-    batchUnstar.onclick = () => setStarsForSelected(false);
-  }
-
-  const batchOn = $("batchOn");
-  const batchOff = $("batchOff");
-  const batchDel = $("batchDel");
-  const batchClear = $("batchClear");
   const batchCopy = $("batchCopy");
-
   if (batchCopy) {
     batchCopy.onclick = copySelectedProducts;
   }
 
-  const batchSetStatus = (status) => {
-    if (state.selectedProducts.size === 0) {
-      return;
-    }
-    const n = state.selectedProducts.size;
-    post({
-      type: "setProductsStatus",
-      ids: [...state.selectedProducts],
-      status,
-    });
-    // 动作完成后保留勾选：可连续上架↔下架（批量删除才清勾选）
-    // 若当前“状态筛选”会让这批商品从列表消失，自动切回“全部”让结果可见
-    const hiddenVal = status === 0 ? "off" : "on";
-    if (filters.f_status === hiddenVal) {
-      delete filters.f_status;
-      const fs = $("filterStatus");
-      if (fs) {
-        fs.value = "";
-      }
-    }
-    toast(`✅已${status === 0 ? "上架" : "下架"} ${n} 个商品`);
-    renderProducts();
-  };
-
-  if (batchOn) {
-    batchOn.onclick = () => batchSetStatus(0);
-  }
-  if (batchOff) {
-    batchOff.onclick = () => batchSetStatus(1);
-  }
-  if (batchDel) {
-    batchDel.onclick = () => {
-      if (state.selectedProducts.size === 0) {
-        return;
-      }
-      confirmBox(
-        `确认删除选中的 ${state.selectedProducts.size} 个商品？\n将同时删除它们的销售记录和入库记录，且不可恢复！`,
-      ).then((ok) => {
-        if (ok) {
-          post({ type: "deleteProducts", ids: [...state.selectedProducts] });
-          state.selectedProducts.clear();
-        }
-      });
-    };
-  }
+  const batchClear = $("batchClear");
   if (batchClear) {
     batchClear.onclick = () => {
       state.selectedProducts.clear();
       renderProducts();
     };
   }
+
+  const batchMenuBtn = $("batchMenuBtn");
+  if (batchMenuBtn) {
+    batchMenuBtn.onclick = (ev) => {
+      ev.stopPropagation();
+      const old = document.getElementById("batchDropdown");
+      if (old) { old.remove(); return; }
+      const hasOn = batchMenuBtn.dataset.hasOn === "true";
+      const hasStarred = batchMenuBtn.dataset.hasStarred === "true";
+      const items = [
+        { label: hasOn ? "🔻 下架" : "🔺 上架", run: () => batchSetStatus(hasOn ? 1 : 0) },
+        { label: hasStarred ? "☆ 取消星标" : "⭐ 标星", run: () => setStarsForSelected(!hasStarred) },
+        { sep: true },
+        { label: "🗑 删除", danger: true, run: batchDelete },
+      ];
+      const rect = batchMenuBtn.getBoundingClientRect();
+      const menu = document.createElement("div");
+      menu.id = "batchDropdown";
+      menu.className = "batch-dropdown";
+      menu.innerHTML = items.map((it, i) => {
+        if (it.sep) return '<div class="batch-dd-sep"></div>';
+        return '<div class="batch-dd-item' + (it.danger ? ' batch-dd-danger' : '') + '" data-bi="' + i + '">' + it.label + '</div>';
+      }).join("");
+      menu.style.left = rect.left + "px";
+      menu.style.top = rect.bottom + 4 + "px";
+      document.body.appendChild(menu);
+      const close = () => { menu.remove(); window.removeEventListener("mousedown", onDown); window.removeEventListener("keydown", onKey); };
+      const onDown = (ev) => { if (!menu.contains(ev.target)) close(); };
+      const onKey = (ev) => { if (ev.key === "Escape") close(); };
+      window.addEventListener("mousedown", onDown);
+      window.addEventListener("keydown", onKey);
+      menu.querySelectorAll("[data-bi]").forEach((el) => {
+        el.onclick = () => { close(); items[Number(el.dataset.bi)].run(); };
+      });
+    };
+  }
+
+  const batchSetStatus = (status) => {
+    if (state.selectedProducts.size === 0) return;
+    const n = state.selectedProducts.size;
+    post({ type: "setProductsStatus", ids: [...state.selectedProducts], status });
+    const hiddenVal = status === 0 ? "off" : "on";
+    if (filters.f_status === hiddenVal) {
+      delete filters.f_status;
+      const fs = $("filterStatus");
+      if (fs) fs.value = "";
+    }
+    toast("✅已" + (status === 0 ? "上架" : "下架") + " " + n + " 个商品");
+    renderProducts();
+  };
+
+  const batchDelete = () => {
+    if (state.selectedProducts.size === 0) return;
+    confirmBox("确认删除选中的 " + state.selectedProducts.size + " 个商品？\n将同时删除它们的销售记录和入库记录，且不可恢复！").then((ok) => {
+      if (ok) {
+        post({ type: "deleteProducts", ids: [...state.selectedProducts] });
+        state.selectedProducts.clear();
+      }
+    });
+  };
 }
 
 function copySelectedProducts() {

@@ -295,6 +295,40 @@
         opacity: 0.5;
         cursor: default;
       }
+      .batch-ops {
+        margin-bottom: 8px;
+        padding: 8px;
+        background: var(--vscode-input-background);
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 4px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .batch-menu-btn { font-weight: 600; }
+      .batch-dropdown {
+        position: fixed;
+        z-index: 80;
+        background: var(--vscode-editor-background);
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 4px;
+        padding: 4px 0;
+        min-width: 130px;
+        box-shadow: 0 2px 8px rgba(0,0,0,.3);
+      }
+      .batch-dd-item {
+        padding: 6px 14px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .batch-dd-item:hover {
+        background: var(--vscode-list-hoverBackground);
+      }
+      .batch-dd-danger { color: var(--vscode-errorForeground, #e0404b); }
+      .batch-dd-sep {
+        border-top: 1px solid var(--vscode-panel-border);
+        margin: 3px 0;
+      }
       .mode-tabs {
         display: inline-flex;
         border: 1px solid var(--vscode-panel-border);
