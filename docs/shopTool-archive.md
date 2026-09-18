@@ -615,3 +615,9 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
 - **修复（A）**：`renderProducts()` 渲染前记 `#productListView .table-wrap.scrollTop`，渲染（列表视图）后还原——全操作受益，位置原地保留；内容变短时由浏览器自动钳制。`renderList` 里 `syncListCellState()` 会重打已选格高亮，不因保留滚动而丢。
 - **分页条移到下方**（用户提出「下一页/上一页放下面更合理」）：`#productPager` 从顶栏内挪出，放到 `#productListView`/`#productGalleryView` 之后独立一行（`margin-top:8px`），删除两侧 `pagerSepL/R` 分隔线与对应显隐逻辑；空结果仍整条隐藏。
 - 验证：`node --check` 通过。
+
+### 二十七·补记2（分页居中 + 操作提示移到分页下方，2026-09-17）
+
+- **分页居中**：`#productPager` 加 `justify-content:center`（用户提「移到中间？」即取中，居中更常见；改回右下角只需换成 `justify-content:flex-end`）。
+- **操作提示改静态挂载**：从 `renderList` 的 `innerHTML` 里抽出，作为静态 `<details id="listHints">` 放在 `fragment.html` 中 `#productPager` 之后——顺序为「表格 → 分页 → 操作提示」，且列表/画册两种视图下都常驻（原来仅供列表）。样式（`summary` 光标/字号、内部间距）收进 `#listHints` CSS 而非内联。
+- 验证：`node --check` 通过。

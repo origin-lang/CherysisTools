@@ -304,9 +304,21 @@
       #productPager {
         display: flex;
         align-items: center;
+        justify-content: center;
         gap: 8px;
         flex-wrap: wrap;
         margin-top: 8px;
+      }
+      #listHints {
+        margin-top: 6px;
+        padding-bottom: 8px;
+      }
+      #listHints summary {
+        cursor: pointer;
+        font-size: 12px;
+      }
+      #listHints div {
+        margin-top: 4px;
       }
       .tb-sep {
         width: 1px;
@@ -885,6 +897,7 @@
       <div id="productListView" style="display: block"></div>
       <div id="productGalleryView" style="display: none"></div>
       <div id="productPager"></div>
+      <details id="listHints"><summary class="muted">ℹ️ 操作提示</summary><div class="muted">表头下小框可筛选对应列；单击单元格框选，Ctrl+C/X/V 复制/剪切/粘贴该格、Esc 取消框选；双击单元格编辑（回车或点击别处即保存）；右键可剪切/复制/粘贴、复制整行/删除整行</div></details>
     </div>
 
     <div id="tabSales" class="sub-panel">
