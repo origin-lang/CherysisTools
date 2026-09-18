@@ -628,7 +628,7 @@ function hasFilter() {
 function syncClearFilterBtn() {
   const clear = $("clearFilterBtn");
   if (clear) {
-    clear.disabled = !hasFilter();
+    clear.style.display = hasFilter() ? "" : "none";
   }
 }
 

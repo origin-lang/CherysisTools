@@ -651,4 +651,12 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
 - `generateStarOverview`：**删掉**「读 `live_out_dir` → 若存在则 `ctx.confirm` 复用、取消才另选」整段，改为无条件 `await ctx.selectFolder("选择星标总览输出目录")`，取消则 `log("❌未选择输出目录，已取消")` 返回；**不再写 `live_out_dir`**——星标总览目录与直播排品九宫格 `live_out_dir` 彻底解耦。
 - `openStarOutDir(msg)`：优先用 `msg.dir`（前端把 `starOverviewDone` 带回的目录存在 `starOv.lastDir`，「📂 打开文件夹」随 `dir` 发出），不存在才退回 `live_out_dir`，再没有才报「还没生成过总览图」。
 - 生成中提示文案「会弹目录确认」→「请选择输出目录」。
+
+## 二十九、清除筛选按钮改回「有筛选才出现」
+
+> 归档时间：2026-09-18。状态：**已实现**。
+
+- 用户对筛选交互表态「其实也还行 不换了」，仅改一处：清除筛选按钮**不再常驻灰态**，而是**只在任一筛选生效时显示**（`syncClearFilterBtn` 改 `row.style.display = hasFilter() ? "" : "none"`；`client-product.js:628`）。与「二十七」里 D 项的「常驻 disabled」相反，属用户定夺回退。
+- `fragment.html`：`#clearFilterBtn` 初始去掉 `disabled`、改 `style="display:none"`（初始化走 `syncClearFilterBtn` 定显隐）；点击行为不变（`client-main.js:97` 一键清全部）。
+- manual §2.3 措辞同步为「有任一筛选生效时出现清除筛选按钮」；验证：`node --check`、`eslint` 通过。
 - 验证：`tsc -p ./`、`eslint`、`node --check`。
