@@ -307,8 +307,17 @@ function renderPager(pd) {
   if (!el) {
     return;
   }
-  if (pd.total === 0) {
-    el.innerHTML = `<span class="muted">共 0 条</span>`;
+  const sepL = document.getElementById("pagerSepL");
+  const sepR = document.getElementById("pagerSepR");
+  const show = pd.total > 0;
+  el.style.display = show ? "" : "none";
+  if (sepL) {
+    sepL.style.display = show ? "" : "none";
+  }
+  if (sepR) {
+    sepR.style.display = show ? "" : "none";
+  }
+  if (!show) {
     return;
   }
   el.innerHTML = `
@@ -544,7 +553,7 @@ function renderList(list) {
                <td></td>
                ${filterCells.join("")}
              </tr></thead><tbody>${body}</tbody></table></div>
-             <div class="muted" style="margin-top:4px">表头下小框可筛选对应列；单击单元格框选，Ctrl+C/X/V 复制/剪切/粘贴该格、Esc 取消框选；双击单元格编辑（回车或点击别处即保存）；右键可剪切/复制/粘贴、复制整行/删除整行</div>`;
+             <details style="margin-top:4px"><summary class="muted" style="cursor:pointer;font-size:12px">ℹ️ 操作提示</summary><div class="muted" style="margin-top:4px">表头下小框可筛选对应列；单击单元格框选，Ctrl+C/X/V 复制/剪切/粘贴该格、Esc 取消框选；双击单元格编辑（回车或点击别处即保存）；右键可剪切/复制/粘贴、复制整行/删除整行</div></details>`;
   bindBatchOps();
   bindColFilters();
   syncListCellState();
@@ -617,7 +626,7 @@ function hasFilter() {
 function syncClearFilterBtn() {
   const clear = $("clearFilterBtn");
   if (clear) {
-    clear.style.visibility = hasFilter() ? "visible" : "hidden";
+    clear.disabled = !hasFilter();
   }
 }
 

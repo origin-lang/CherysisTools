@@ -593,3 +593,18 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
 - **列表行右键删「🗑 取消全部星标…」**（`client-product.js`）：菜单项与其 handler 一并删除，「取消全部星标」**只在「⭐ 星标 ▾」下拉**一处。
 - **文档**：manual §2.7 补排版/弹窗说明、删列表右键口径、加「弹窗点空白不关」提示。
 - 验证：`tsc -p ./` 0 error、`eslint src` 0 error、`node --check` ×2 通过。
+
+## 二十七、列表页 UI 瘦身（工具栏合一 · 筛选归拢 · 提示折叠）
+
+> 归档时间：2026-09-17。状态：**已实现**。用户审视列表页后反馈「太乱太杂」，选了 A/C/D 三项做。
+
+- **A 工具栏合一 + 分组**（`fragment.html` / `client-product.js`）：
+  - 独立的分页条 `<div id="productPager" class="toolbar">` **并入主 `.toolbar`**（撤销/重做之前），不再单独一行；新增 `.tb-sep`（1px 竖分隔线）把按钮分成「视图｜字段｜筛选｜星标」左组与「新建/导入 · 分页 · 撤销/重做」右组，`toolbar-fill` 弹性留白；`.toolbar` 本身 `flex-wrap` 兜底窄窗口换行；
+  - `renderPager`：`total===0` 时隐藏整条分页（含两侧 `#pagerSepL/R` 分隔线，避免双竖线），不再显示孤零零「共 0 条」；`client-main.js` 的分页点击委托基于容器冒泡，位置变动无需改。
+- **C 提示墙折叠**（`client-product.js` `renderList`）：表格底部 3 行说明改 `<details><summary>ℹ️ 操作提示</summary>`，默认收起、点开展开（原生 HTML，无 JS）。
+- **D 筛选归拢 + 清除常驻**：
+  - `fragment.html`：清除筛选按钮去掉 `visibility:hidden` 内联样式 → 初始 **`disabled` 灰态**，与状态下拉同组（两侧 `.tb-sep` 框成「筛选」组）；
+  - `client-product.js` `syncClearFilterBtn` → `clear.disabled = !hasFilter()`（列头筛选/状态下拉每次改动都会调它，按钮随筛选即时置亮）；
+  - **顺手清掉历史残留**：`client-report.js` 有行 `$("clearFilterBtn").style.visibility = hasFilter() ? "visible" : "hidden"` —— 月报页根本没有自己的清除按钮，切到月报会反过来覆盖商品页按钮显影，属跨面板串扰 bug，删除。
+- **文档**：manual §2.3 补「清除按钮常驻灰态/分页并入顶栏/空结果自动隐藏分页/提示折叠」口径。
+- 验证：`node --check` ×3（product/main/report）通过、`eslint` 0 error。

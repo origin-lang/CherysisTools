@@ -189,7 +189,6 @@
         sds.checked = Number(state.settings.sales_deduct_stock || 1) !== 0;
       }
       updateNameTemplatePreview();
-      $("clearFilterBtn").style.visibility = hasFilter() ? "visible" : "hidden";
     }
 
     function onSettleAct(e) {

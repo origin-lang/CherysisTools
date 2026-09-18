@@ -302,8 +302,17 @@
         font-weight: bold;
       }
       #productPager {
+        display: flex;
         align-items: center;
+        gap: 8px;
         flex-wrap: wrap;
+      }
+      .tb-sep {
+        width: 1px;
+        height: 22px;
+        align-self: center;
+        background: var(--vscode-panel-border);
+        margin: 0 2px;
       }
       .card-grid {
         display: grid;
@@ -854,21 +863,26 @@
       <div class="toolbar">
         <button id="viewListBtn" class="btn-teal">列表</button>
         <button id="viewGalleryBtn">画册</button>
+        <span class="tb-sep"></span>
         <button id="colSetBtn">字段显示</button>
+        <span class="tb-sep"></span>
         <select id="filterStatus" title="按状态筛选（表头上方）">
           <option value="">全部状态</option>
           <option value="on">在售</option>
           <option value="off">已下架</option>
         </select>
-        <button id="clearFilterBtn" class="btn-danger" style="visibility: hidden">清除筛选</button>
+        <button id="clearFilterBtn" class="btn-danger" disabled>清除筛选</button>
+        <span class="tb-sep"></span>
         <button id="starMenuBtn" title="星标操作：只看/复制清单/总览图预览/全部取消">⭐ 星标 ▾</button>
         <span class="toolbar-fill"></span>
         <button id="newProductBtn" class="btn-teal">＋ 新建商品</button>
         <button id="ioBtn" title="导入 / 导出商品清单">导入/导出</button>
+        <span class="tb-sep" id="pagerSepL"></span>
+        <div id="productPager"></div>
+        <span class="tb-sep" id="pagerSepR"></span>
         <button id="undoBtn" disabled title="撤销上一步修改（最多回退 20 步）">↩</button>
         <button id="redoBtn" disabled title="重做上一步被撤销的操作">↪</button>
       </div>
-      <div id="productPager" class="toolbar"></div>
       <div id="productListView" style="display: block"></div>
       <div id="productGalleryView" style="display: none"></div>
     </div>
