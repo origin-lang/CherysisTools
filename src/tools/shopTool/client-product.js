@@ -720,6 +720,7 @@ function bindBatchOps() {
         { label: hasOn ? "🔻 下架" : "🔺 上架", run: () => batchSetStatus(hasOn ? 1 : 0) },
         { label: hasStarred ? "☆ 取消星标" : "⭐ 标星", run: () => setStarsForSelected(!hasStarred) },
         { sep: true },
+        { label: "🔢 批量改库存", run: batchSetStock },
         { label: "🗑 删除", danger: true, run: batchDelete },
       ];
       const rect = batchMenuBtn.getBoundingClientRect();
@@ -766,6 +767,52 @@ function bindBatchOps() {
         state.selectedProducts.clear();
       }
     });
+  };
+
+  const batchSetStock = () => {
+    const n = state.selectedProducts.size;
+    if (n === 0) return;
+    const mask = showModal(`
+      <h3>批量改库存</h3>
+      <p class="muted">将修改选中的 <b>${n}</b> 个商品（可用 ↩ 撤销）。</p>
+      <div class="rows" style="margin-top:12px">
+        <div class="field">
+          <label>方式</label>
+          <select id="bssMode">
+            <option value="set">设为固定值</option>
+            <option value="add">在现有基础上增加</option>
+            <option value="sub">在现有基础上减少</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>数量</label>
+          <input id="bssQty" type="number" min="0" step="1" value="0" style="width:120px" />
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+        <button data-bss="cancel">取消</button>
+        <button data-bss="ok" class="btn-teal">确定</button>
+      </div>`);
+    const qtyInput = mask.querySelector("#bssQty");
+    qtyInput.focus();
+    qtyInput.select();
+    const submit = () => {
+      const mode = mask.querySelector("#bssMode").value;
+      const q = Math.floor(Number(qtyInput.value || 0));
+      if (!Number.isInteger(q) || q < 0) {
+        toast("数量需为非负整数");
+        return;
+      }
+      closeModal();
+      post({ type: "setProductsStock", ids: [...state.selectedProducts], mode, qty: q });
+      const label = mode === "add" ? `增加 ${q}` : mode === "sub" ? `减少 ${q}` : `设为 ${q}`;
+      toast(`✅已提交批量改库存（${label}）× ${n}`);
+    };
+    mask.querySelector('[data-bss="ok"]').onclick = submit;
+    mask.querySelector('[data-bss="cancel"]').onclick = closeModal;
+    qtyInput.onkeydown = (ev) => {
+      if (ev.key === "Enter") submit();
+    };
   };
 }
 

@@ -734,3 +734,14 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
 - 复用 `#tabSales` 已验证的 `.mini-tab`/`.mini-panel` 机制（不影响 `main.html` 只认 `.sub-tab`/`.sub-panel` 的全局切换）：`client-report.js` 新增 `switchMonthlyTab(name)`；`client-main.js` 绑定 `.mini-tab` 点击，并用 `shiftMonth()` 实现月份 ‹/›/本月。
 - `client-report.js` `renderSettles` 增强（**纯前端计算，无后端改动**）：按月排序后**按年份分组**，每年先出「YYYY 年（N 个月）」分组头、再出各月行、末尾出「YYYY 合计」小计行（到账/进货/杂项/净利润/净售求和，期初/期末/同标记「—」）；新增**同比**列＝与去年同月净利润之差（`▲`绿/`▼`红，无则「—」）；列表「查看」按钮仍 post `monthBuild`，并 `switchMonthlyTab("monthlySettle")` 切回子页①。
 - 文档：manual §4 补子页/分组/同比/月份按钮说明。验证：`node --check`、`eslint`、`tsc -p ./` 通过。
+
+## 三十五、列表批量改库存（设为 / 增加 / 减少）
+
+> 归档时间：2026-09-19。状态：**已实现**。
+
+- 用户诉求：列表视图里勾选多个商品后能一次改库存。
+- `client-product.js` `bindBatchOps`：`批量 ▾` 下拉在「标星」与「删除」之间新增「🔢 批量改库存」，`run: batchSetStock`。
+- `batchSetStock()`：`showModal` 弹窗，含「方式」（`set` 设为固定值 / `add` 增加 / `sub` 减少）+「数量」输入，回车或确定提交 `post({type:"setProductsStock", ids, mode, qty})`，数量做非负整数校验。
+- `handlers/product.ts` 新增 `setProductsStock(msg)`：仿 `setProductsStatus` 的批量模式——`h.snapshot()` → 逐个 `db.updateStockQty(id, next)`（`next`：set=qty / add=cur+qty / sub=max(0,cur−qty)，读取用 `p.stock_manual`，注意 `Product` 类型没有 `stockTotal`）→ `h.pushUndo(...)`（可 ↩ 撤销）→ `h.postProductsDelta(changed)`。
+- 未新增前端收信类型（复用既有 `postProductsDelta`）；前端弹窗/提交沿用 `showModal`/`closeModal`。
+- 文档：manual §2.6 补一条。验证：`node --check`、`eslint`（0 error）、`tsc -p ./` 通过。

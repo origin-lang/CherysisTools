@@ -573,6 +573,48 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       h.postProductsDelta(ids);
     },
 
+    setProductsStock(msg) {
+      const ids: number[] = (msg.ids || []).map(Number);
+      if (ids.length === 0) {
+        log("⚠没有选中要操作的商品");
+        return;
+      }
+      const mode = ["set", "add", "sub"].includes(String(msg.mode))
+        ? String(msg.mode)
+        : "set";
+      const qty = normInt("stockTotal", msg.qty);
+      if (!qty.ok) {
+        log(`❌${qty.msg}`);
+        return;
+      }
+      const snap = h.snapshot();
+      const changed: number[] = [];
+      for (const id of ids) {
+        const p = db.getProductById(id);
+        if (!p) {
+          continue;
+        }
+        const cur = Number(p.stock_manual || 0);
+        const next =
+          mode === "add"
+            ? cur + qty.value
+            : mode === "sub"
+              ? Math.max(0, cur - qty.value)
+              : qty.value;
+        db.updateStockQty(id, next);
+        changed.push(id);
+      }
+      const label =
+        mode === "add"
+          ? `增加 ${qty.value}`
+          : mode === "sub"
+            ? `减少 ${qty.value}`
+            : `设为 ${qty.value}`;
+      h.pushUndo(snap, `批量改库存（${label}）${changed.length} 个商品`);
+      log(`🔢批量改库存：${changed.length} 个商品 ${label}`);
+      h.postProductsDelta(changed);
+    },
+
     async deleteProducts(msg) {
       const ids: number[] = (msg.ids || []).map(Number);
       if (ids.length === 0) {
