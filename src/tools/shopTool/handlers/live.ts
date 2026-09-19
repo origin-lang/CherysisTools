@@ -40,16 +40,22 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
           code,
           img: firstImageFile(dir, code),
           price: Number(p.sale_price || 0),
+          costPrice: Number(p.cost_price || 0),
         };
       });
     if (rows.length === 0) {
       log("❌还没有打星标的商品（列表/画册点 ⭐，或右键商品行标记）");
       return null;
     }
-    return rows as Array<{ code: string; img: string | null; price: number }>;
+    return rows as Array<{ code: string; img: string | null; price: number; costPrice: number }>;
   };
 
-  type StarRow = { code: string; img: string | null; price: number };
+  type StarRow = { code: string; img: string | null; price: number; costPrice: number };
+  const parseLabels = (msg: any): { code: boolean; costPrice: boolean; salePrice: boolean } => ({
+    code: msg?.labels?.code !== false,
+    costPrice: msg?.labels?.costPrice === true,
+    salePrice: msg?.labels?.salePrice !== false,
+  });
   // 排版解析：0/缺省＝自动（方形）；否则每张固定 cols×rows，末页留空
   const resolveGrid = (msg: any): { cols: number; rows: number } => {
     const fromMsg =
@@ -252,11 +258,13 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
         return;
       }
       const g = resolveGrid(msg);
+      const labels = parseLabels(msg);
+      db.setSetting("star_label_options", JSON.stringify(labels));
       const previews: Array<{ name: string; data: string }> = [];
       const total = rows.length;
       for (const [i, chunk] of chunksOf(rows, g.cols, g.rows).entries()) {
         try {
-          const buf = await renderStarOverviewBuffer(chunk.rows, chunk.cols, chunk.rowsN);
+          const buf = await renderStarOverviewBuffer(chunk.rows, chunk.cols, chunk.rowsN, labels);
           const small = await sharp(buf)
             .resize({ width: 900, withoutEnlargement: true })
             .jpeg({ quality: 82 })
@@ -286,11 +294,13 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
         return;
       }
       const g = resolveGrid(msg);
+      const labels = parseLabels(msg);
       // 弹窗里选过排版 → 记住，下次预览/生成直接用
       if (Number(msg?.cols) > 0 && Number(msg?.rows) > 0) {
         db.setSetting("star_grid_cols", String(g.cols));
         db.setSetting("star_grid_rows", String(g.rows));
       }
+      db.setSetting("star_label_options", JSON.stringify(labels));
       const outDir = await ctx.selectFolder("选择星标总览输出目录");
       if (!outDir) {
         log("❌未选择输出目录，已取消");
@@ -309,7 +319,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       for (const [i, chunk] of chunksOf(rows, g.cols, g.rows).entries()) {
         const fileName = `星标总览_${total}款_第${i + 1}张_${localYmd()}.jpg`;
         try {
-          files.push(await renderStarOverviewGrid(chunk.rows, outDir, fileName, chunk.cols, chunk.rowsN));
+          files.push(await renderStarOverviewGrid(chunk.rows, outDir, fileName, chunk.cols, chunk.rowsN, labels));
         } catch (err: any) {
           log(`❌第 ${i + 1} 张生成失败：${err.message}`);
         }

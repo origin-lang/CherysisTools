@@ -22,15 +22,26 @@ function labelSvg(w: number, h: number, text: string): string {
   </svg>`;
 }
 
-// 星标总览图：每格底下压一行「编号」（大）+「¥售价」（小），白字黑描边
-function starLabelSvg(w: number, h: number, code: string, price: number): string {
-  const fs = Math.max(22, Math.round(Math.min(w, h) * 0.12));
-  const ps = Math.max(16, Math.round(fs * 0.62));
-  const stroke = Math.max(12, Math.round(fs * 0.3));
-  const priceText = price ? `¥${price}` : "";
+// 星标总览图：根据 labels 选项在底部压一行文字，白字黑描边
+function starLabelSvg(
+  w: number,
+  h: number,
+  code: string,
+  price: number,
+  costPrice: number,
+  labels: { code: boolean; costPrice: boolean; salePrice: boolean },
+): string {
+  const parts: string[] = [];
+  if (labels.code && code) parts.push(code);
+  if (labels.costPrice && costPrice > 0) parts.push(`¥${costPrice}`);
+  if (labels.salePrice && price > 0) parts.push(`¥${price}`);
+  if (parts.length === 0) return "";
+  const text = parts.join(" ");
+  const multi = parts.length > 1;
+  const fs = Math.max(20, Math.round(Math.min(w, h) * (multi ? 0.09 : 0.12)));
+  const stroke = Math.max(10, Math.round(fs * 0.3));
   return `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
-  <text x="50%" y="${Math.round(h * 0.68)}" font-family="'Consolas','Segoe UI',monospace" font-weight="900" font-size="${fs}" fill="#ffffff" stroke="#000000" stroke-width="${stroke}" stroke-linejoin="round" paint-order="stroke fill" text-anchor="middle" dominant-baseline="middle">${code}</text>
-  ${priceText ? `<text x="50%" y="${Math.round(h * 0.97)}" font-family="'Consolas','Segoe UI',monospace" font-weight="700" font-size="${ps}" fill="#ffe14d" stroke="#000000" stroke-width="${Math.max(8, Math.round(ps * 0.26))}" stroke-linejoin="round" paint-order="stroke fill" text-anchor="middle" dominant-baseline="bottom">${priceText}</text>` : ""}
+  <text x="50%" y="${Math.round(h * 0.93)}" font-family="'Consolas','Segoe UI',monospace" font-weight="900" font-size="${fs}" fill="#ffffff" stroke="#000000" stroke-width="${stroke}" stroke-linejoin="round" paint-order="stroke fill" text-anchor="middle" dominant-baseline="bottom">${text}</text>
   </svg>`;
 }
 
@@ -107,9 +118,10 @@ export async function renderLiveGrid(
 // 星标封面总览图：自定义排版 cols×rows（每格封面 + 编号/售价标签）
 // 内存版：预览用（不落盘）；写文件版 renderStarOverviewGrid 复用它
 export async function renderStarOverviewBuffer(
-  rows: Array<{ code: string; img: string | null; price: number }>,
+  rows: Array<{ code: string; img: string | null; price: number; costPrice: number }>,
   cols: number,
   rowsN: number,
+  labels: { code: boolean; costPrice: boolean; salePrice: boolean },
 ): Promise<Buffer> {
   let tileW = 300;
   let tileH = 300;
@@ -149,11 +161,14 @@ export async function renderStarOverviewBuffer(
       top: row * tileH,
     });
     if (cell.code) {
-      layers.push({
-        input: Buffer.from(starLabelSvg(tileW, tileH, cell.code, cell.price), "utf-8"),
-        left: col * tileW,
-        top: row * tileH,
-      });
+      const svg = starLabelSvg(tileW, tileH, cell.code, cell.price, cell.costPrice, labels);
+      if (svg) {
+        layers.push({
+          input: Buffer.from(svg, "utf-8"),
+          left: col * tileW,
+          top: row * tileH,
+        });
+      }
     }
   }
   return await sharp({
@@ -171,13 +186,14 @@ export async function renderStarOverviewBuffer(
 
 // 写文件版：内存渲染结果落盘到 outDir/fileName
 export async function renderStarOverviewGrid(
-  rows: Array<{ code: string; img: string | null; price: number }>,
+  rows: Array<{ code: string; img: string | null; price: number; costPrice: number }>,
   outDir: string,
   fileName: string,
   cols: number,
   rowsN: number,
+  labels: { code: boolean; costPrice: boolean; salePrice: boolean },
 ): Promise<string> {
-  const buf = await renderStarOverviewBuffer(rows, cols, rowsN);
+  const buf = await renderStarOverviewBuffer(rows, cols, rowsN, labels);
   const outFile = path.join(outDir, fileName);
   fs.writeFileSync(outFile, buf);
   return outFile;

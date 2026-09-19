@@ -40,13 +40,13 @@ window.toolClients = window.toolClients || {};
     function applyUndoState(avail, redoAvail) {
       state.canUndo = !!avail;
       state.canRedo = !!redoAvail;
-      ["undoBtn", "undoSalesBtn"].forEach((id) => {
+      ["undoBtn", "undoSalesBtn", "drawerUndoBtn"].forEach((id) => {
         const b = document.getElementById(id);
         if (b) {
           b.disabled = !state.canUndo;
         }
       });
-      ["redoBtn", "redoSalesBtn"].forEach((id) => {
+      ["redoBtn", "redoSalesBtn", "drawerRedoBtn"].forEach((id) => {
         const b = document.getElementById(id);
         if (b) {
           b.disabled = !state.canRedo;

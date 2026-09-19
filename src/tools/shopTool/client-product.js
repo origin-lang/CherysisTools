@@ -895,6 +895,7 @@ var starOv = {
   cols: 0,
   rows: 0,
   lastDir: "",
+  labels: { code: true, costPrice: false, salePrice: true },
 };
 
 const STAR_GRID_PRESETS = [
@@ -975,7 +976,7 @@ function starOvRequestPreview() {
     status.style.display = "block";
     status.textContent = `正在按「${starOvDimsLabel(d)}」重新排版预览…`;
   }
-  post({ type: "previewStarOverview", cols: d.cols || 0, rows: d.rows || 0 });
+  post({ type: "previewStarOverview", cols: d.cols || 0, rows: d.rows || 0, labels: starOv.labels });
 }
 
 function starOvFrame() {
@@ -1043,6 +1044,14 @@ function showStarOverviewPreview(msg) {
   starOv.rows = Number(msg.rows || 0);
   starOv.generating = false;
   starOv.reloading = false;
+  // 加载保存的标注选项
+  try {
+    const saved = JSON.parse(state.settings.star_label_options || "{}");
+    if (saved.code !== undefined) starOv.labels.code = saved.code;
+    if (saved.costPrice !== undefined) starOv.labels.costPrice = saved.costPrice;
+    if (saved.salePrice !== undefined) starOv.labels.salePrice = saved.salePrice;
+  } catch { /* 忽略 */ }
+  const L = starOv.labels;
   const mask = showModal(`
     <h3>⭐ 星标总览图（${starOv.total} 款 · ${previews.length} 张 · ${starOvDimsLabel(msg)}）</h3>
     <div class="muted" style="margin-bottom:6px">预览未落盘——满意后点「✅ 生成」才写入输出目录。</div>
@@ -1058,6 +1067,12 @@ function showStarOverviewPreview(msg) {
         <input data-so-cr type="number" min="1" max="10" style="width:56px" title="行数" />行
         × <input data-so-cc type="number" min="1" max="10" style="width:56px" title="列数" />列
       </span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
+      <span class="muted">图上标注</span>
+      <label class="io-chip"><input type="checkbox" data-so-lbl="code" ${L.code ? "checked" : ""} />编号</label>
+      <label class="io-chip"><input type="checkbox" data-so-lbl="costPrice" ${L.costPrice ? "checked" : ""} />进价</label>
+      <label class="io-chip"><input type="checkbox" data-so-lbl="salePrice" ${L.salePrice ? "checked" : ""} />售价</label>
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
       <button data-so-prev class="mini-btn">‹ 上一张</button>
@@ -1086,6 +1101,14 @@ function showStarOverviewPreview(msg) {
   };
   mask.querySelector("[data-so-cr]").onchange = () => starOvRequestPreview();
   mask.querySelector("[data-so-cc]").onchange = () => starOvRequestPreview();
+  mask.querySelectorAll("[data-so-lbl]").forEach((el) => {
+    el.onchange = () => {
+      starOv.labels.code = mask.querySelector("[data-so-lbl='code']").checked;
+      starOv.labels.costPrice = mask.querySelector("[data-so-lbl='costPrice']").checked;
+      starOv.labels.salePrice = mask.querySelector("[data-so-lbl='salePrice']").checked;
+      starOvRequestPreview();
+    };
+  });
   mask.querySelector("[data-so-prev]").onclick = () => {
     if (starOv.generating || starOv.reloading) {
       return;
@@ -1116,7 +1139,7 @@ function showStarOverviewPreview(msg) {
       `<div class="muted" style="align-self:center;margin-right:auto">正在生成…（请选择输出目录）</div>` +
       `<button data-so-close>取消</button>`;
     footer.querySelector("[data-so-close]").onclick = () => closeModal();
-    post({ type: "generateStarOverview", cols: d.cols || 0, rows: d.rows || 0 });
+    post({ type: "generateStarOverview", cols: d.cols || 0, rows: d.rows || 0, labels: starOv.labels });
   };
   starOvFrame();
 }
@@ -1242,7 +1265,6 @@ function openProductDrawer(product) {
     document.addEventListener("keydown", drawerKeyHandler);
   }
   renderProductDrawer();
-  post({ type: "getImages", code: product.code });
 }
 
 function closeProductDrawer() {
@@ -1337,7 +1359,6 @@ function renderProductDrawer() {
   const activeKey =
     active && box.contains(active) ? active.dataset.dF || null : null;
   const off = p.status === 1;
-  const coverData = state.coverCache[p.code] || "";
   const groups = DRAWER_GROUPS.map(
     (g) =>
       `<div class="d-group-title">${g.title}</div><div class="d-form">` +
@@ -1362,19 +1383,6 @@ function renderProductDrawer() {
       <button class="d-close" data-d-act="close" title="关闭（Esc）">✕</button>
     </div>
     <div class="d-body">
-      ${
-        showImageGallery
-          ? `<div class="d-group-title">④ 图片</div>
-             <div class="d-cover" data-d-act="bigimg" data-p-act="img" data-id="${p.id}" title="点击查看大图 · 可拖入或粘贴图片到此">${
-               coverData ? `<img src="${coverData}" />` : `<div class="ph">暂无图片</div>`
-             }</div>
-             <div class="d-thumbs" id="drawerThumbs"><span class="muted">图片加载中…</span></div>
-             <div style="display:flex;gap:6px">
-               <button class="mini-btn" data-d-act="upload">🖼 上传图片</button>
-               <button class="mini-btn btn-danger" data-d-act="clearimg">清空图片夹</button>
-             </div>`
-          : ""
-      }
       ${groups}
     </div>
     <div class="d-foot">
@@ -1451,16 +1459,6 @@ function onDrawerAct(e, p) {
   const act = el.dataset.dAct;
   if (act === "close") {
     closeProductDrawer();
-  } else if (act === "bigimg") {
-    openLightbox(stateProduct(p.code) || p);
-  } else if (act === "upload") {
-    post({ type: "uploadImages", code: p.code });
-  } else if (act === "clearimg") {
-    confirmBox(`确认清空 ${p.code} 的图片文件夹？（文件会真的删除）`).then((ok) => {
-      if (ok) {
-        post({ type: "clearImages", code: p.code });
-      }
-    });
   } else if (act === "stockin") {
     openStockIn(p);
   } else if (act === "del") {
@@ -1472,42 +1470,6 @@ function onDrawerAct(e, p) {
       }
     });
   }
-}
-
-// getImages 返回时同步抽屉里的封面与缩略条（灯箱逻辑保持不变）
-function renderDrawerImages(code, images) {
-  if (!drawerPid) {
-    return;
-  }
-  const p = state.products.find((x) => x.id === drawerPid);
-  if (!p || p.code !== code) {
-    return;
-  }
-  const box = $("productDrawer");
-  if (!box) {
-    return;
-  }
-  const cover = box.querySelector(".d-cover");
-  if (cover) {
-    const data = images && images.length ? images[0] : "";
-    cover.innerHTML = data
-      ? `<img src="${data}" />`
-      : `<div class="ph">暂无图片</div>`;
-  }
-  const strip = document.getElementById("drawerThumbs");
-  if (!strip) {
-    return;
-  }
-  if (!images || !images.length) {
-    strip.innerHTML = `<span class="muted">（无图片：点「🖼 上传图片」或把图放到「图片根目录/${esc(code)}」文件夹）</span>`;
-    return;
-  }
-  strip.innerHTML = images
-    .map((u, i) => `<img src="${u}" data-i="${i}" title="点击查看大图" />`)
-    .join("");
-  strip.querySelectorAll("img").forEach((img) => {
-    img.onclick = () => openLightbox(stateProduct(code) || p);
-  });
 }
 
 function openInlineEditor(td) {
@@ -2711,9 +2673,6 @@ function productForDropOrPaste(e) {
   const inLb = !!el.closest("#lbBox");
   if (!product && inLb && state.lbCode) {
     product = state.products.find((x) => x.code === state.lbCode) || null;
-  }
-  if (!product && drawerPid) {
-    product = state.products.find((x) => x.id === drawerPid) || null;
   }
   return product || null;
 }

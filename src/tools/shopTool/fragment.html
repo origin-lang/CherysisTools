@@ -548,6 +548,138 @@
         margin: 0;
         cursor: pointer;
       }
+      .drawer-mask {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.3);
+        z-index: 45;
+      }
+      #productDrawer {
+        position: fixed;
+        top: 0;
+        right: 0;
+        height: 100vh;
+        width: 370px;
+        max-width: 92vw;
+        background: var(--vscode-editor-background);
+        border-left: 1px solid var(--vscode-panel-border);
+        box-shadow: -4px 0 16px rgba(0, 0, 0, 0.35);
+        z-index: 46;
+        display: flex;
+        flex-direction: column;
+        box-sizing: border-box;
+      }
+      #productDrawer .d-head {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        background: var(--vscode-sideBar-background);
+        flex-shrink: 0;
+      }
+      #productDrawer .d-title {
+        font-size: 13px;
+        line-height: 1.5;
+        word-break: break-all;
+      }
+      #productDrawer .d-title b {
+        margin-right: 6px;
+      }
+      #productDrawer .d-sub {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 3px;
+      }
+      #productDrawer .d-close {
+        margin-left: auto;
+        border: none;
+        background: transparent;
+        color: var(--vscode-descriptionForeground);
+        cursor: pointer;
+        font-size: 15px;
+        padding: 0 3px;
+      }
+      #productDrawer .d-close:hover {
+        color: var(--vscode-foreground);
+      }
+      #productDrawer .d-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 8px 12px 12px;
+      }
+      #productDrawer .d-group-title {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+        margin: 12px 0 6px 0;
+        padding-bottom: 3px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+      }
+      #productDrawer .d-form {
+        display: grid;
+        grid-template-columns: 64px 1fr;
+        gap: 8px 10px;
+        align-items: center;
+      }
+      #productDrawer .d-form > label {
+        font-size: 12px;
+        color: var(--vscode-descriptionForeground);
+      }
+      #productDrawer .d-form .d-f-val {
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+      #productDrawer .d-form input,
+      #productDrawer .d-form select,
+      #productDrawer .d-form textarea {
+        width: 100%;
+        box-sizing: border-box;
+        font-size: 12px;
+      }
+      #productDrawer .d-form textarea {
+        resize: vertical;
+      }
+      #productDrawer .d-foot {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 12px;
+        border-top: 1px solid var(--vscode-panel-border);
+        background: var(--vscode-sideBar-background);
+        flex-shrink: 0;
+        flex-wrap: wrap;
+      }
+      #productDrawer .d-foot .d-fill {
+        flex: 1;
+      }
+      .card .edit-btn {
+        position: absolute;
+        bottom: 6px;
+        right: 6px;
+        padding: 2px 8px;
+        border: none;
+        border-radius: 3px;
+        font-size: 11px;
+        background: rgba(35, 168, 132, 0.85);
+        color: #fff;
+        cursor: pointer;
+        z-index: 2;
+      }
+      .card .edit-btn:hover {
+        background: #23a884;
+      }
+      .card-body {
+        padding-bottom: 26px;
+      }
+      td[data-f="name"] .clip-cell {
+        cursor: pointer;
+      }
+      td[data-f="name"] .clip-cell:hover {
+        text-decoration: underline dotted;
+      }
       .computed {
         color: #23a884;
         font-size: 13px;
@@ -1231,5 +1363,7 @@ L032,1"></textarea>
         </ul>
       </div>
     </div>
+  <div id="drawerBackdrop" class="drawer-mask" style="display: none"></div>
+    <div id="productDrawer" style="display: none"></div>
   </body>
 </html>

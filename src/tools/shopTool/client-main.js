@@ -106,6 +106,10 @@ function bindEvents() {
     renderProducts();
   };
   $("starMenuBtn").onclick = (e) => showStarMenu(e.currentTarget);
+  const drawerBackdrop = $("drawerBackdrop");
+  if (drawerBackdrop) {
+    drawerBackdrop.onclick = closeProductDrawer;
+  }
 
   $("productListView").addEventListener("dblclick", (e) => {
     const td = e.target.closest("td[data-edit]");
@@ -552,6 +556,9 @@ function onMessage(msg) {
       populateFilters();
       maybeShowOnboard();
       updateNameTemplatePreview();
+      if (typeof renderProductDrawer === "function") {
+        renderProductDrawer();
+      }
       break;
     }
     case "productsDelta": {
@@ -585,6 +592,9 @@ function onMessage(msg) {
       }
       if (changed) {
         renderProducts();
+        if (typeof renderProductDrawer === "function") {
+          renderProductDrawer();
+        }
       }
       break;
     }
@@ -783,11 +793,11 @@ function onMessage(msg) {
       break;
     }
     case "imagesLoaded": {
-      if (state.lbCode !== msg.code) {
-        break;
-      }
       if (msg.images && msg.images.length) {
         state.coverCache[msg.code] = msg.images[0];
+      }
+      if (state.lbCode !== msg.code) {
+        break;
       }
       const thumbs = document.getElementById("lbThumbs");
       const big = document.getElementById("lbBig");
