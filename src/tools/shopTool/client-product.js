@@ -2112,6 +2112,7 @@ function openExportProducts() {
   const list = filteredProducts();
   const hasFilter = list.length < total;
   const selCount = state.selectedProducts.size;
+  const starCount = state.liveStars ? state.liveStars.size : 0;
   const radio = (val, label, disabled) =>
     `<label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;cursor:${disabled ? "not-allowed" : "pointer"}"><input type="radio" name="eoScope" value="${val}" ${disabled ? "disabled" : ""}/>${label}</label>`;
   const defaultScope =
@@ -2123,6 +2124,7 @@ function openExportProducts() {
       ${radio("all", `全部商品（${total} 条）`)}
       ${hasFilter ? radio("filtered", `当前筛选结果（${list.length} 条）`) : radio("filtered", "当前筛选结果", true)}
       ${selCount > 0 ? radio("selected", `勾选的 ${selCount} 个`) : ""}
+      ${starCount > 0 ? radio("starred", `星标商品（${starCount} 条）`) : ""}
       ${radio("manual", "指定编号")}
     </div>
     <textarea id="eoCodes" placeholder="示例：L001，L002  L003、L005；逗号/空格/Tab/换行分隔，编号可省略 L（如 7）" style="display:none;width:100%;box-sizing:border-box;min-height:72px;margin-bottom:6px"></textarea>
@@ -2254,6 +2256,14 @@ function openExportProducts() {
       codes = state.products
         .filter((p) => state.selectedProducts.has(p.id))
         .map((x) => x.code);
+    } else if (scopeVal === "starred") {
+      codes = state.products
+        .filter((p) => state.liveStars && state.liveStars.has(p.code))
+        .map((x) => x.code);
+      if (codes.length === 0) {
+        toast("没有星标商品");
+        return;
+      }
     } else if (scopeVal === "manual") {
       const { valid } = parseEoCodes($("eoCodes").value);
       const validCodes = [...new Set(valid)].filter((c) =>
