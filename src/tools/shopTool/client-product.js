@@ -465,11 +465,11 @@ function renderList(list) {
         const editable = EDITABLE_FIELDS.has(f.key) ? 'data-edit="1"' : "";
         switch (f.key) {
           case "code":
-            v = `<b>${esc(p.code)}</b>`;
+            v = `<div class="clip-cell" data-p-act="edit" data-id="${p.id}" title="点击打开详情 / 编辑：${esc(p.code)}"><b>${esc(p.code)}</b></div>`;
             cls = "cell-code";
             break;
           case "name":
-            v = `<div class="clip-cell" data-p-act="edit" data-id="${p.id}" title="点击打开详情 / 编辑：${esc(p.name)}">${esc(p.name)}</div>`;
+            v = `<div class="clip-cell" title="${esc(p.name)}">${esc(p.name)}</div>`;
             break;
           case "category":
             v = `<div class="clip-cell" title="${esc(p.category || "")}">${esc(p.category || "")}</div>`;

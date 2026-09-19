@@ -711,3 +711,13 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
 - 根因：前端生成时先把底部换成「正在生成…＋取消」；后端 `live.ts` 未选目录 / 建目录失败 / 全部张数失败三个提前 `return` 路径都**不回执**，前端永远等不到恢复。
 - 修复：后端这三条路径统一 `post({type:"starOverviewCancelled"})`；前端 `client-main.js` 新收消息调用 `onStarOverviewCancelled()`；`client-product.js` 把生成逻辑抽成 `starOvGenerate()`、底部重建抽成 `starOvShowFooter(mask)`（`openStarOverview` 与取消恢复共用），取消后 `generating=false` 并还原「关闭＋✅生成」。状态区显示「已取消生成，可再次生成」，下次预览自动清掉。
 - 验证：`node --check`、`eslint`、`tsc -p ./` 通过。
+
+## 三十三、列表点「编号」打开详情（原为点「名称」）
+
+> 归档时间：2026-09-18。状态：**已实现**。
+
+- 用户反馈：列表里单击「名称」会弹出详情/编辑面板（列表唯一入口），更希望点「编号」触发。
+- `client-product.js` `renderList`：`code` 单元格改为 `<div class="clip-cell" data-p-act="edit" data-id=… title="点击打开详情 / 编辑：编号"><b>编号</b></div>`；`name` 去掉 `data-p-act="edit"/data-id`，恢复普通单元格（单击选中、双击行内编辑，悬停 title 仍显示全名）。
+- `fragment.html`：`cursor:pointer` 与 hover 虚线下划线由 `td[data-f="name"] .clip-cell` 移到 `td[data-f="code"] .clip-cell`。
+- 点击路由未动（`onProductAct` 的 `data-p-act="edit"` → `openProductDrawer`）。双击编号沿用原「名称」行为（与既有行内编辑一致，不做单/双击区分）。
+- 验证：`node --check`、`eslint`、`tsc -p ./` 通过。
