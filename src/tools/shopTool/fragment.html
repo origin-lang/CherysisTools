@@ -32,6 +32,44 @@
       .sub-panel.show {
         display: block;
       }
+      .mini-tab-bar {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 14px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        padding-bottom: 8px;
+        flex-wrap: wrap;
+      }
+      .mini-tab {
+        padding: 5px 12px;
+        border: 1px solid var(--vscode-button-secondaryBackground);
+        cursor: pointer;
+        border-radius: 3px;
+      }
+      .mini-tab.active {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+      }
+      .mini-panel {
+        display: none;
+      }
+      .mini-panel.show {
+        display: block;
+      }
+      tr.year-row td {
+        background: var(--vscode-editor-inactiveSelectionBackground, rgba(128, 128, 128, 0.18));
+        font-weight: 600;
+      }
+      tr.year-sum td {
+        background: var(--vscode-editor-inactiveSelectionBackground, rgba(128, 128, 128, 0.1));
+        font-style: italic;
+      }
+      .yoy-up {
+        color: var(--vscode-charts-green, #2ea043);
+      }
+      .yoy-down {
+        color: var(--vscode-charts-red, #f85149);
+      }
       .toolbar {
         display: flex;
         gap: 8px;
@@ -1081,119 +1119,140 @@
     </div>
 
     <div id="tabSales" class="sub-panel">
-      <div class="toolbar">
-        <span class="muted">日期</span>
-        <input type="date" id="salesDate" />
-        <span class="muted">当天已有记录时</span>
-        <select id="dupMode" title="当天同一商品已有记录时怎么办：
+      <div class="mini-tab-bar">
+        <div class="mini-tab active" data-stab="salesDaily">∑ 每日录入·台账</div>
+        <div class="mini-tab" data-stab="salesOther">📊 导出·分析</div>
+      </div>
+
+      <div class="mini-panel show" id="salesDailyPanel">
+        <div class="toolbar">
+          <span class="muted">日期</span>
+          <input type="date" id="salesDate" />
+          <span class="muted">当天已有记录时</span>
+          <select id="dupMode" title="当天同一商品已有记录时怎么办：
 累加 = 把这次的量加进原记录（连续录入几笔就自动累加）；
 覆盖 = 用这次输入直接替换原记录（改错数时用它）；
 跳过 = 已有记录就不动。"><option value="accumulate" selected>累加</option>
-          <option value="overwrite">覆盖</option>
-          <option value="skip">跳过</option>
-        </select>
-        <button id="undoSalesBtn" disabled title="撤销上一步修改（最多回退 20 步）">↩ 撤销</button>
-        <button id="redoSalesBtn" disabled title="重做上一步被撤销的操作">↪ 重做</button>
-      </div>
-      <div class="panel">
-        <div class="rows">
-          <div class="field">
-            <label>编号</label>
-            <input id="quickCode" placeholder="L001 或 L076" style="width: 110px" />
-          </div>
-          <div class="field">
-            <label>卖出件数</label>
-            <input id="quickSold" type="number" min="0" value="0" style="width: 80px" />
-          </div>
-          <div class="field">
-            <label>退款件数</label>
-            <input id="quickRefund" type="number" min="0" value="0" style="width: 80px" />
-          </div>
-          <div class="field">
-            <label>备注</label>
-            <input id="quickNote" style="width: 160px" />
-          </div>
-          <button id="quickSaveBtn" class="btn-teal">录入/更新</button>
-            <span id="quickLog" class="muted"></span>
+            <option value="overwrite">覆盖</option>
+            <option value="skip">跳过</option>
+          </select>
+          <button id="undoSalesBtn" disabled title="撤销上一步修改（最多回退 20 步）">↩ 撤销</button>
+          <button id="redoSalesBtn" disabled title="重做上一步被撤销的操作">↪ 重做</button>
         </div>
-      </div>
-      <div class="panel">
-        <h4 style="margin: 0 0 8px 0">当日销售 <span class="muted" id="salesDateLabel"></span>
-          <span style="margin-left: 10px">
-            <input id="salesKwInput" placeholder="🔍 筛编号/名称/备注" style="width: 150px; padding: 3px 6px; font-size: 12px" />
-            <button id="salesRefreshBtn" class="mini-btn" title="重新从数据库加载当日销售">🔄 刷新</button>
-            <button id="delSelBtn" class="mini-btn btn-danger" disabled title="删除勾选的行">删除选中</button>
-          </span>
-        </h4>
-        <div id="salesNoDeductTip" style="display:none;margin-bottom:8px;padding:6px 8px;border:1px solid var(--vscode-inputValidation-warningBorder);border-radius:3px;background:var(--vscode-inputValidation-warningBackground);font-size:12px">当前为「销售不扣库存」模式：登记/修改/删除销售只记账、不再调整库存，库存请用「补货入库」或「清点库存」（商品列表点库存数字）维护。</div>
-        <div class="table-wrap" style="max-height: 260px" id="salesTableWrap"></div>
-      </div>
-      <div class="panel">
-        <div class="rows">
-          <div class="field" style="flex: 1">
-            <label>批量粘贴（每行：编号 卖出 退款，可用 Tab / 空格 / 逗号分隔）</label>
-            <textarea id="pasteArea" placeholder="粘贴示例：
+        <div class="panel">
+          <div class="rows">
+            <div class="field">
+              <label>编号</label>
+              <input id="quickCode" placeholder="L001 或 L076" style="width: 110px" />
+            </div>
+            <div class="field">
+              <label>卖出件数</label>
+              <input id="quickSold" type="number" min="0" value="0" style="width: 80px" />
+            </div>
+            <div class="field">
+              <label>退款件数</label>
+              <input id="quickRefund" type="number" min="0" value="0" style="width: 80px" />
+            </div>
+            <div class="field">
+              <label>备注</label>
+              <input id="quickNote" style="width: 160px" />
+            </div>
+            <button id="quickSaveBtn" class="btn-teal">录入/更新</button>
+            <span id="quickLog" class="muted"></span>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="rows">
+            <div class="field" style="flex: 1">
+              <label>批量粘贴（每行：编号 卖出 退款，可用 Tab / 空格 / 逗号分隔）</label>
+              <textarea id="pasteArea" placeholder="粘贴示例：
 L076&#9;3&#9;1
 L1044 2
 L032,1"></textarea>
+            </div>
+          </div>
+          <div style="margin-top: 8px">
+            <button id="pasteBtn" class="btn-teal">解析粘贴入库</button>
+            <span class="muted" id="pasteHint"></span>
           </div>
         </div>
-        <div style="margin-top: 8px">
-          <button id="pasteBtn" class="btn-teal">解析粘贴入库</button>
-          <span class="muted" id="pasteHint"></span>
-        </div>
-      </div>
-      <div class="panel">
-        <h4 style="margin: 0 0 8px 0">导出销售流水</h4>
-        <div class="rows">
-          <div class="field">
-            <label>起始日期</label>
-            <input type="date" id="salesFrom" />
-          </div>
-          <div class="field">
-            <label>结束日期</label>
-            <input type="date" id="salesTo" />
-          </div>
-        </div>
-        <div style="margin-top: 8px">
-          <button id="exportSalesBtn">📤 导出销售流水</button>
+        <div class="panel">
+          <h4 style="margin: 0 0 8px 0">当日销售 <span class="muted" id="salesDateLabel"></span>
+            <span style="margin-left: 10px">
+              <input id="salesKwInput" placeholder="🔍 筛编号/名称/备注" style="width: 150px; padding: 3px 6px; font-size: 12px" />
+              <button id="salesRefreshBtn" class="mini-btn" title="重新从数据库加载当日销售">🔄 刷新</button>
+              <button id="delSelBtn" class="mini-btn btn-danger" disabled title="删除勾选的行">删除选中</button>
+            </span>
+          </h4>
+          <div id="salesNoDeductTip" style="display:none;margin-bottom:8px;padding:6px 8px;border:1px solid var(--vscode-inputValidation-warningBorder);border-radius:3px;background:var(--vscode-inputValidation-warningBackground);font-size:12px">当前为「销售不扣库存」模式：登记/修改/删除销售只记账、不再调整库存，库存请用「补货入库」或「清点库存」（商品列表点库存数字）维护。</div>
+          <div class="table-wrap" id="salesTableWrap"></div>
         </div>
       </div>
-      <div class="panel">
-        <h4 style="margin: 0 0 8px 0">销售趋势</h4>
-        <div class="muted" style="margin-bottom: 6px">
-          👉 用法：选「全部商品 / 某个商品」＋「按天 / 按月」，柱子为净售数量；悬停柱子可看该时段的净售与退款。
+
+      <div class="mini-panel" id="salesOtherPanel">
+        <div class="panel">
+          <h4 style="margin: 0 0 8px 0">导出销售流水</h4>
+          <div class="rows">
+            <div class="field">
+              <label>起始日期</label>
+              <input type="date" id="salesFrom" />
+            </div>
+            <div class="field">
+              <label>结束日期</label>
+              <input type="date" id="salesTo" />
+            </div>
+          </div>
+          <div style="margin-top: 8px">
+            <button id="exportSalesBtn">📤 导出销售流水</button>
+            <button id="salesPreviewBtn" class="mini-btn" title="先看该区间会导出哪些记录">👁 预览表格</button>
+            <span class="muted" id="salesPreviewHint"></span>
+          </div>
+          <div class="table-wrap" style="display: none; margin-top: 10px; max-height: 300px" id="salesPreviewWrap"></div>
         </div>
-        <div class="rows">
-          <div class="field">
-            <label>范围</label>
-            <select id="trendProduct"></select>
+        <div class="panel">
+          <h4 style="margin: 0 0 8px 0">销售趋势</h4>
+          <div class="muted" style="margin-bottom: 6px">
+            👉 用法：选「全部商品 / 某个商品」＋「按天 / 按月」，柱子为净售数量；悬停柱子可看该时段的净售与退款。
           </div>
-          <div class="field">
-            <label>分组</label>
-            <select id="trendGroup">
-              <option value="month">按月累计</option>
-              <option value="day">按日（选月）</option>
-            </select>
+          <div class="rows">
+            <div class="field">
+              <label>范围</label>
+              <select id="trendProduct"></select>
+            </div>
+            <div class="field">
+              <label>分组</label>
+              <select id="trendGroup">
+                <option value="month">按月累计</option>
+                <option value="day">按日（选月）</option>
+              </select>
+            </div>
+            <div class="field" id="trendMonthField">
+              <label>月份（按日时用）</label>
+              <input type="month" id="trendMonth" />
+            </div>
+            <button id="trendBtn">刷新</button>
           </div>
-          <div class="field" id="trendMonthField">
-            <label>月份（按日时用）</label>
-            <input type="month" id="trendMonth" />
-          </div>
-          <button id="trendBtn">刷新</button>
+          <div id="trendChart" style="margin-top: 10px"></div>
         </div>
-        <div id="trendChart" style="margin-top: 10px"></div>
       </div>
     </div>
 
     <div id="tabMonthly" class="sub-panel">
+      <div class="mini-tab-bar">
+        <div class="mini-tab active" data-ntab="monthlySettle">📝 本月结算</div>
+        <div class="mini-tab" data-ntab="monthlyHistory">📊 多年对比</div>
+      </div>
+
+      <div class="mini-panel show" id="monthlySettlePanel">
       <div class="muted" style="margin-bottom: 6px">
         三步：选好月份看数字 → 填到账与支出、点「保存月报」 → 对账无误点「锁定」封账（锁定后当月销售不能再改）。
       </div>
       <div class="toolbar">
+        <button id="settlePrevMonth" title="上一个月">‹</button>
         <span class="muted">月份</span>
         <input type="month" id="settleMonth" />
-        <button id="exportSettlesBtn" title="导出全部月份月报汇总为 Excel">📤 导出Excel</button>
+        <button id="settleNextMonth" title="下一个月">›</button>
+        <button id="settleThisMonth" title="跳到本月">本月</button>
       </div>
       <div class="panel" id="settlePanel">
         <div class="muted" style="margin-bottom: 6px">① 本月数字（自动汇总当月销售流水，无需手动刷新）</div>
@@ -1229,13 +1288,21 @@ L032,1"></textarea>
         </div>
         <p class="muted" style="margin: 8px 0 0 0; line-height: 1.7">锁定 = 封账：锁定后当月销售记录不能再改，月报数字固定，防止对账后反悔；想改销售就点「解锁」。</p>
       </div>
+      </div>
+
+      <div class="mini-panel" id="monthlyHistoryPanel">
+      <div class="toolbar">
+        <button id="exportSettlesBtn" title="导出全部月份月报汇总为 Excel">📤 导出Excel</button>
+        <span class="muted">按年份分组并附年度小计；「同比」＝与去年同月净利润之差。</span>
+      </div>
       <div class="panel">
         <h4 style="margin: 0 0 8px 0">月报列表（多年可对比）</h4>
-        <div class="table-wrap" style="max-height: 300px" id="settlesTableWrap"></div>
+        <div class="table-wrap" style="max-height: 420px" id="settlesTableWrap"></div>
       </div>
       <div class="panel">
         <h4 style="margin: 0 0 8px 0">净利润</h4>
         <div id="profitChart"></div>
+      </div>
       </div>
     </div>
 

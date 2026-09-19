@@ -3,6 +3,17 @@
     var salesSortKey = "";
     var salesSortDir = 1;
     var salesKw = "";
+    var salesTab = "salesDaily";
+
+    function switchSalesTab(name) {
+      salesTab = name;
+      document.querySelectorAll("#tabSales .mini-tab").forEach((t) => {
+        t.classList.toggle("active", t.dataset.stab === name);
+      });
+      document.querySelectorAll("#tabSales .mini-panel").forEach((p) => {
+        p.classList.toggle("show", p.id === name + "Panel");
+      });
+    }
 
     function salesTableRows() {
       let rows = state.sales;
@@ -305,4 +316,73 @@
       } else {
         post({ type: "salesTrend", by, productId });
       }
+    }
+
+    var salesPreviewOpen = false;
+
+    function toggleSalesExportPreview() {
+      if (salesPreviewOpen) {
+        salesPreviewOpen = false;
+        const wrap = $("salesPreviewWrap");
+        if (wrap) {
+          wrap.style.display = "none";
+        }
+        const btn = $("salesPreviewBtn");
+        if (btn) {
+          btn.textContent = "👁 预览表格";
+          btn.classList.remove("btn-teal");
+        }
+        const hint = $("salesPreviewHint");
+        if (hint) {
+          hint.textContent = "";
+        }
+        return;
+      }
+      salesPreviewOpen = true;
+      post({
+        type: "salesExportPreview",
+        dateFrom: $("salesFrom") ? $("salesFrom").value : "",
+        dateTo: $("salesTo") ? $("salesTo").value : "",
+      });
+    }
+
+    function renderSalesExportPreview(msg) {
+      const btn = $("salesPreviewBtn");
+      if (btn) {
+        btn.textContent = "🙈 隐藏预览";
+        btn.classList.add("btn-teal");
+      }
+      const wrap = $("salesPreviewWrap");
+      const rows = msg.rows || [];
+      const hint = $("salesPreviewHint");
+      if (hint && msg.from && msg.to) {
+        hint.textContent = `${msg.from} ~ ${msg.to} 共 ${rows.length} 条`;
+      }
+      if (!wrap) {
+        return;
+      }
+      wrap.style.display = "";
+      if (!rows.length) {
+        wrap.innerHTML = `<p class="muted">（该区间无销售记录）</p>`;
+        return;
+      }
+      const sumSold = rows.reduce((a, r) => a + (r.sold_qty || 0), 0);
+      const sumRefund = rows.reduce((a, r) => a + (r.refund_qty || 0), 0);
+      const sumCost = rows.reduce((a, r) => a + (r.cost_price || 0), 0);
+      wrap.innerHTML = `<table class="data-table"><thead><tr>
+        <th>日期</th><th>编号</th><th>名称</th>
+        <th class="num">卖出</th><th class="num">退款</th><th class="num">净售</th><th class="num">成本</th><th>备注</th>
+      </tr></thead><tbody>${rows
+        .map(
+          (r) => `<tr>
+        <td>${esc(r.date)}</td><td><b>${esc(r.code)}</b></td><td>${esc(r.name)}</td>
+        <td class="num">${qty(r.sold_qty)}</td><td class="num">${qty(r.refund_qty)}</td>
+        <td class="num">${qty(r.sold_qty - r.refund_qty)}</td><td class="num">¥${money(r.cost_price)}</td><td>${esc(r.note)}</td>
+      </tr>`,
+        )
+        .join("")}</tbody><tfoot><tr>
+        <td colspan="3">合计 ${rows.length} 条</td>
+        <td class="num">${qty(sumSold)}</td><td class="num">${qty(sumRefund)}</td>
+        <td class="num">${qty(sumSold - sumRefund)}</td><td class="num">¥${money(sumCost)}</td><td></td>
+      </tr></tfoot></table>`;
     }

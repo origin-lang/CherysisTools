@@ -203,6 +203,13 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
       }
     },
 
+    async salesExportPreview(msg) {
+      const from = String(msg.dateFrom || "");
+      const to = String(msg.dateTo || "");
+      const rows = from && to ? db.getSalesRange(from, to) : [];
+      post({ type: "salesExportPreviewLoaded", from, to, rows });
+    },
+
     async exportSales(msg) {
       const dir = await ctx.selectFolder("选择导出目录");
       if (!dir) {

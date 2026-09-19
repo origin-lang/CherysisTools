@@ -1,18 +1,41 @@
 // shopTool 前端模块（加载顺序第 5 个）：月度结算（月报/定价规则/设置）
 // 拆分自原 src/tools/shopTool/client.js，逻辑未改动
+    function switchMonthlyTab(name) {
+      document.querySelectorAll("#tabMonthly .mini-tab").forEach((t) => {
+        t.classList.toggle("active", t.dataset.ntab === name);
+      });
+      document.querySelectorAll("#tabMonthly .mini-panel").forEach((p) => {
+        p.classList.toggle("show", p.id === name + "Panel");
+      });
+    }
+
     function renderSettles() {
       const el = $("settlesTableWrap");
       if (!el) {
         return;
       }
       const s = state.settles;
-      el.innerHTML =
-        s.length === 0
-          ? `<p class="muted">（还没有月报，去上面输入月份点「生成/刷新月报」）</p>`
-          : `<table class="data-table"><thead><tr><th>月份</th><th>到账</th><th>进货支出</th><th>杂项</th><th>期初库存</th><th>期末库存</th><th>净利润</th><th>净售</th><th>状态</th><th>操作</th></tr></thead>
-          <tbody>${s
-            .map(
-              (x) => `<tr>
+      if (s.length === 0) {
+        el.innerHTML = `<p class="muted">（还没有月报，去「📝 本月结算」选月份保存月报）</p>`;
+      } else {
+        const all = [...s].sort((a, b) => a.month.localeCompare(b.month));
+        const byMonth = new Map(all.map((x) => [x.month, x]));
+        const years = [...new Set(all.map((x) => x.month.slice(0, 4)))].sort();
+        const body = [];
+        for (const y of years) {
+          const yr = all.filter((x) => x.month.startsWith(y));
+          body.push(
+            `<tr class="year-row"><td colspan="11">${esc(y)} 年（${yr.length} 个月）</td></tr>`,
+          );
+          for (const x of yr) {
+            const [yy, mm] = x.month.split("-");
+            const prev = byMonth.get(`${Number(yy) - 1}-${mm}`);
+            const delta = prev ? x.profit - prev.profit : null;
+            const yoyCell =
+              delta === null
+                ? `<td class="num muted" title="无去年同月数据">—</td>`
+                : `<td class="num ${delta >= 0 ? "yoy-up" : "yoy-down"}" title="去年同月（${esc(`${Number(yy) - 1}-${mm}`)}）净利润 ¥${money(prev.profit)}">${delta >= 0 ? "▲" : "▼"}¥${money(Math.abs(delta))}</td>`;
+            body.push(`<tr>
               <td><b>${esc(x.month)}</b></td>
               <td class="num">¥${money(x.income_amount)}</td>
               <td class="num">¥${money(x.purchase_cost ?? 0)}</td>
@@ -20,6 +43,7 @@
               <td class="num">¥${money(x.start_stock ?? 0)}</td>
               <td class="num">¥${money(x.end_stock ?? 0)}</td>
               <td class="num ${x.profit >= 0 ? "profit-pos" : "profit-neg"}">¥${money(x.profit)}</td>
+              ${yoyCell}
               <td class="num">${qty(x.sold_total - x.refund_total)}</td>
               <td>${x.locked === 1 ? '<span class="badge badge-off">已锁定</span>' : '<span class="badge badge-on">草稿</span>'}</td>
               <td>
@@ -27,9 +51,33 @@
                 ${x.locked === 1 ? `<button class="mini-btn" data-m-act="unlock" data-m="${esc(x.month)}" title="解锁后当月销售可再改">解锁</button>` : `<button class="mini-btn" data-m-act="lock" data-m="${esc(x.month)}" title="锁定后当月销售不能再改（封账）">锁定</button>`}
                 <button class="mini-btn btn-danger" data-m-act="del" data-m="${esc(x.month)}" title="删除月报（不影响销售记录）">🗑</button>
               </td>
-            </tr>`,
-            )
-            .join("")}</tbody></table>`;
+            </tr>`);
+          }
+          const sum = (k) => yr.reduce((a, b) => a + Number(b[k] || 0), 0);
+          const net = yr.reduce(
+            (a, b) =>
+              a +
+              (Number(b.sold_total || 0) - Number(b.refund_total || 0)),
+            0,
+          );
+          const sumProfit = sum("profit");
+          body.push(`<tr class="year-sum">
+              <td>${esc(y)} 合计</td>
+              <td class="num">¥${money(sum("income_amount"))}</td>
+              <td class="num">¥${money(sum("purchase_cost"))}</td>
+              <td class="num">¥${money(sum("extra_expense"))}</td>
+              <td class="num">—</td>
+              <td class="num">—</td>
+              <td class="num ${sumProfit >= 0 ? "profit-pos" : "profit-neg"}">¥${money(sumProfit)}</td>
+              <td class="num">—</td>
+              <td class="num">${qty(net)}</td>
+              <td>—</td>
+              <td></td>
+            </tr>`);
+        }
+        el.innerHTML = `<table class="data-table"><thead><tr><th>月份</th><th>到账</th><th>进货支出</th><th>杂项</th><th>期初库存</th><th>期末库存</th><th>净利润</th><th>同比</th><th>净售</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody>${body.join("")}</tbody></table>`;
+      }
 
       const rows = [...s].sort((a, b) => a.month.localeCompare(b.month));
       const chart = $("profitChart");
@@ -206,6 +254,7 @@
       const act = btn.dataset.mAct;
       if (act === "build") {
         post({ type: "monthBuild", month });
+        switchMonthlyTab("monthlySettle");
       } else if (act === "lock" || act === "unlock") {
         const doPost = () =>
           post({ type: act === "lock" ? "lockSettle" : "unlockSettle", month });

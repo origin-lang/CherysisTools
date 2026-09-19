@@ -84,6 +84,9 @@ function bindEvents() {
   $("redoBtn").onclick = () => post({ type: "redoRequest" });
   $("undoSalesBtn").onclick = () => post({ type: "undoRequest" });
   $("redoSalesBtn").onclick = () => post({ type: "redoRequest" });
+  document.querySelectorAll("#tabSales .mini-tab").forEach((t) => {
+    t.onclick = () => switchSalesTab(t.dataset.stab);
+  });
   $("filterStatus").onchange = () => {
     const v = $("filterStatus").value;
     if (v) {
@@ -289,6 +292,31 @@ function bindEvents() {
   $("pasteArea").value = "";
   $("salesFrom").value = monthNow() + "-01";
   $("salesTo").value = nowStr();
+  if ($("salesPreviewBtn")) {
+    $("salesPreviewBtn").onclick = toggleSalesExportPreview;
+  }
+  if ($("salesFrom")) {
+    $("salesFrom").onchange = () => {
+      if (salesPreviewOpen) {
+        post({
+          type: "salesExportPreview",
+          dateFrom: $("salesFrom").value,
+          dateTo: $("salesTo").value,
+        });
+      }
+    };
+  }
+  if ($("salesTo")) {
+    $("salesTo").onchange = () => {
+      if (salesPreviewOpen) {
+        post({
+          type: "salesExportPreview",
+          dateFrom: $("salesFrom").value,
+          dateTo: $("salesTo").value,
+        });
+      }
+    };
+  }
   $("exportSalesBtn").onclick = () => {
     beginExport("exportSalesBtn");
     post({
@@ -321,6 +349,26 @@ function bindEvents() {
   if (mtTab) {
     mtTab.addEventListener("click", buildSettle);
   }
+  document.querySelectorAll("#tabMonthly .mini-tab").forEach((t) => {
+    t.onclick = () => switchMonthlyTab(t.dataset.ntab);
+  });
+  const shiftMonth = (month, delta) => {
+    const [y, m] = String(month || monthNow()).split("-").map(Number);
+    if (!y || !m) {
+      return monthNow();
+    }
+    const total = y * 12 + (m - 1) + delta;
+    return `${Math.floor(total / 12)}-${String((total % 12) + 1).padStart(2, "0")}`;
+  };
+  const jumpSettleMonth = (month) => {
+    $("settleMonth").value = month;
+    post({ type: "monthBuild", month });
+  };
+  $("settlePrevMonth").onclick = () =>
+    jumpSettleMonth(shiftMonth($("settleMonth").value, -1));
+  $("settleNextMonth").onclick = () =>
+    jumpSettleMonth(shiftMonth($("settleMonth").value, 1));
+  $("settleThisMonth").onclick = () => jumpSettleMonth(monthNow());
   $("settleSaveBtn").onclick = () =>
     post({
       type: "saveSettle",
@@ -691,6 +739,10 @@ function onMessage(msg) {
         productId: msg.productId,
       };
       renderTrend();
+      break;
+    }
+    case "salesExportPreviewLoaded": {
+      renderSalesExportPreview(msg);
       break;
     }
     case "monthBuilt": {

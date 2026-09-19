@@ -721,3 +721,16 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
 - `fragment.html`：`cursor:pointer` 与 hover 虚线下划线由 `td[data-f="name"] .clip-cell` 移到 `td[data-f="code"] .clip-cell`。
 - 点击路由未动（`onProductAct` 的 `data-p-act="edit"` → `openProductDrawer`）。双击编号沿用原「名称」行为（与既有行内编辑一致，不做单/双击区分）。
 - 验证：`node --check`、`eslint`、`tsc -p ./` 通过。
+
+## 三十四、分析·月报拆成两个子页 + 多年对比增强
+
+> 归档时间：2026-09-19。状态：**已实现**。
+
+- 用户诉求：月报页太长，想把「当月统计/录入」与「月报列表+利润」分成两个 tab，并顺带增强多年对比。
+- `fragment.html`：`#tabMonthly` 内加 `.mini-tab-bar`（`data-ntab="monthlySettle"/"monthlyHistory"`）+ 两个 `.mini-panel`：
+  - **📝 本月结算**（`#monthlySettlePanel`，默认 `show`）：三步说明 + 月份工具栏（新增 `#settlePrevMonth`/`#settleNextMonth`/`#settleThisMonth`）+ ①本月数字 + ②录入 + 三口径利润 + 保存/删除 + ③锁定/解锁；
+  - **📊 多年对比**（`#monthlyHistoryPanel`）：`📤 导出Excel`（从原工具栏移来）+ 月报列表 + 净利润图。
+  - 新增 `tr.year-row`（年份分组头）/`tr.year-sum`（年度小计）/`.yoy-up`/`.yoy-down` 样式。
+- 复用 `#tabSales` 已验证的 `.mini-tab`/`.mini-panel` 机制（不影响 `main.html` 只认 `.sub-tab`/`.sub-panel` 的全局切换）：`client-report.js` 新增 `switchMonthlyTab(name)`；`client-main.js` 绑定 `.mini-tab` 点击，并用 `shiftMonth()` 实现月份 ‹/›/本月。
+- `client-report.js` `renderSettles` 增强（**纯前端计算，无后端改动**）：按月排序后**按年份分组**，每年先出「YYYY 年（N 个月）」分组头、再出各月行、末尾出「YYYY 合计」小计行（到账/进货/杂项/净利润/净售求和，期初/期末/同标记「—」）；新增**同比**列＝与去年同月净利润之差（`▲`绿/`▼`红，无则「—」）；列表「查看」按钮仍 post `monthBuild`，并 `switchMonthlyTab("monthlySettle")` 切回子页①。
+- 文档：manual §4 补子页/分组/同比/月份按钮说明。验证：`node --check`、`eslint`、`tsc -p ./` 通过。
