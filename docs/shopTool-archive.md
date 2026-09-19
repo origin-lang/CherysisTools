@@ -702,3 +702,12 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
 
 - `client-product.js`：新增 `exportGroupHtml`，复用 `CS_GROUPS` 三组；导出盘里「code」chip 保持锁定第 1 列，导出专用的「图片」列 chip（`_image`，插在状态列前的语义不变）并入①商品档案。分组外层共用 `.cs-group`/`.cs-group-title` 样式，列顺序/导出逻辑全部不动。
 - 文档：manual §2.2 同步。验证：`node --check`、`eslint`、`tsc -p ./` 通过。
+
+## 三十二、星标总览生成取消后卡死（只剩「取消」按钮）
+
+> 归档时间：2026-09-18。状态：**已实现**（bug 修复）。
+
+- 现象：点「✅ 生成」弹出目录选择器后取消，预览弹窗停在「正在生成…（请选择输出目录）＋取消」，生成按钮消失、翻页/重排被 `generating=true` 挡住。
+- 根因：前端生成时先把底部换成「正在生成…＋取消」；后端 `live.ts` 未选目录 / 建目录失败 / 全部张数失败三个提前 `return` 路径都**不回执**，前端永远等不到恢复。
+- 修复：后端这三条路径统一 `post({type:"starOverviewCancelled"})`；前端 `client-main.js` 新收消息调用 `onStarOverviewCancelled()`；`client-product.js` 把生成逻辑抽成 `starOvGenerate()`、底部重建抽成 `starOvShowFooter(mask)`（`openStarOverview` 与取消恢复共用），取消后 `generating=false` 并还原「关闭＋✅生成」。状态区显示「已取消生成，可再次生成」，下次预览自动清掉。
+- 验证：`node --check`、`eslint`、`tsc -p ./` 通过。

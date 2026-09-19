@@ -1124,24 +1124,51 @@ function showStarOverviewPreview(msg) {
     starOvFrame();
   };
   mask.querySelector("[data-so-close]").onclick = () => closeModal();
-  mask.querySelector("[data-so-gen]").onclick = () => {
-    if (starOv.generating || starOv.reloading) {
-      return;
-    }
-    const d = starOvDims();
-    if ((d.cols && !d.rows) || (!d.cols && d.rows)) {
-      toast("自定义排版要同时填「行」和「列」");
-      return;
-    }
-    starOv.generating = true;
-    const footer = mask.querySelector("[data-so-footer]");
-    footer.innerHTML =
-      `<div class="muted" style="align-self:center;margin-right:auto">正在生成…（请选择输出目录）</div>` +
-      `<button data-so-close>取消</button>`;
-    footer.querySelector("[data-so-close]").onclick = () => closeModal();
-    post({ type: "generateStarOverview", cols: d.cols || 0, rows: d.rows || 0, labels: starOv.labels });
-  };
+  starOvShowFooter(mask);
   starOvFrame();
+}
+
+function starOvGenerate() {
+  if (starOv.generating || starOv.reloading) {
+    return;
+  }
+  if (!starOv.mask || !starOv.mask.isConnected) {
+    return;
+  }
+  const d = starOvDims();
+  if ((d.cols && !d.rows) || (!d.cols && d.rows)) {
+    toast("自定义排版要同时填「行」和「列」");
+    return;
+  }
+  starOv.generating = true;
+  const footer = starOv.mask.querySelector("[data-so-footer]");
+  footer.innerHTML =
+    `<div class="muted" style="align-self:center;margin-right:auto">正在生成…（请选择输出目录）</div>` +
+    `<button data-so-close>取消</button>`;
+  footer.querySelector("[data-so-close]").onclick = () => closeModal();
+  post({ type: "generateStarOverview", cols: d.cols || 0, rows: d.rows || 0, labels: starOv.labels });
+}
+
+function starOvShowFooter(mask) {
+  const footer = mask.querySelector("[data-so-footer]");
+  footer.innerHTML =
+    `<button data-so-close>关闭</button>` +
+    `<button data-so-gen class="btn-teal">✅ 生成</button>`;
+  footer.querySelector("[data-so-close]").onclick = () => closeModal();
+  footer.querySelector("[data-so-gen]").onclick = starOvGenerate;
+}
+
+function onStarOverviewCancelled() {
+  starOv.generating = false;
+  starOv.reloading = false;
+  if (starOv.mask && starOv.mask.isConnected) {
+    const status = starOv.mask.querySelector("[data-so-status]");
+    if (status) {
+      status.textContent = "已取消生成，可再次生成";
+      status.style.display = "";
+    }
+    starOvShowFooter(starOv.mask);
+  }
 }
 
 function onStarOverviewDone(msg) {

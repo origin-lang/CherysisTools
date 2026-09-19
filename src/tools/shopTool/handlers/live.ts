@@ -304,6 +304,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       const outDir = await ctx.selectFolder("选择星标总览输出目录");
       if (!outDir) {
         log("❌未选择输出目录，已取消");
+        post({ type: "starOverviewCancelled" });
         return;
       }
       if (!fs.existsSync(outDir)) {
@@ -311,6 +312,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
           fs.mkdirSync(outDir, { recursive: true });
         } catch (err: any) {
           log(`❌创建输出目录失败：${err.message}`);
+          post({ type: "starOverviewCancelled" });
           return;
         }
       }
@@ -325,6 +327,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
         }
       }
       if (files.length === 0) {
+        post({ type: "starOverviewCancelled" });
         return;
       }
       try {

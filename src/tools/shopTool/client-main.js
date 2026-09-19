@@ -743,6 +743,10 @@ function onMessage(msg) {
       onStarOverviewDone(msg);
       break;
     }
+    case "starOverviewCancelled": {
+      onStarOverviewCancelled();
+      break;
+    }
     case "exportDone": {
       endExport();
       const kind = String(msg.kind || "");
