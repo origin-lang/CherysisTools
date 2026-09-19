@@ -720,7 +720,7 @@ function bindBatchOps() {
         { label: hasOn ? "🔻 下架" : "🔺 上架", run: () => batchSetStatus(hasOn ? 1 : 0) },
         { label: hasStarred ? "☆ 取消星标" : "⭐ 标星", run: () => setStarsForSelected(!hasStarred) },
         { sep: true },
-        { label: "🔢 批量改库存", run: batchSetStock },
+        { label: "🔢 改库存", run: batchSetStock },
         { label: "🗑 删除", danger: true, run: batchDelete },
       ];
       const rect = batchMenuBtn.getBoundingClientRect();
@@ -2045,7 +2045,7 @@ function openImportProducts() {
     document.getElementById("ipColDesc").innerHTML =
       `列顺序＝<b>${cols.join("、")}</b><br />` +
       "· 分隔：Tab / 空格 / 逗号；名称里不要带空格（空格按列分隔）<br />" +
-      "· 库存/累计售出/累计净售是自动统计列，导入不参与；状态列可导入（填 在售/已下架 或 1/0）；备注不导入" +
+      "· 库存/累计售出/累计净售是自动统计列，导入不参与；状态列可导入（填 在售/已下架 或 0/1）；备注不导入" +
       (cols.length <= 2 ? "<br />· 只贴编号也能建（其余走默认）" : "");
     document.getElementById("ipModeHint").textContent = hiHint[mode] || "";
     document.getElementById("ipText").placeholder =
