@@ -192,6 +192,25 @@ export const SNAP_TABLES: Array<{ key: string; table: string; cols: string[] }> 
   { key: "livePlan", table: "live_plan", cols: ["group_no", "slot_no", "code"] },
 ];
 
+// 网络共享重试辅助：SQLITE_BUSY 时自动重试（最多3次，间隔200ms）
+function withRetry<T>(fn: () => T, retries = 3, delayMs = 200): T {
+  for (let i = 0; ; i++) {
+    try {
+      return fn();
+    } catch (err: any) {
+      if (i < retries && String(err?.code) === "SQLITE_BUSY") {
+        constSync(delayMs);
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+function constSync(ms: number): void {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { /* spin */ }
+}
+
 let db: Database.Database | null = null;
 let dbPath: string | null = null;
 let cached: ShopDB | null = null;
@@ -238,9 +257,9 @@ export function initDB(storageDir: string): boolean {
   }
   const p = path.join(storageDir, "shop.db");
   const isNew = !fs.existsSync(p);
-  db = new Database(p);
+  db = new Database(p, { timeout: 10000 }); // 10秒忙等待，支持网络共享
   dbPath = p;
-  db.pragma("journal_mode = WAL");
+  db.pragma("journal_mode = DELETE");
   db.exec(`
     CREATE TABLE IF NOT EXISTS products (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -607,32 +626,36 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
       return r ? mapProduct(r) : undefined;
     },
     addProduct(p: Omit<Product, "id" | "created_at">): number {
-      const info = pInsert.run({ ...p, created_at: nowStr() });
-      return Number(info.lastInsertRowid);
+      return withRetry(() => {
+        const info = pInsert.run({ ...p, created_at: nowStr() });
+        return Number(info.lastInsertRowid);
+      });
     },
     updateProductField(id, field, value) {
       const stmt = pFieldStmts.get(field);
       if (!stmt) {
         throw new Error(`不允许的字段: ${field}`);
       }
-      stmt.run({ value, id });
+      withRetry(() => stmt.run({ value, id }));
     },
     deleteProduct(id) {
-      const p = sById.get(id) as any;
-      const code = p ? String(p.code) : "";
-      const tx = c.transaction(() => {
-        productSalesDel.run(id);
-        productStockDel.run(id);
-        pDelete.run(id);
-        if (code) {
-          liveStarDelByCode.run(code);
-          livePlanDelByCode.run(code);
+      withRetry(() => {
+        const p = sById.get(id) as any;
+        const code = p ? String(p.code) : "";
+        const tx = c.transaction(() => {
+          productSalesDel.run(id);
+          productStockDel.run(id);
+          pDelete.run(id);
+          if (code) {
+            liveStarDelByCode.run(code);
+            livePlanDelByCode.run(code);
+          }
+        });
+        tx();
+        if (aggCache.loaded) {
+          aggCache.sale.delete(id);
         }
       });
-      tx();
-      if (aggCache.loaded) {
-        aggCache.sale.delete(id);
-      }
     },
     getRules(): SaleRule[] {
       return (rulesList.all() as any[]).map((r) => ({
@@ -708,33 +731,35 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
       return (salesRange.all(from, to) as any[]).map(mapSales);
     },
     upsertSale(r): "created" | "updated" | "skipped" {
-      const existing = salesByDateProduct.get(r.date, r.product_id) as any;
-      const d = decideUpsert(existing, r, r.mode);
-      if (d.action === "skipped") {
-        return "skipped";
-      }
-      if (d.action === "created") {
-        salesInsert.run(r);
-      } else {
-        salesUpdate.run({
-          sold_qty: d.sold_qty,
-          refund_qty: d.refund_qty,
-          cost_price: r.cost_price,
-          note: r.note,
-          date: r.date,
-          product_id: r.product_id,
-        });
-      }
-      if (salesDeductsStock()) {
-        stockAdjustStmt.run(d.stockDelta, r.product_id);
-      }
-      if (aggCache.loaded) {
-        const t = aggCache.sale.get(r.product_id) || { sold: 0, refund: 0 };
-        t.sold += d.saleDeltaSold;
-        t.refund += d.saleDeltaRefund;
-        aggCache.sale.set(r.product_id, t);
-      }
-      return d.action;
+      return withRetry(() => {
+        const existing = salesByDateProduct.get(r.date, r.product_id) as any;
+        const d = decideUpsert(existing, r, r.mode);
+        if (d.action === "skipped") {
+          return "skipped";
+        }
+        if (d.action === "created") {
+          salesInsert.run(r);
+        } else {
+          salesUpdate.run({
+            sold_qty: d.sold_qty,
+            refund_qty: d.refund_qty,
+            cost_price: r.cost_price,
+            note: r.note,
+            date: r.date,
+            product_id: r.product_id,
+          });
+        }
+        if (salesDeductsStock()) {
+          stockAdjustStmt.run(d.stockDelta, r.product_id);
+        }
+        if (aggCache.loaded) {
+          const t = aggCache.sale.get(r.product_id) || { sold: 0, refund: 0 };
+          t.sold += d.saleDeltaSold;
+          t.refund += d.saleDeltaRefund;
+          aggCache.sale.set(r.product_id, t);
+        }
+        return d.action;
+      });
     },
     updateSalesField(id, field, value) {
       const r = saleById.get(id) as any;
@@ -845,15 +870,17 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
       return (liveStarsList.all() as any[]).map((r) => String(r.code));
     },
     replaceLiveStars(codes) {
-      const tx = c.transaction(() => {
-        liveStarsDel.run();
-        for (const code of codes) {
-          if (code) {
-            liveStarsIns.run({ code, created_at: nowStr() });
+      withRetry(() => {
+        const tx = c.transaction(() => {
+          liveStarsDel.run();
+          for (const code of codes) {
+            if (code) {
+              liveStarsIns.run({ code, created_at: nowStr() });
+            }
           }
-        }
+        });
+        tx();
       });
-      tx();
     },
     getLivePlan(): LivePlanRow[] {
       return (livePlanList.all() as any[]).map((r) => ({
@@ -863,26 +890,28 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
       }));
     },
     replaceLivePlan(plan) {
-      const tx = c.transaction(() => {
-        livePlanDel.run();
-        for (const r of plan) {
-          const g = Number(r.group_no);
-          const s = Number(r.slot_no);
-          if (!Number.isInteger(g) || g < 1 || !Number.isInteger(s) || s < 0 || s > 9) {
-            continue;
+      withRetry(() => {
+        const tx = c.transaction(() => {
+          livePlanDel.run();
+          for (const r of plan) {
+            const g = Number(r.group_no);
+            const s = Number(r.slot_no);
+            if (!Number.isInteger(g) || g < 1 || !Number.isInteger(s) || s < 0 || s > 9) {
+              continue;
+            }
+            const code = String(r.code ?? "").trim();
+            if (s === 0) {
+              livePlanIns.run({ group_no: g, slot_no: s, code: "" });
+              continue;
+            }
+            if (!code) {
+              continue;
+            }
+            livePlanIns.run({ group_no: g, slot_no: s, code });
           }
-          const code = String(r.code ?? "").trim();
-          if (s === 0) {
-            livePlanIns.run({ group_no: g, slot_no: s, code: "" });
-            continue;
-          }
-          if (!code) {
-            continue;
-          }
-          livePlanIns.run({ group_no: g, slot_no: s, code });
-        }
+        });
+        tx();
       });
-      tx();
     },
     async backupDB(destPath: string): Promise<void> {
       const c = core();
@@ -966,22 +995,24 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
       return snap;
     },
     restoreAll(snap: ShopDBSnapshot): void {
-      const tx = c.transaction(() => {
-        for (const st of snapStmts) {
-          st.del.run();
-        }
-        for (const st of snapStmts) {
-          const rows = snap[st.key];
-          if (!Array.isArray(rows)) {
-            continue;
+      withRetry(() => {
+        const tx = c.transaction(() => {
+          for (const st of snapStmts) {
+            st.del.run();
           }
-          for (const row of rows) {
-            st.ins.run(...st.cols.map((col) => row[col]));
+          for (const st of snapStmts) {
+            const rows = snap[st.key];
+            if (!Array.isArray(rows)) {
+              continue;
+            }
+            for (const row of rows) {
+              st.ins.run(...st.cols.map((col) => row[col]));
+            }
           }
-        }
+        });
+        tx();
+        resetAggCache();
       });
-      tx();
-      resetAggCache();
     },
   };
   return cached;
