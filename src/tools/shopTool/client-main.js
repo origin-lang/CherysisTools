@@ -842,6 +842,18 @@ function onMessage(msg) {
       toast(String(msg.text ?? ""));
       break;
     }
+    case "alert": {
+      showModal(
+        `<h3>⚠️${esc(msg.title || "提示")}</h3>` +
+          `<p style="white-space:pre-wrap">${esc(String(msg.text ?? ""))}</p>` +
+          `<div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn-teal" id="alertOk">知道了</button></div>`,
+      );
+      const ok = document.getElementById("alertOk");
+      if (ok) {
+        ok.onclick = closeModal;
+      }
+      break;
+    }
     case "dbOpError": {
       endExport();
       resetImportBtns();

@@ -13,39 +13,49 @@ export function fileStamp(): string {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-/** 编号统一规范：L + 数字 3 位补零，范围 1~9999。L7→L007、L76→L076、L1044 不变 */
+/**
+ * 编号统一规范：1 个字母前缀 + 数字补零到 3 位，范围 1~9999；纯数字默认 L 前缀。
+ * 例：L7→L007、L76→L076、a7→A007、L1044→L1044、76→L076。
+ * 只做首尾 trim，不剥内部分隔符：A-001 / L 7 / AB012 一律视为格式错误（返回 null）。
+ */
 export function canonicalCode(raw: unknown): string | null {
-  const s = String(raw ?? "").trim().replace(/[【】\[\]（）()#\s_\-\u3000]/g, "");
-  let digits: string | null = null;
-  let m = s.match(/^[Ll](\d{1,4})$/);
+  const s = String(raw ?? "").trim();
+  let m = s.match(/^([A-Za-z])(\d{1,4})$/);
+  let prefix: string;
+  let digits: string;
   if (m) {
-    digits = m[1];
+    prefix = m[1].toUpperCase();
+    digits = m[2];
   } else {
     m = s.match(/^(\d{1,4})$/);
     if (m) {
+      prefix = "L";
       digits = m[1];
+    } else {
+      return null;
     }
-  }
-  if (!digits) {
-    return null;
   }
   const n = Number(digits);
   if (!Number.isInteger(n) || n < 1 || n > 9999) {
     return null;
   }
-  // 统一 3 位补零：L7→L007、L76→L076、L999→L999、L1044→L1044（最多 4 位）
-  return `L${String(n).padStart(3, "0")}`;
+  // 统一 3 位补零：A7→A007、L76→L076、L999→L999、L1044→L1044（最多 4 位）
+  return `${prefix}${String(n).padStart(3, "0")}`;
 }
 
+/**
+ * 从文本中提取编号：整格合法则直接取；否则只认「单字母 + 1~4 位数字」的紧凑编号，
+ * 且其前面必须是行首或非字母数字（防吞正文里的英文+数字），数字后面也不能紧跟字母/数字。
+ */
 export function extractCodeToken(raw: unknown): string | null {
   const s = String(raw ?? "").trim();
   const direct = canonicalCode(s);
   if (direct) {
     return direct;
   }
-  const m = s.match(/[Ll](\d{1,4})/);
+  const m = s.match(/(^|[^A-Za-z0-9])([A-Za-z])(\d{1,4})(?![A-Za-z0-9])/);
   if (m) {
-    return canonicalCode(`L${m[1]}`);
+    return canonicalCode(`${m[2]}${m[3]}`);
   }
   return null;
 }

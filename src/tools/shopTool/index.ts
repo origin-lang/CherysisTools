@@ -271,6 +271,95 @@ export const shopTool: ToolDefinition = {
       return true;
     };
 
+    // 改商品编号时把图片文件夹一并改名，作为「改号是否保存」的前置条件（原子化）：
+    // 文件夹没搬成 → 返回 conflict/error，调用方应取消本次改号（图片不能滞留在旧编号下）。
+    // 三档护栏（绝不删/合并真实图片）：
+    // 1) 旧夹不存在 → noop（本就无图）；2) 目标不存在 → 整夹改名 → moved；3) 目标为空 → 拆壳再挪 → moved；
+    // 目标非空 → conflict（两边都不动，弹窗+日志强提示）；改名本身失败 → error。
+    const renameImageFolder = (
+      fromCode: string,
+      toCode: string,
+    ): "moved" | "noop" | "conflict" | "error" => {
+      if (!fromCode || !toCode || fromCode === toCode) {
+        return "noop";
+      }
+      const dir = imageDir();
+      if (!dir) {
+        // 未配置图片根目录 = 无商品图片文件夹可搬，视为 noop（允许改号）
+        return "noop";
+      }
+      const from = path.join(dir, fromCode);
+      const to = path.join(dir, toCode);
+      if (!fs.existsSync(from)) {
+        return "noop";
+      }
+      if (fs.existsSync(to)) {
+        let entries: string[] = [];
+        try {
+          entries = fs.readdirSync(to);
+        } catch {
+          entries = [];
+        }
+        if (entries.length === 0) {
+          try {
+            fs.rmdirSync(to);
+          } catch (err: any) {
+            log(`⚠️目标空文件夹 ${to} 删除失败，跳过图片文件夹改名（${err?.message ?? err}）`);
+            return "error";
+          }
+        } else {
+          log(`⚠️⚠️编号 ${fromCode} → ${toCode} 改号取消：${toCode} 已有图片文件夹（${entries.length} 项），为避免合并/覆盖图片，本次改号未保存；请先清空 ${toCode} 文件夹后再改`);
+          ctx.postToWebview({
+            type: "alert",
+            title: "改号未保存：图片文件夹冲突",
+            text:
+              `商品编号 ${fromCode} → ${toCode} 未保存：${toCode} 已存在图片文件夹（${entries.length} 项内容），为避免合并/覆盖图片，本次改号已取消。` +
+              `\n\n请先清空 ${toCode} 文件夹（或把里面的内容移走），然后把编号重新改成 ${toCode}，图片文件夹就会自动同步。`,
+          });
+          return "conflict";
+        }
+      }
+      try {
+        fs.renameSync(from, to);
+      } catch (err: any) {
+        log(`⚠️图片文件夹改名失败 ${from} → ${to}（${err?.message ?? err}）；本次改号已取消，图片需手工迁移`);
+        return "error";
+      }
+      invalidateCover(fromCode);
+      // 夹内以旧编号_ 开头的文件名同步改成新编号前缀，保持「文件夹内容=新编号」一致；
+      // 只碰字面前缀命中的直接文件，原始文件名/子目录不动；撞名或占用只记日志，不中断。
+      let renamedFiles = 0;
+      const fromPrefix = `${fromCode}_`;
+      let entries: fs.Dirent[] = [];
+      try {
+        entries = fs.readdirSync(to, { withFileTypes: true });
+      } catch (err: any) {
+        log(`⚠️读取 ${to} 失败，跳过夹内文件名同步（${err?.message ?? err}）`);
+      }
+      for (const e of entries) {
+        if (!e.isFile() || !e.name.startsWith(fromPrefix)) {
+          continue;
+        }
+        const nextName = toCode + e.name.slice(fromCode.length);
+        const nextPath = path.join(to, nextName);
+        if (fs.existsSync(nextPath)) {
+          log(`⚠️夹内文件名同步跳过：${to}\\${nextName} 已存在（${e.name} 保持原名）`);
+          continue;
+        }
+        try {
+          fs.renameSync(path.join(to, e.name), nextPath);
+          renamedFiles++;
+        } catch (err: any) {
+          log(`⚠️夹内文件名同步失败：${e.name}（${err?.message ?? err}）`);
+        }
+      }
+      log(
+        `🖼图片文件夹已随改号改名：${fromCode} → ${toCode}` +
+          (renamedFiles ? `，夹内 ${renamedFiles} 个前缀文件名已同步` : ""),
+      );
+      return "moved";
+    };
+
     const postLiveState = () => {
       ctx.postToWebview({
         type: "liveState",
@@ -362,6 +451,7 @@ export const shopTool: ToolDefinition = {
       coverCache,
       invalidateCover,
       removeImageFolder,
+      renameImageFolder,
       loadAll,
       postProductsDelta,
       refreshSales: (date) =>

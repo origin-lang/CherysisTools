@@ -39,7 +39,17 @@
         const key = salesSortKey;
         rows = rows.slice().sort((a, b) => {
           if (key === "code") {
-            return (Number(a.code.slice(1)) - Number(b.code.slice(1))) * dir;
+            const ma = String(a.code || "").match(/^([A-Za-z])(\d{1,4})$/);
+            const mb = String(b.code || "").match(/^([A-Za-z])(\d{1,4})$/);
+            if (ma && mb) {
+              const pa = ma[1].toUpperCase();
+              const pb = mb[1].toUpperCase();
+              return (
+                (pa < pb ? -1 : pa > pb ? 1 : Number(ma[2]) - Number(mb[2])) *
+                dir
+              );
+            }
+            return String(a.code || "").localeCompare(String(b.code || "")) * dir;
           }
           if (key === "name" || key === "note") {
             return (

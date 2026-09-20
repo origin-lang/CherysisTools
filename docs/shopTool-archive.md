@@ -745,3 +745,22 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
 - `handlers/product.ts` 新增 `setProductsStock(msg)`：仿 `setProductsStatus` 的批量模式——`h.snapshot()` → 逐个 `db.updateStockQty(id, next)`（`next`：set=qty / add=cur+qty / sub=max(0,cur−qty)，读取用 `p.stock_manual`，注意 `Product` 类型没有 `stockTotal`）→ `h.pushUndo(...)`（可 ↩ 撤销）→ `h.postProductsDelta(changed)`。
 - 未新增前端收信类型（复用既有 `postProductsDelta`）；前端弹窗/提交沿用 `showModal`/`closeModal`。
 - 文档：manual §2.6 补一条。验证：`node --check`、`eslint`（0 error）、`tsc -p ./` 通过。
+
+## 三十六、编号兼容多前缀 + 新建「最小未用」提示
+
+> 归档时间：2026-09-20。状态：**已实现**。
+
+- **用户诉求（grilling 访谈定稿）**：编号从「只有 L 前缀」放开为「单字母前缀 A–Z + 数字」，每个前缀编号独立；新建商品时想要「当前最小未用编号」提示。
+- **规则定稿**：
+  - 编号 = `1 个字母前缀 + 1~4 位数字`，统一大写、补零到 3 位、上限 9999/前缀；纯数字默认补 `L`（`76→L076`）；`a7→A007`、`AB012`（双字母）拒绝；
+  - **只做首尾 trim，不剥内部分隔符**：`A-001`/`L 7` 报格式错（不再像旧版静默剥 `【】()-#_`）；
+  - 每前缀独立编号空间（`A001` 与 `L001` 可并存）；列表/销售表按「先比前缀字母、再比数字」排序；
+  - 导入/粘贴（`extractCodeToken`）放宽为「**行首或分隔符后面 + 数字后紧跟非字母数字**」处才认单字母+数字，防吞正文。
+- **实现**：
+  - `pricing.ts` `canonicalCode` 重写（严格）、`extractCodeToken` 边界识别；`client-core.js` `canonicalCode` 同步镜像 + 新增 `nextAvailableCode(prefix)`（扫 `state.products` 按前缀填空号，满 9999 返回 null）；
+  - `client-product.js`：`filteredProducts` 编号排序改复合比较；`openNewProduct` 编号框预填 `nextAvailableCode("L")`、新增 `#npCodeHint` 行跟随输入前缀实时刷新「前缀 X · 当前最小未用：XXXX」（**无独立按钮**，按需求砍掉）；
+  - 商品与销售两张表排序都改为「前缀+数字」复合键（`client-product.js` + `client-sales.js`），修掉 `Number(code.slice(1))` 在多前缀下的错误排序；
+  - `index.ts` 新增 `renameImageFolder(from,to)` **三档护栏**并导出到 `HandlerCtx`：目标不存在→整夹改名+清旧缩略图缓存；目标为空→拆壳再挪；目标非空→**两边都不动**+日志强提示手工处理。`handlers/product.ts` 改号分支（`updateProductField code`）调用它；
+  - 占位符/报错文案更新：新建弹窗、导出指定编号、快售编号框、直播组导入、商品管理帮助、`addProduct`/`updateProductField` 的后端日志。
+- **无需新代码的部分**：删商品摘星标/直播格子**早有实现**（`db.ts deleteProduct` 里 `liveStarDelByCode` + `livePlanDelByCode`，`postLiveState` 回推前端）——复用删掉的号不会让旧星标复活；一次性补零迁移块不动（现有 `L###` 零迁移）。
+- 文档：manual §2.4（新建/编号规则/改号改名护栏）、§2.5 图片 note、录入规范。验证：`node --check` ×6、`eslint`（0 error，仅既有 curly warning）、`tsc -p ./` 通过。

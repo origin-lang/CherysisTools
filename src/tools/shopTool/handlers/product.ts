@@ -303,7 +303,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
     addProduct(msg) {
       const code = canonicalCode(msg.code);
       if (!code) {
-        log("❌编号格式错误（应形如 L001~L9999，3 位补零，最多 4 位）");
+        log("❌编号格式错误（应形如 L001 或 A007：1 个字母 + 数字，3 位补零，最多 4 位）");
         return;
       }
       if (db.getProductByCode(code)) {
@@ -391,12 +391,24 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       if (field === "code") {
         const code = canonicalCode(msg.value);
         if (!code) {
-          log("❌编号格式错误");
+          log("❌编号格式错误（应形如 L001 或 A007：1 个字母 + 数字，3 位补零，最多 4 位）");
           return;
         }
         const exist = db.getProductByCode(code);
         if (exist && exist.id !== id) {
           log(`❌编号 ${code} 已存在`);
+          return;
+        }
+        const oldCode = product.code;
+        // 图片文件夹同步是改号保存的前置条件：文件夹没搬成（冲突/失败）→ 本次改号取消、不落库；
+        // 弹窗/日志已由 renameImageFolder 发出，这里用 dbOpError 顶掉前端乐观的「已保存」
+        const st = h.renameImageFolder(oldCode, code);
+        if (st === "conflict" || st === "error") {
+          post({
+            type: "dbOpError",
+            message: `编号未保存：${code} 的图片文件夹未能同步，本次改号已取消（详情见弹窗/日志）`,
+          });
+          h.loadAll();
           return;
         }
         db.updateProductField(id, "code", code);

@@ -188,21 +188,43 @@ window.toolClients = window.toolClients || {};
     }
 
     function canonicalCode(raw) {
-      const s = String(raw ?? "")
-        .trim()
-        .replace(/[【】\[\]（）()#\s_\-\u3000]/g, "");
-      let m = s.match(/^[Ll](\d{1,4})$/);
-      if (!m) {
+      const s = String(raw ?? "").trim();
+      let m = s.match(/^([A-Za-z])(\d{1,4})$/);
+      let prefix = "L";
+      let digits;
+      if (m) {
+        prefix = m[1].toUpperCase();
+        digits = m[2];
+      } else {
         m = s.match(/^(\d{1,4})$/);
+        if (!m) {
+          return null;
+        }
+        digits = m[1];
       }
-      if (!m) {
-        return null;
-      }
-      const n = Number(m[1]);
+      const n = Number(digits);
       if (!Number.isInteger(n) || n < 1 || n > 9999) {
         return null;
       }
-      return "L" + String(n).padStart(3, "0");
+      return prefix + String(n).padStart(3, "0");
+    }
+
+    /** 某个前缀下最小的未用编号（填空号；1~9999），已用完返回 null。仅前端扫描 state.products。 */
+    function nextAvailableCode(rawPrefix) {
+      const prefix = String(rawPrefix || "L").toUpperCase();
+      const used = new Set();
+      for (const p of state.products || []) {
+        const mm = String(p.code || "").match(/^([A-Za-z])(\d{1,4})$/);
+        if (mm && mm[1].toUpperCase() === prefix) {
+          used.add(Number(mm[2]));
+        }
+      }
+      for (let n = 1; n <= 9999; n++) {
+        if (!used.has(n)) {
+          return prefix + String(n).padStart(3, "0");
+        }
+      }
+      return null;
     }
 
     function gradeLabel(grade) {

@@ -207,13 +207,9 @@ export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
           skipped++;
           continue;
         }
-        const originName = it?.name
-          ? path.basename(it.name).replace(/\.[^.]+$/, "")
-          : "";
-        const base = (originName || `${code}_${stamp()}`).replace(
-          /[\\/:*?"<>|]/g,
-          "_",
-        );
+        // 与「上传」同一规范：一律按 {编号}_时间戳 命名，不保留原始文件名；
+        // 同秒重复由 uniqueTargetPath 自动补 _2/_3，内容重复由 sameContentExists 拦截
+        const base = `${code}_${stamp()}`;
         const target = uniqueTargetPath(folder, base, ext);
         try {
           fs.writeFileSync(target, bytes);
@@ -224,7 +220,7 @@ export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
       }
       if (added) {
         log(
-          `🖼已粘贴/拖入 ${added} 张图 → ${code} 文件夹` +
+          `🖼已粘贴/拖入 ${added} 张图 → ${code} 文件夹（自动按 ${code}_时间戳.jpg 命名）` +
             (skipped ? `，${skipped} 张与已有图片重复已忽略` : ""),
         );
         await reloadImages(code);

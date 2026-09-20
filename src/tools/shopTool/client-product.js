@@ -187,7 +187,15 @@ function filteredProducts() {
     .sort((a, b) => {
       let r = 0;
       if (sortKey === "code") {
-        r = Number(a.code.slice(1)) - Number(b.code.slice(1));
+        const ca = String(a.code || "").match(/^([A-Za-z])(\d{1,4})$/);
+        const cb = String(b.code || "").match(/^([A-Za-z])(\d{1,4})$/);
+        if (ca && cb) {
+          const pa = ca[1].toUpperCase();
+          const pb = cb[1].toUpperCase();
+          r = pa < pb ? -1 : pa > pb ? 1 : Number(ca[2]) - Number(cb[2]);
+        } else {
+          r = String(a.code || "").localeCompare(String(b.code || ""));
+        }
       } else {
         const va = a[sortKey];
         const vb = b[sortKey];
@@ -1677,7 +1685,7 @@ function openNewProduct() {
   const mask = showModal(`
         <h3>＋ 新建商品</h3>
         <div class="form-grid">
-          <label>编号 *</label><input id="npCode" placeholder="L001 或 L076，自动补零到 3 位" />
+          <label>编号 *</label><div><input id="npCode" placeholder="如 L001 / A007，1 个字母 + 数字，自动补零到 3 位" /><span id="npCodeHint" class="muted" style="display:block;font-size:11px;margin-top:2px"></span></div>
           <label>名称</label><input id="npName" maxlength="100" placeholder="如：铜合金锆石手链 四叶花" />
           <label>品类</label><input id="npCategory" list="shopCatList" maxlength="50" placeholder="手链 / 项链 / 耳环 / 戒指 / 手镯…可自定义" />
           <label>系列</label><input id="npSeries" maxlength="50" placeholder="A类 / B类 / C类…（平台链接系列，可空）" />
@@ -1712,11 +1720,24 @@ function openNewProduct() {
   $("npCost").oninput = upd;
   $("npSale").oninput = upd;
   upd();
+  $("npCode").value = nextAvailableCode("L") || "";
+  $("npCode").oninput = () => {
+    const el = $("npCodeHint");
+    if (!el) {
+      return;
+    }
+    const v = String($("npCode").value || "").trim();
+    const mm = v.match(/^([A-Za-z])/);
+    const prefix = mm ? mm[1].toUpperCase() : "L";
+    const next = nextAvailableCode(prefix);
+    el.textContent = `前缀 ${prefix} · 当前最小未用：${next || "已用完（9999 满，请换一个前缀）"}`;
+  };
+  $("npCode").oninput();
   $("npCancel").onclick = closeModal;
   $("npSave").onclick = () => {
     const codeRaw = canonicalCode($("npCode").value);
     if (!codeRaw) {
-      toast("编号格式不对（L+数字，最多 4 位）");
+      toast("编号格式不对（1 个字母 + 数字，最多 4 位，如 L001 / A007）");
       $("npCode").focus();
       return;
     }
@@ -2174,7 +2195,7 @@ function openExportProducts() {
       ${starCount > 0 ? radio("starred", `星标商品（${starCount} 条）`) : ""}
       ${radio("manual", "指定编号")}
     </div>
-    <textarea id="eoCodes" placeholder="示例：L001，L002  L003、L005；逗号/空格/Tab/换行分隔，编号可省略 L（如 7）" style="display:none;width:100%;box-sizing:border-box;min-height:72px;margin-bottom:6px"></textarea>
+    <textarea id="eoCodes" placeholder="示例：L001，A007  L003、L005；逗号/空格/Tab/换行分隔，编号可省略字母前缀（如 7 默认补 L）" style="display:none;width:100%;box-sizing:border-box;min-height:72px;margin-bottom:6px"></textarea>
     <div id="eoBadWrap" style="display:none;max-height:88px;overflow:auto;margin-bottom:6px;padding:6px 8px;border:1px solid var(--vscode-inputValidation-warningBorder);border-radius:3px;background:var(--vscode-inputValidation-warningBackground);font-size:12px"></div>
     <p class="muted" id="eoScopeDesc" style="margin-bottom:8px"></p>
     ${exportGroupHtml(checked, true)}

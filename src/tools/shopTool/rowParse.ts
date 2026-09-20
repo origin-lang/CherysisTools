@@ -16,7 +16,7 @@ export function isHeaderRow(parts: string[]): boolean {
   return parts.length > 0 && HEADER_FIRST_COLUMN_RE.test(parts[0]);
 }
 
-/** 从首列单元格提取商品编号：整格匹配优先（L007 / 76），其次格内 Lxxx 片段 */
+/** 从首列单元格提取商品编号：整格匹配优先（L007 / A007 / 76），其次格内「单字母+数字」片段（边界处） */
 export function codeFromCell(cell: string): string | null {
   return extractCodeToken(cell);
 }

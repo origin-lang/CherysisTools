@@ -346,7 +346,7 @@
           ${radio("comma", "逗号")}
           ${radio("line", "换行")}
         </div>
-        <textarea id="liText" placeholder="粘贴本组最多 9 个编号，每项必须是真实存在的编号（如 L001）。导入会先清空本组再按顺序填入。" style="display:block;width:100%;box-sizing:border-box;min-height:96px;margin-bottom:6px"></textarea>
+        <textarea id="liText" placeholder="粘贴本组最多 9 个编号，每项必须是真实存在的编号（如 L001 / A007）。导入会先清空本组再按顺序填入。" style="display:block;width:100%;box-sizing:border-box;min-height:96px;margin-bottom:6px"></textarea>
         <p class="muted" id="liDesc" style="margin-bottom:8px"></p>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
           <button id="liCancel">取消</button>

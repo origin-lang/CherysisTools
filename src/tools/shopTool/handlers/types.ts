@@ -16,6 +16,11 @@ export interface HandlerCtx {
   coverCache: Map<string, string>;
   invalidateCover: (code: string) => void;
   removeImageFolder: (code: string) => boolean;
+  /** 改商品编号时把图片文件夹也一并改名（原子化前置：冲突/失败返回 error，调用方应取消本次改号）；无旧夹则 noop */
+  renameImageFolder: (
+    fromCode: string,
+    toCode: string,
+  ) => "moved" | "noop" | "conflict" | "error";
   /** 全量刷新前端（初始加载/恢复数据库后使用） */
   loadAll: () => void;
   /** 差量下发更动/删除的商品行（替代高频操作后的全量刷新） */
