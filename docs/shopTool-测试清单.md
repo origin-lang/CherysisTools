@@ -19,7 +19,7 @@
   - 商品导入：`docs/shopTool测试数据/import_products.tsv`（100 条：编号 5 整除＝手动价 19.9/29.9/39.9/49；7 整除＝3 张图+等级4；4 整除＝带采购链接；L050/L077 无图；L002 旧命名、L003 24MB 大图）
   - 销售粘贴：`docs/shopTool测试数据/paste_sales.tsv`（含重复、退款、未匹配 L888、坏行）
   - 图片样本根目录：`C:\Users\YFF\Desktop\图片\测试商品店铺管理`
-- 重置干净环境的两种方式：面板里逐一删除商品；或删除存储目录 `%APPDATA%\Code\User\globalStorage\faye.cherysis\shop.db`（含 `-wal`）后重开面板。
+- 重置干净环境的两种方式：面板里逐一删除商品；或删除存储目录 `%APPDATA%\Code\User\globalStorage\faye.cherysis\shop.db` 后重开面板。
 
 ---
 

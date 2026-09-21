@@ -73,11 +73,12 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "pnpm run compile",
+    "vscode:prepublish": "pnpm run compile && pnpm run check:parity",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "pnpm run compile && pnpm run lint",
+    "pretest": "pnpm run compile && pnpm run lint && pnpm run check:parity",
     "lint": "eslint src",
+    "check:parity": "node scripts/check-shopTool-parity.cjs",
     "test": "vscode-test",
     "package": "vsce-pnpm package"
   },

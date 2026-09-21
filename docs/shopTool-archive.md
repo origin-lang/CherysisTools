@@ -764,3 +764,28 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
   - 占位符/报错文案更新：新建弹窗、导出指定编号、快售编号框、直播组导入、商品管理帮助、`addProduct`/`updateProductField` 的后端日志。
 - **无需新代码的部分**：删商品摘星标/直播格子**早有实现**（`db.ts deleteProduct` 里 `liveStarDelByCode` + `livePlanDelByCode`，`postLiveState` 回推前端）——复用删掉的号不会让旧星标复活；一次性补零迁移块不动（现有 `L###` 零迁移）。
 - 文档：manual §2.4（新建/编号规则/改号改名护栏）、§2.5 图片 note、录入规范。验证：`node --check` ×6、`eslint`（0 error，仅既有 curly warning）、`tsc -p ./` 通过。
+
+## 三十七、SQLite 网络共享安全加固（WAL → 回滚模式）+ 文档同步
+
+> 归档时间：2026-09-21。状态：**已实现**（代码 commit `d5402bd`，版本 0.0.9；文档为本次补记）。
+
+- 用户诉求：数据库放在网络共享盘、可能多机同时用。SQLite 官方对「网络文件系统共享数据库」是明确警告的（见 `docs/局域网多机协作方案讨论.md`）。
+- **代码（commit `d5402bd`）**：
+  - `db.ts` 的 `journal_mode` 由 WAL 改为 **回滚模式（`DELETE`）**——WAL 依赖共享内存与文件锁，在 SMB/NFS 上不可靠；回滚模式单文件、对网络盘更安全；
+  - busy timeout 10 秒 + 新增 `withRetry`（遇 `SQLITE_BUSY` 自动重试 3 次），核心写操作（`addProduct` / `updateProductField` / `deleteProduct` / `upsertSale` / `replaceLiveStars` / `replaceLivePlan` / `restoreAll`）接入。
+- **文档同步（本次补记）**：此前 README / manual / 测试清单仍写「WAL 模式、拷贝要 `shop.db` + `-wal` + `-shm`」，与代码不符；已全部改为「回滚日志模式，手动拷贝只需 `shop.db` 一个文件」：
+  - `README.md`（备份说明、数据在哪）、`docs/shopTool-manual.md` §6.3 / §7.2 / FAQ 换机、`docs/shopTool-测试清单.md`、`docs/shopTool测试数据/测试指引.md`；
+  - 本归档文件里更早的 WAL 描述属历史记录，保持原样不改，仅用本条说明变更。
+- **说明**：备份仍用 better-sqlite3 原生 `db.backup()`（异步、含当前未落盘改动），与日志模式无关；`restoreDB` 里删残留 `-wal` / `-shm` 是防御性代码，保留。
+
+## 三十八、前后端「双份规则」自动对账（parity 守卫接线 + 扩面）
+
+> 归档时间：2026-09-21。状态：**已实现**。
+
+- **背景**：shopTool 的字段规则与前端校验是**两份手工维护的同源代码**——`productFields.ts`（`PRODUCT_FIELDS` / `normText` / `normMoney` / `normGrade` / `normInt`）⇄ `client-core.js`（`FIELD_SPECS` / `sanitizeProductField`）。改一边忘另一边**不会报错**，只会在运行时悄悄不一致。
+- **问题**：`scripts/check-shopTool-parity.cjs` 早已存在且能通过，但**没挂进任何命令**，等于摆设。
+- **本次**：
+  - 新增 `pnpm run check:parity`，并挂到 `pretest` 与 `vscode:prepublish`（测试 / 打包必过此关）；
+  - 脚本扩面：① `client-product.js` 的 `IMPORT_WRITABLE_KEYS` ⇄ 后端 `IMPORTABLE_FIELD_ORDER`；② `sanitizeProductField` ⇄ `norm*` 逐字段边界样例对拍（空串 / 空格 / 超长 / 负数 / 小数 / 币符 / 非法文本），通过比归一化值、拒绝比提示文案。拒绝时后端会回带原值 `value`、前端不带，属无关形状差异，已排除。
+- **文档**：`docs/README.md` 通用架构速记加一条 shopTool 对账提醒。
+- **验证**：`pnpm run compile` + `pnpm run check:parity` 通过（3 行 OK）。

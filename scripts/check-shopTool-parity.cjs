@@ -53,6 +53,29 @@ function extractFnBody(file, name, label) {
   return null;
 }
 
+// 抽 `var name = (a, b) => { ... }` 箭头函数的函数体（前端 sanitizeProductField 是这种写法）
+function extractArrowBody(file, varName, label) {
+  const src = fs.readFileSync(file, "utf8");
+  const startRe = new RegExp(`var ${varName}\\s*=\\s*\\([^)]*\\)\\s*=>\\s*\\{`);
+  const start = src.match(startRe);
+  if (!start || start.index === undefined) {
+    fails.push(`${label}: 找不到 ${varName} 箭头函数`);
+    return null;
+  }
+  const open = start.index + start[0].length - 1;
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === "{") depth++;
+    else if (ch === "}") depth--;
+    if (depth === 0) {
+      return src.slice(open + 1, i);
+    }
+  }
+  fails.push(`${label}: ${varName} 箭头函数括号未闭合`);
+  return null;
+}
+
 function main() {
   const tsSpecs = extractArray(
     tsFile,
@@ -145,8 +168,89 @@ function main() {
     }
   }
 
+  // —— 导入可写字段清单：前端 client-product.js IMPORT_WRITABLE_KEYS ⇄ 后端 IMPORTABLE_FIELD_ORDER ——
+  let backendFields = null;
+  try {
+    backendFields = require(path.join(root, "out", "tools", "shopTool", "productFields.js"));
+  } catch {
+    fails.push("productFields.ts 未编译：先运行 pnpm run compile 再执行本脚本");
+  }
+  const clientProductFile = path.join(root, "src", "tools", "shopTool", "client-product.js");
+  if (backendFields) {
+    const opSrc = fs.readFileSync(clientProductFile, "utf8");
+    const m = opSrc.match(/const IMPORT_WRITABLE_KEYS = (\[[\s\S]*?\]);/);
+    if (!m) {
+      fails.push("client-product.js: 找不到 IMPORT_WRITABLE_KEYS");
+    } else {
+      const clientKeys = new Function(`return ${m[1]}`)();
+      const backendKeys = backendFields.IMPORTABLE_FIELD_ORDER.map((f) => f.key);
+      if (clientKeys.join(",") !== backendKeys.join(",")) {
+        fails.push(
+          `导入可写字段漂移：前端 [${clientKeys.join(", ")}] vs 后端 [${backendKeys.join(", ")}]`,
+        );
+      }
+    }
+  }
+
+  // —— 校验行为：前端 sanitizeProductField ⇄ 后端 normText / normMoney / normGrade / normInt ——
+  if (backendFields && jsSpecs) {
+    const body = extractArrowBody(jsFile, "sanitizeProductField", "client-core.js");
+    if (body !== null) {
+      const front = new Function(
+        "FIELD_SPECS",
+        "parseMoneyInput",
+        `return (field, raw) => {${body}}`,
+      )(jsSpecs, (raw) =>
+        Number(String(raw ?? "").trim().replace(/^[¥￥]\s*/, "")),
+      );
+      const serverOf = (field) => {
+        const spec = backendFields.PRODUCT_FIELDS.find((f) => f.key === field);
+        if (spec && spec.kind === "grade") {
+          return (raw) => backendFields.normGrade(raw);
+        }
+        if (spec && spec.kind === "money") {
+          return (raw) => backendFields.normMoney(field, raw);
+        }
+        if (spec && spec.kind === "int") {
+          return (raw) => backendFields.normInt(field, raw);
+        }
+        return (raw) => backendFields.normText(field, raw);
+      };
+      // 每个字段给一组边界样例（空串/空格/超长/负数/小数/带币符/非法文本）
+      const valSamples = {
+        name: ["", "  铜合金手链  ", "有 空 格", "x".repeat(101), null, 123],
+        category: ["", "手链", "有 空 格", "y".repeat(51)],
+        series: ["", "C类", "s".repeat(51)],
+        purchase_link: ["", "https://x", "a b", "z".repeat(501)],
+        remark: ["", "备注", "r".repeat(201)],
+        grade: [0, 1, 99, 100, -1, 1.5, "2", ""],
+        cost_price: ["", "-1", "¥12.345", "￥9.9", "abc", "0", 12.5],
+        sale_price: ["", "-1", "100", "x", 9.9],
+        stockTotal: [0, -1, 1.5, "3", "", null],
+      };
+      for (const [field, samples] of Object.entries(valSamples)) {
+        const serverFn = serverOf(field);
+        for (const raw of samples) {
+          const a = serverFn(raw);
+          const b = front(field, raw);
+          // 通过时比归一化结果；拒绝时比提示文案（后端拒绝会回带原值 value，前端不带，属无关形状差异）
+          const av = a.ok
+            ? JSON.stringify({ ok: true, value: a.value, truncated: !!a.truncated })
+            : JSON.stringify({ ok: false, msg: a.msg });
+          const bv = b.ok
+            ? JSON.stringify({ ok: true, value: b.value, truncated: !!b.truncated })
+            : JSON.stringify({ ok: false, msg: b.msg });
+          if (av !== bv) {
+            fails.push(`字段校验漂移 ${field}(${JSON.stringify(raw)}): 后端 ${av} vs 前端 ${bv}`);
+          }
+        }
+      }
+    }
+  }
+
   if (fails.length === 0) {
     console.log(`✅ parity OK：PRODUCT_FIELDS(FIELD_SPECS) 13 条逐一相等，canonicalCode/applyExpr/calcPrice 行为抽查通过`);
+    console.log(`   导入可写字段与 sanitize/norm* 校验行为同步，无漂移`);
     console.log(`   来源：${path.relative(root, tsFile)} ⇄ ${path.relative(root, jsFile)}`);
     return;
   }

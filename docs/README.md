@@ -24,5 +24,6 @@ VSCode Webview 面板小工具集。每个工具 = `fragment.html`(UI) + `client
   - **data-action 托管**（仅 imageBatchTool）：按钮声明 `data-action / data-tool-name / data-sub-mode`，事件由 `main.html` 的 `bindFragmentGenericEvents()` 统一绑定，**无 client.js**。
   - **自绑定**（其余工具）：`client.js` 里 `document.getElementById(...)` 手动绑事件。
 - **编译规则（重要）**：`index.ts`(TS) 编译到 `out/` 运行，**改后端必须 `pnpm run compile`**；`fragment.html` / `client.js` 运行时直接从 `src/` 读取，改完 F5 重载扩展即生效。
+- **shopTool 前后端规则对账（重要）**：`productFields.ts`（`PRODUCT_FIELDS` / `normText` / `normMoney` / `normGrade` / `normInt`）与 `client-core.js`（`FIELD_SPECS` / `sanitizeProductField`）是**两份手工维护的同源规则**，改任一侧后必须跑 `pnpm run check:parity`（已挂进 `pretest` 与 `vscode:prepublish`，测试/打包会自动拦）。脚本：`scripts/check-shopTool-parity.cjs`。
 - **数据存储**：SQLite 文件放在扩展全局存储 `globalStorageUri`（procurement 模块），跨工作区共享；**可用设置项 `cherysis.storageDir`（`contributes.configuration`，settings.json 里填绝对路径）指定存放目录**，留空则退回默认 `%APPDATA%\Code\User\globalStorage\<publisher>.<name>\`。面板打开时 `init` 会打印 `🗂数据存储目录：<路径>`。图片/Excel 处理直接读写用户磁盘。
 - **公共依赖**：`xlsx`(Excel)、`sharp`(图像)、`better-sqlite3`(SQLite)、`fs/promises`、`child_process`。前端零框架，原生 JS + canvas/SVG。
