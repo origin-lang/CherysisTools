@@ -388,6 +388,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         return;
       }
       const snap = h.snapshot();
+      let gradeRuleCreated = false;
       if (field === "code") {
         const code = canonicalCode(msg.value);
         if (!code) {
@@ -434,6 +435,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
           db.updateProductField(id, "price_manual", 1);
         } else {
           if (db.ensureRule(grade.value)) {
+            gradeRuleCreated = true;
             log(`ℹ️等级 ${grade.value} 无规则，已自动创建默认规则（cost*1.5 → +0.88）`);
           }
           // 主动选回某个等级 = 明确要跟随该等级规则，立即按规则重算
@@ -479,7 +481,10 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         `修改 ${product.code} 的「${PRODUCT_FIELD_LABELS[field] || field}」`,
       );
       log(`✏️已更新 ${product.code}`);
-      h.loadAll();
+      if (gradeRuleCreated) {
+        h.post({ type: "rulesLoaded", rules: db.getRules() });
+      }
+      h.postProductsDelta([id]);
     },
 
     setStockQty(msg) {

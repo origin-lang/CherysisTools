@@ -205,6 +205,9 @@ function bindEvents() {
     $("salesRefreshBtn").onclick = () =>
       post({ type: "loadSales", date: $("salesDate").value });
   }
+  if ($("refreshProductsBtn")) {
+    $("refreshProductsBtn").onclick = () => post({ type: "loadAll" });
+  }
   if ($("delSelBtn")) {
     $("delSelBtn").onclick = () => {
       if (selSales.size === 0) {

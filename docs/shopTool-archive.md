@@ -789,3 +789,29 @@ avigator.clipboard，跨格式稳定，可粘贴到微信/文档。
   - 脚本扩面：① `client-product.js` 的 `IMPORT_WRITABLE_KEYS` ⇄ 后端 `IMPORTABLE_FIELD_ORDER`；② `sanitizeProductField` ⇄ `norm*` 逐字段边界样例对拍（空串 / 空格 / 超长 / 负数 / 小数 / 币符 / 非法文本），通过比归一化值、拒绝比提示文案。拒绝时后端会回带原值 `value`、前端不带，属无关形状差异，已排除。
 - **文档**：`docs/README.md` 通用架构速记加一条 shopTool 对账提醒。
 - **验证**：`pnpm run compile` + `pnpm run check:parity` 通过（3 行 OK）。
+
+## 三十九、多人协作：为 HTTP 中继铺路 + 性能优化清单存档
+
+> 归档时间：2026-09-22。状态：**设计存档**（方案 B 尚未实现）。
+
+- **背景与决策（访谈定稿）**：方案 A（共享文件夹）已实装并交付团队；多人场景「通常一人主录、偶尔两人并发写」。用户定调：**A 收尾 OK，重心转为给 B（HTTP 中继）铺路**。完整设计与架构事实存档于 [http-中继方案-设计.md](http-中继方案-设计.md)（`局域网多机协作方案讨论.md` 状态已同步）。
+- **B 的关键升级**：主机 = 开 VS Code 的任意团队成员，库仍放共享夹 → 换主机零迁移；防双主锁文件；客机前端零改动、仅 `handleMessage` 转发；撤销/重做栈在主机 → 跨机撤销覆盖坑结构性消解。MVP 受限操作（导入/恢复备份/批量导图/导出落文件/改图片目录）仅主机可做。
+- **本次已撤销的改动说明**：曾对 `product.ts` 单字段编辑 + 前端行级 patch 做过一轮优化（未提交），因设计未定稿而整体撤销，工作区已恢复干净；待阶段 3 再按定稿实现。
+
+### 性能优化清单（审计结论存档，按优先级分层）
+
+指导原则：增量回传（productsDelta）底层早已存在，前端渲染走 `renderProducts` 仍是整表；真正的热路径是「单商品字段编辑 → `loadAll` 整库重读」。
+
+- **T0（改一行，收益最直接）**：`handlers/product.ts:482` 单商品字段编辑 `loadAll() → h.postProductsDelta([id])`，与其他操作（setStatus/清点库存/批量/入库出库/录销售）对齐。
+- **T1（前端 DOM 减负，可做可不做）**：内容为已撤销那轮的工作——`renderProducts` 拆出 `buildProductRow` 等行级 patch 函数、`productsDelta` 无删除+无过滤时逐行 patch 而非整表重绘；星标切换在星标筛选关闭时只 patch 星标节点；`liveState` 的 plan 未变时只刷 `renderLiveStars()` 不重建九宫格；销售搜索 200ms 防抖 + `salesTableRows` 缓存跳过重复排序。
+- **T2（后端，代价主要在中低但要碰事务/备份，谨慎）**：
+  - `db.ts:990` `snapshotAll()` 每次改动**整库快照**进内存（撤销栈上限 20）；量级大时可改为只照受影响表。
+  - 批量写未包事务（回滚日志模式每行一次 fsync；`SQLITE_BUSY` 重试间隔 200ms）→ 批量操作可包 `transaction` 一次提交。
+  - `index.ts:106` `preOpBackup` 每次删除/导入前**整库拷贝**（可考虑仅破坏性操作保留、或改增量留档）。
+- **T3（边际项，暂不动）**：画册不做懒加载；导出 Excel 带全分辨率大图（`impexp.ts`）；封面缩略图未落盘缓存（`images.ts/coverThumbCachePaths`，实际是 lru 磁盘缓存+限流，属已优化面）；`gradeLabel` 每行 `rules.find`（量级小时无感）。
+
+### 未采纳的方向（明确记录，避免重复讨论）
+
+- 不做版本号冲突检测（后写覆盖接受，界面成本高、收益低）；
+- 不做实时推送（方案 A 下用「刷新」补新鲜度；B 落地后天然消除）；
+- 不把方案 B 的导出文件回传客机（MVP 文件落主机，将来按需加下载端点）。
