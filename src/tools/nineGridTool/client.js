@@ -13,6 +13,7 @@
     labelOutDir: "",
   };
   let pendingMessages = [];
+  let pendingItems = [];
   let gridContainer = null;
   let ctxMenu = null;
 
@@ -25,6 +26,7 @@
     state.labelSrcPath = "";
     state.labelStartNum = 1;
     state.labelOutDir = "";
+    pendingItems = [];
 
     const actionMap = {
       openSelectImages: () => post({ type: "openSelectImages", toolName: "nineGridTool" }),
@@ -79,6 +81,8 @@
       gridContainer.addEventListener("dragleave", clearDropOver);
       gridContainer.addEventListener("drop", handleGridDrop);
     }
+    document.removeEventListener("paste", handlePasteCapture, true);
+    document.addEventListener("paste", handlePasteCapture, true);
     renderAll();
     // 回放缓存消息
     while (pendingMessages.length > 0) {
@@ -134,11 +138,112 @@
     }
   }
 
+  function isImageFile(file) {
+    return (
+      !!file && typeof file.type === "string" && file.type.startsWith("image/")
+    );
+  }
+
+  function readFileAsDataURL(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(reader.error || new Error("read error"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function filesToImageItems(fileList) {
+    const files = Array.from(fileList || []).filter(isImageFile);
+    const items = [];
+    for (const f of files) {
+      try {
+        const data = await readFileAsDataURL(f);
+        if (data) {
+          items.push({ name: f.name || "", data });
+        }
+      } catch {
+        /* 忽略单张读取失败 */
+      }
+    }
+    return items;
+  }
+
+  function collectFiles(dt) {
+    const seen = new Set();
+    const out = [];
+    const add = (f) => {
+      if (!f) {
+        return;
+      }
+      const key = `${f.name || ""}|${f.size}|${f.lastModified}`;
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      out.push(f);
+    };
+    if (dt) {
+      if (dt.items) {
+        for (const it of Array.from(dt.items)) {
+          if (it.kind === "file") {
+            add(it.getAsFile());
+          }
+        }
+      }
+      if (dt.files) {
+        for (const f of Array.from(dt.files)) {
+          add(f);
+        }
+      }
+    }
+    return out;
+  }
+
+  function statusText(text) {
+    const el = document.getElementById("statusText");
+    if (el) {
+      el.textContent = text;
+    }
+  }
+
+  // 图片以 base64 交给后端落盘（拿到真实路径后才能拼图），先排队，
+  // 等 importedImagePaths 回包按顺序配对预览数据
+  function postImages(items, targetIdx) {
+    if (!items.length) {
+      return;
+    }
+    pendingItems.push(items);
+    post({
+      type: "importImages",
+      toolName: "nineGridTool",
+      items,
+      targetIdx,
+    });
+  }
+
   function handleGridDrop(e) {
     e.preventDefault();
     e.stopPropagation();
     clearDropOver();
     const dt = e.dataTransfer;
+    const files = collectFiles(dt);
+    const cell =
+      e.target && e.target.closest ? e.target.closest(".grid-cell") : null;
+    const targetIdx =
+      cell && gridContainer
+        ? [].indexOf.call(gridContainer.children, cell)
+        : -1;
+    if (files.length) {
+      filesToImageItems(files).then((items) => {
+        if (items.length) {
+          postImages(items, targetIdx);
+        } else {
+          statusText("拖入的文件不是图片");
+        }
+      });
+      return;
+    }
     const uriList =
       (dt && dt.getData("application/vnd.code.uri-list")) ||
       (dt && dt.getData("text/uri-list")) ||
@@ -147,16 +252,37 @@
       .split(/\r?\n/)
       .map((s) => s.trim())
       .filter((s) => s.startsWith("file://"));
-    if (!uris.length) {return;}
-    const cell = e.target && e.target.closest ? e.target.closest(".grid-cell") : null;
-    const targetIdx =
-      cell && gridContainer ? [].indexOf.call(gridContainer.children, cell) : -1;
-    post({
-      type: "dropImageUris",
-      toolName: "nineGridTool",
-      uris,
-      targetIdx,
+    if (uris.length) {
+      post({
+        type: "dropImageUris",
+        toolName: "nineGridTool",
+        uris,
+        targetIdx,
+      });
+    }
+  }
+
+  function handlePasteCapture(e) {
+    const t = e.target;
+    if (
+      t &&
+      t.closest &&
+      t.closest("input,textarea,select,[contenteditable='true']")
+    ) {
+      return;
+    }
+    const files = collectFiles(e.clipboardData || window.clipboardData || null);
+    if (!files.length) {
+      return;
+    }
+    filesToImageItems(files).then((items) => {
+      if (items.length) {
+        postImages(items, -1);
+      } else {
+        statusText("剪贴板里未检测到图片");
+      }
     });
+    e.preventDefault();
   }
 
   function updateStatus() {
@@ -207,10 +333,18 @@
       state.outDir = msg.path;
       const btn = document.getElementById("btnOpenOut");
       if (btn) {btn.disabled = false;}
-    } else if (msg.type === "droppedImagePaths") {
+    } else if (msg.type === "importedImagePaths") {
       const paths = Array.isArray(msg.paths) ? msg.paths : [];
       if (paths.length) {
-        Object.assign(state.uriMap, msg.uriMap || {});
+        if (msg.uriMap) {
+          Object.assign(state.uriMap, msg.uriMap);
+        }
+        const items = pendingItems.shift() || [];
+        for (let i = 0; i < paths.length; i++) {
+          if (i < items.length && items[i] && items[i].data) {
+            state.uriMap[paths[i]] = items[i].data;
+          }
+        }
         const ti = Number(msg.targetIdx);
         const target = Number.isInteger(ti) && ti >= 0 && ti < 9 ? ti : null;
         if (target !== null) {
@@ -219,7 +353,9 @@
         const rest = target !== null ? paths.slice(1) : paths;
         for (const p of rest) {
           const emptyIdx = state.gridItems.findIndex((x) => x === null);
-          if (emptyIdx === -1) {break;}
+          if (emptyIdx === -1) {
+            break;
+          }
           state.gridItems[emptyIdx] = p;
         }
         renderAll();

@@ -8,6 +8,16 @@ import { readImageToBase64 } from "../../core/utils.js";
 
 const IMG_EXTS = new Set([".jpg", ".jpeg", ".png", ".bmp", ".webp"]);
 
+const IMPORT_MIME_EXT: Record<string, string> = {
+  jpg: ".jpg",
+  jpeg: ".jpg",
+  png: ".png",
+  gif: ".gif",
+  webp: ".webp",
+  bmp: ".bmp",
+};
+const MAX_IMPORT_BYTES = 25 * 1024 * 1024;
+
 /** 九宫格拼图：传入9张图片完整路径数组，输出拼接大图 */
 export async function handleNineGridMergeFromList(
   imgPaths: string[],
@@ -275,6 +285,56 @@ export const nineGridTool: ToolDefinition = {
         }
         break;
       }
+      case "importImages": {
+        const items: Array<{ name?: string; data?: string }> = Array.isArray(
+          msg.items,
+        )
+          ? msg.items
+          : [];
+        if (!items.length) {
+          break;
+        }
+        const importDir = path.join(ctx.storageDir, "nineGridTool_import");
+        fs.mkdirSync(importDir, { recursive: true });
+        const paths: string[] = [];
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        let seq = 0;
+        for (const it of items) {
+          const data = String(it?.data ?? "");
+          const m = /^data:image\/([a-zA-Z0-9.+-]+);base64,(.+)$/.exec(data);
+          if (!m) {
+            continue;
+          }
+          const ext = IMPORT_MIME_EXT[m[1].toLowerCase()] || ".png";
+          const bytes = Buffer.from(m[2], "base64");
+          if (!bytes.length) {
+            continue;
+          }
+          if (bytes.length > MAX_IMPORT_BYTES) {
+            log(
+              `⚠️跳过超大图片（${(bytes.length / 1024 / 1024).toFixed(1)}MB，上限 25MB）`,
+            );
+            continue;
+          }
+          const target = path.join(importDir, `import_${stamp}_${seq++}${ext}`);
+          try {
+            fs.writeFileSync(target, bytes);
+            paths.push(target);
+          } catch (err: any) {
+            log(`⚠️写入失败：${err.message}`);
+          }
+        }
+        if (!paths.length) {
+          log("❌导入的图片写入失败");
+          break;
+        }
+        const rawIdx = Number(msg.targetIdx);
+        const targetIdx =
+          Number.isInteger(rawIdx) && rawIdx >= 0 && rawIdx < 9 ? rawIdx : -1;
+        ctx.postToWebview({ type: "importedImagePaths", paths, targetIdx });
+        log(`✅已导入 ${paths.length} 张图片`);
+        break;
+      }
       case "dropImageUris": {
         const uris: unknown[] = Array.isArray(msg.uris) ? msg.uris : [];
         const paths: string[] = [];
@@ -309,7 +369,7 @@ export const nineGridTool: ToolDefinition = {
         const targetIdx =
           Number.isInteger(rawIdx) && rawIdx >= 0 && rawIdx < 9 ? rawIdx : -1;
         ctx.postToWebview({
-          type: "droppedImagePaths",
+          type: "importedImagePaths",
           paths,
           uriMap,
           targetIdx,
