@@ -216,22 +216,13 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
         log("❌先填至少一个排品格子再生成");
         return;
       }
-      let outDir = String(h.getSetting("live_out_dir") || "").trim();
-      if (outDir && fs.existsSync(outDir)) {
-        const ok = await ctx.confirm(`直播排品将输出到：${outDir}`, "点「取消」改为另选输出目录");
-        if (!ok) {
-          outDir = "";
-        }
+      const picked = await ctx.selectFolder("选择直播排品九宫格输出目录");
+      if (!picked) {
+        log("❌未选择输出目录，已取消");
+        return;
       }
-      if (!outDir) {
-        const picked = await ctx.selectFolder("选择直播排品九宫格输出目录");
-        if (!picked) {
-          log("❌未选择输出目录，已取消");
-          return;
-        }
-        outDir = picked;
-        db.setSetting("live_out_dir", outDir);
-      }
+      const outDir = picked;
+      db.setSetting("live_out_dir", outDir);
       if (!fs.existsSync(outDir)) {
         try {
           fs.mkdirSync(outDir, { recursive: true });
