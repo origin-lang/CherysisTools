@@ -550,18 +550,10 @@ function renderList(list) {
       : `${
           selectedCount > 0
             ? (() => {
-                let hasOn = false, hasStarred = false;
-                for (const p of list) {
-                  if (state.selectedProducts.has(p.id)) {
-                    if (p.status === 0) hasOn = true;
-                    if (state.liveStars && state.liveStars.has(p.code)) hasStarred = true;
-                    if (hasOn && hasStarred) break;
-                  }
-                }
                 return `<div class="batch-ops" id="batchOpsBar">
 <span>已选 <b data-sel-count>${selectedCount}</b> 个商品</span>
 <button class="mini-btn" id="batchCopy" title="把选中的商品按当前可见列复制到剪贴板（带表头）">📋 复制选中</button>
-<button class="mini-btn batch-menu-btn" id="batchMenuBtn" data-has-on="${hasOn}" data-has-starred="${hasStarred}">批量 ▾</button>
+<button class="mini-btn batch-menu-btn" id="batchMenuBtn">批量操作 ▾</button>
 <button class="mini-btn" id="batchClear" title="取消全部选择">✕ 取消</button>
 </div>`;
               })()
@@ -722,14 +714,16 @@ function bindBatchOps() {
       ev.stopPropagation();
       const old = document.getElementById("batchDropdown");
       if (old) { old.remove(); return; }
-      const hasOn = batchMenuBtn.dataset.hasOn === "true";
-      const hasStarred = batchMenuBtn.dataset.hasStarred === "true";
       const items = [
-        { label: hasOn ? "🔻 下架" : "🔺 上架", run: () => batchSetStatus(hasOn ? 1 : 0) },
-        { label: hasStarred ? "☆ 取消星标" : "⭐ 标星", run: () => setStarsForSelected(!hasStarred) },
+        { label: "上架", run: () => batchSetStatus(0) },
+        { label: "下架", run: () => batchSetStatus(1) },
+        { label: "标星", run: () => setStarsForSelected(true) },
+        { label: "取消星标", run: () => setStarsForSelected(false) },
         { sep: true },
-        { label: "🔢 改库存", run: batchSetStock },
-        { label: "🗑 删除", danger: true, run: batchDelete },
+        { label: "改等级", run: batchSetGrade },
+        { label: "改采购链接", run: batchSetLink },
+        { label: "改库存", run: batchSetStock },
+        { label: "删除", danger: true, run: batchDelete },
       ];
       const rect = batchMenuBtn.getBoundingClientRect();
       const menu = document.createElement("div");
@@ -819,6 +813,65 @@ function bindBatchOps() {
     mask.querySelector('[data-bss="ok"]').onclick = submit;
     mask.querySelector('[data-bss="cancel"]').onclick = closeModal;
     qtyInput.onkeydown = (ev) => {
+      if (ev.key === "Enter") submit();
+    };
+  };
+
+  const batchSetGrade = () => {
+    const n = state.selectedProducts.size;
+    if (n === 0) return;
+    const mask = showModal(`
+      <h3>批量改等级（${n} 个商品）</h3>
+      <p class="muted">将修改选中的 <b>${n}</b> 个商品，售价按所选等级规则重算（可用 ↩ 撤销）。</p>
+      <div class="rows" style="margin-top:12px">
+        <div class="field">
+          <label>等级</label>
+          <select id="bsgGrade">
+            <option value="0">自定义（不按公式自动算）</option>
+            ${state.rules.map((r) => `<option value="${r.grade}">${esc(gradeLabel(r.grade))}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+        <button data-bsg="cancel">取消</button>
+        <button data-bsg="ok" class="btn-teal">确定</button>
+      </div>`);
+    const submit = () => {
+      const grade = Number(mask.querySelector("#bsgGrade").value);
+      closeModal();
+      post({ type: "setProductsField", ids: [...state.selectedProducts], field: "grade", value: grade });
+      toast(`✅已提交批量改等级 × ${n}`);
+    };
+    mask.querySelector('[data-bsg="ok"]').onclick = submit;
+    mask.querySelector('[data-bsg="cancel"]').onclick = closeModal;
+  };
+
+  const batchSetLink = () => {
+    const n = state.selectedProducts.size;
+    if (n === 0) return;
+    const mask = showModal(`
+      <h3>批量改采购链接（${n} 个商品）</h3>
+      <p class="muted">将写入所选商品的「采购链接」（可用 ↩ 撤销）；<br>留空提交 = 清空所有选中商品的链接。</p>
+      <input id="bslLink" type="text" placeholder="https://…" style="width:100%;box-sizing:border-box;margin-top:8px" />
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+        <button data-bsl="cancel">取消</button>
+        <button data-bsl="ok" class="btn-teal">确定</button>
+      </div>`);
+    const input = mask.querySelector("#bslLink");
+    input.focus();
+    const submit = () => {
+      const res = sanitizeProductField("purchase_link", input.value);
+      if (!res.ok) {
+        toast(res.msg);
+        return;
+      }
+      closeModal();
+      post({ type: "setProductsField", ids: [...state.selectedProducts], field: "purchase_link", value: res.value });
+      toast(`✅已提交批量改采购链接 × ${n}`);
+    };
+    mask.querySelector('[data-bsl="ok"]').onclick = submit;
+    mask.querySelector('[data-bsl="cancel"]').onclick = closeModal;
+    input.onkeydown = (ev) => {
       if (ev.key === "Enter") submit();
     };
   };
@@ -949,8 +1002,9 @@ var starOv = {
   reloading: false,
   cols: 0,
   rows: 0,
-  lastDir: "",
+lastDir: "",
   labels: { code: true, costPrice: false, salePrice: true },
+  dirty: false,
 };
 
 const STAR_GRID_PRESETS = [
@@ -1007,7 +1061,7 @@ function starOvSyncGrid() {
 
 function starOvSetEnabled(on) {
   const q = (s) => starOv.mask.querySelector(s);
-  ["[data-so-grid]", "[data-so-cc]", "[data-so-cr]", "[data-so-prev]", "[data-so-next]", "[data-so-gen]"].forEach((s) => {
+  ["[data-so-grid]", "[data-so-cc]", "[data-so-cr]", "[data-so-refresh]", "[data-so-prev]", "[data-so-next]", "[data-so-gen]"].forEach((s) => {
     const el = q(s);
     if (el) {
       el.disabled = !on;
@@ -1015,10 +1069,31 @@ function starOvSetEnabled(on) {
   });
 }
 
+function starOvSyncDirty() {
+  if (!starOv.mask || !starOv.mask.isConnected) {
+    return;
+  }
+  const btn = starOv.mask.querySelector("[data-so-refresh]");
+  if (!btn) {
+    return;
+  }
+  if (starOv.dirty) {
+    btn.textContent = "👁 预览（未刷新）";
+    btn.style.color = "#e8a33d";
+    btn.style.borderColor = "#e8a33d";
+  } else {
+    btn.textContent = "👁 重出预览";
+    btn.style.color = "";
+    btn.style.borderColor = "";
+  }
+}
+
 function starOvRequestPreview() {
   if (starOv.generating || starOv.reloading) {
     return;
   }
+  starOv.dirty = false;
+  starOvSyncDirty();
   const d = starOvDims();
   if ((d.cols && !d.rows) || (!d.cols && d.rows)) {
     toast("自定义排版要同时填「行」和「列」");
@@ -1063,7 +1138,13 @@ function showStarOverviewPreview(msg) {
       if (status) {
         status.style.display = "none";
       }
-      toast("该排版没有可用预览");
+      const imgWrap = starOv.mask.querySelector("[data-so-imgwrap]");
+      if (imgWrap) {
+        imgWrap.innerHTML =
+          `<div class="muted" style="padding:36px 0;text-align:center">☆ 当前没有星标商品可用此排版预览<br>` +
+          `<span style="font-size:12px">可先关掉本弹窗，去商品列表 ⭐ 标记后再来</span></div>`;
+      }
+      toast("没有星标商品可预览");
     } else {
       toast("没有星标商品可预览（先去 ⭐ 标记）");
     }
@@ -1072,7 +1153,7 @@ function showStarOverviewPreview(msg) {
   // 弹窗已开（换个排版重预览）→ 原地换数据，不重建不闪烁
   if (starOv.mask && starOv.mask.isConnected) {
     starOv.previews = previews;
-    starOv.idx = 0;
+    starOv.idx = Math.min(starOv.idx, previews.length - 1);
     starOv.total = Number(msg.total || 0);
     starOv.cols = Number(msg.cols || 0);
     starOv.rows = Number(msg.rows || 0);
@@ -1122,6 +1203,7 @@ function showStarOverviewPreview(msg) {
         <input data-so-cr type="number" min="1" max="10" style="width:56px" title="行数" />行
         × <input data-so-cc type="number" min="1" max="10" style="width:56px" title="列数" />列
       </span>
+      <button data-so-refresh class="mini-btn" style="margin-left:auto" title="按当前排版和标注重新出预览图">👁 重出预览</button>
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
       <span class="muted">图上标注</span>
@@ -1136,7 +1218,9 @@ function showStarOverviewPreview(msg) {
     </div>
     <div data-so-status class="muted" style="display:none;margin-bottom:4px"></div>
     <div style="text-align:center">
-      <img data-so-img style="max-width:min(720px,86vw);max-height:62vh;border:1px solid var(--vscode-panel-border);border-radius:4px" />
+      <div data-so-imgwrap style="position:relative;display:inline-block;line-height:0">
+        <img data-so-img style="max-width:min(720px,86vw);max-height:62vh;border:1px solid var(--vscode-panel-border);border-radius:4px" />
+      </div>
       <div data-so-cap class="muted" style="margin-top:4px;font-size:12px"></div>
     </div>
     <div data-so-footer style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
@@ -1152,18 +1236,27 @@ function showStarOverviewPreview(msg) {
     } else {
       cust.style.display = "none";
     }
-    starOvRequestPreview();
+    starOv.dirty = true;
+    starOvSyncDirty();
   };
-  mask.querySelector("[data-so-cr]").onchange = () => starOvRequestPreview();
-  mask.querySelector("[data-so-cc]").onchange = () => starOvRequestPreview();
+  mask.querySelector("[data-so-cr]").onchange = () => {
+    starOv.dirty = true;
+    starOvSyncDirty();
+  };
+  mask.querySelector("[data-so-cc]").onchange = () => {
+    starOv.dirty = true;
+    starOvSyncDirty();
+  };
   mask.querySelectorAll("[data-so-lbl]").forEach((el) => {
     el.onchange = () => {
       starOv.labels.code = mask.querySelector("[data-so-lbl='code']").checked;
       starOv.labels.costPrice = mask.querySelector("[data-so-lbl='costPrice']").checked;
       starOv.labels.salePrice = mask.querySelector("[data-so-lbl='salePrice']").checked;
-      starOvRequestPreview();
+      starOv.dirty = true;
+      starOvSyncDirty();
     };
   });
+  mask.querySelector("[data-so-refresh]").onclick = () => starOvRequestPreview();
   mask.querySelector("[data-so-prev]").onclick = () => {
     if (starOv.generating || starOv.reloading) {
       return;

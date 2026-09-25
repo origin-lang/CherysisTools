@@ -632,6 +632,71 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       h.postProductsDelta(changed);
     },
 
+    setProductsField(msg) {
+      const ids: number[] = (msg.ids || []).map(Number);
+      if (ids.length === 0) {
+        log("⚠没有选中要操作的商品");
+        return;
+      }
+      const field = String(msg.field);
+      if (field !== "grade" && field !== "purchase_link") {
+        log("❌批量操作目前仅支持「等级」和「采购链接」");
+        return;
+      }
+      let value: number | string;
+      if (field === "grade") {
+        const g = normGrade(msg.value);
+        if (!g.ok) {
+          log(`❌${g.msg}`);
+          return;
+        }
+        value = g.value;
+      } else {
+        const t = normText("purchase_link", msg.value);
+        if (!t.ok) {
+          log(`❌${t.msg}`);
+          return;
+        }
+        value = t.value;
+      }
+      const snap = h.snapshot();
+      const changed: number[] = [];
+      let gradeRuleCreated = false;
+      for (const id of ids) {
+        const p = db.getProductById(id);
+        if (!p) {
+          continue;
+        }
+        if (field === "grade") {
+          if (value === 0) {
+            // 切成「自定义」：售价固定不动，不再跟随规则
+            db.updateProductField(id, "grade", 0);
+            db.updateProductField(id, "price_manual", 1);
+          } else {
+            if (db.ensureRule(Number(value))) {
+              gradeRuleCreated = true;
+            }
+            db.updateProductField(id, "grade", Number(value));
+            db.updateProductField(id, "price_manual", 0);
+            const rule = db.getRules().find((r) => r.grade === value);
+            db.updateProductField(id, "sale_price", calcPrice(p.cost_price, rule));
+          }
+        } else {
+          db.updateProductField(id, "purchase_link", value);
+        }
+        changed.push(id);
+      }
+      h.pushUndo(
+        snap,
+        `批量${field === "grade" ? "改等级" : "改采购链接"} ${changed.length} 个商品`,
+      );
+      log(`✅批量${field === "grade" ? "改等级" : "改采购链接"}：${changed.length} 个商品`);
+      if (field === "grade" && gradeRuleCreated) {
+        h.post({ type: "rulesLoaded", rules: db.getRules() });
+      }
+      h.postProductsDelta(changed);
+    },
+
     async deleteProducts(msg) {
       const ids: number[] = (msg.ids || []).map(Number);
       if (ids.length === 0) {
