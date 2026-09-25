@@ -997,12 +997,15 @@ var starOv = {
   mask: null,
   idx: 0,
   previews: [],
+  pageCount: 1,
   total: 0,
   generating: false,
   reloading: false,
+  pending: -1,
+  token: 0,
   cols: 0,
   rows: 0,
-lastDir: "",
+  lastDir: "",
   labels: { code: true, costPrice: false, salePrice: true },
   dirty: false,
 };
@@ -1060,6 +1063,9 @@ function starOvSyncGrid() {
 }
 
 function starOvSetEnabled(on) {
+  if (!starOv.mask) {
+    return;
+  }
   const q = (s) => starOv.mask.querySelector(s);
   ["[data-so-grid]", "[data-so-cc]", "[data-so-cr]", "[data-so-refresh]", "[data-so-prev]", "[data-so-next]", "[data-so-gen]"].forEach((s) => {
     const el = q(s);
@@ -1088,6 +1094,31 @@ function starOvSyncDirty() {
   }
 }
 
+// 图片区遮罩：半透明 + 转圈 + 文案，渲染期间盖住旧图
+function starOvLoading(msg) {
+  if (!starOv.mask || !starOv.mask.isConnected) {
+    return;
+  }
+  const lo = starOv.mask.querySelector("[data-so-loading]");
+  const txt = starOv.mask.querySelector("[data-so-msg]");
+  if (lo) {
+    lo.style.display = "flex";
+  }
+  if (txt) {
+    txt.textContent = msg || "正在渲染预览…";
+  }
+}
+
+function starOvUnloading() {
+  if (!starOv.mask || !starOv.mask.isConnected) {
+    return;
+  }
+  const lo = starOv.mask.querySelector("[data-so-loading]");
+  if (lo) {
+    lo.style.display = "none";
+  }
+}
+
 function starOvRequestPreview() {
   if (starOv.generating || starOv.reloading) {
     return;
@@ -1100,86 +1131,117 @@ function starOvRequestPreview() {
     return;
   }
   starOv.reloading = true;
+  starOv.pending = -1;
+  starOv.previews = [];
   starOvSetEnabled(false);
+  // 第一次打开：先弹窗占位（遮罩可见），出图后再填；已开弹窗：遮罩盖旧图
+  if (!starOv.mask || !starOv.mask.isConnected) {
+    starOvOpenMask("⭐ 星标总览图（加载中…）");
+  }
+  starOvLoading(`正在按「${starOvDimsLabel(d)}」排版第 1 张…`);
   const status = starOv.mask.querySelector("[data-so-status]");
   if (status) {
-    status.style.display = "block";
-    status.textContent = `正在按「${starOvDimsLabel(d)}」重新排版预览…`;
+    status.style.display = "none";
   }
   post({ type: "previewStarOverview", cols: d.cols || 0, rows: d.rows || 0, labels: starOv.labels });
 }
 
 function starOvFrame() {
-  const p = starOv.previews[starOv.idx];
-  if (!p || !starOv.mask || !starOv.mask.isConnected) {
+  if (!starOv.mask || !starOv.mask.isConnected) {
     return;
   }
-  starOv.mask.querySelector("[data-so-img]").src = p.data;
-  starOv.mask.querySelector("[data-so-cap]").textContent = p.name;
-  starOv.mask.querySelector("[data-so-ctr]").textContent =
-    `${starOv.idx + 1} / ${starOv.previews.length}`;
+  const n = Math.max(1, starOv.pageCount);
+  const img = starOv.mask.querySelector("[data-so-img]");
+  const cap = starOv.mask.querySelector("[data-so-cap]");
+  const ctr = starOv.mask.querySelector("[data-so-ctr]");
   const prev = starOv.mask.querySelector("[data-so-prev]");
   const next = starOv.mask.querySelector("[data-so-next]");
+  if (ctr) {
+    ctr.textContent = `${starOv.idx + 1} / ${n}`;
+  }
   if (prev) {
     prev.disabled = starOv.idx === 0;
   }
   if (next) {
-    next.disabled = starOv.idx === starOv.previews.length - 1;
+    next.disabled = starOv.idx >= n - 1;
+  }
+  const p = starOv.previews[starOv.idx];
+  if (p) {
+    starOvUnloading();
+    if (img) {
+      img.src = p.data;
+    }
+    if (cap) {
+      cap.textContent = p.name;
+    }
+  } else {
+    img.removeAttribute("src");
+    if (cap) {
+      cap.textContent = "";
+    }
+    starOvLoadPage(starOv.idx);
   }
 }
 
-function showStarOverviewPreview(msg) {
-  const previews = Array.isArray(msg.previews) ? msg.previews : [];
-  if (previews.length === 0) {
-    if (starOv.mask && starOv.mask.isConnected) {
-      starOv.reloading = false;
-      starOvSetEnabled(true);
-      const status = starOv.mask.querySelector("[data-so-status]");
-      if (status) {
-        status.style.display = "none";
-      }
-      const imgWrap = starOv.mask.querySelector("[data-so-imgwrap]");
-      if (imgWrap) {
-        imgWrap.innerHTML =
-          `<div class="muted" style="padding:36px 0;text-align:center">☆ 当前没有星标商品可用此排版预览<br>` +
-          `<span style="font-size:12px">可先关掉本弹窗，去商品列表 ⭐ 标记后再来</span></div>`;
-      }
-      toast("没有星标商品可预览");
-    } else {
-      toast("没有星标商品可预览（先去 ⭐ 标记）");
-    }
+// 按需渲染某一页：翻页到没出过的页才请求，回来后缓存；陈旧响应按 token 丢弃
+function starOvLoadPage(idx) {
+  if (starOv.reloading || starOv.generating || starOv.pending === idx) {
     return;
   }
-  // 弹窗已开（换个排版重预览）→ 原地换数据，不重建不闪烁
-  if (starOv.mask && starOv.mask.isConnected) {
-    starOv.previews = previews;
-    starOv.idx = Math.min(starOv.idx, previews.length - 1);
-    starOv.total = Number(msg.total || 0);
-    starOv.cols = Number(msg.cols || 0);
-    starOv.rows = Number(msg.rows || 0);
-    starOv.generating = false;
-    starOv.reloading = false;
-    starOvSyncGrid();
+  if (!starOv.mask || !starOv.mask.isConnected) {
+    return;
+  }
+  starOv.pending = idx;
+  const token = ++starOv.token;
+  starOvLoading(`正在出第 ${idx + 1} 张预览…`);
+  const status = starOv.mask.querySelector("[data-so-status]");
+  if (status) {
+    status.style.display = "none";
+  }
+  const d = starOvDims();
+  post({
+    type: "renderStarOverviewPage",
+    page: idx,
+    cols: d.cols || 0,
+    rows: d.rows || 0,
+    labels: starOv.labels,
+    token,
+  });
+}
+
+function starOvOnPagePreview(msg) {
+  if (starOv.reloading || starOv.generating) {
+    return;
+  }
+  const token = Number(msg.token ?? -1);
+  if (token !== starOv.token) {
+    return; // 陈旧响应（换排版/重出预览后翻页的旧图）
+  }
+  const page = Number(msg.page ?? starOv.pending);
+  if (starOv.pending === page) {
+    starOv.pending = -1;
+  }
+  if (msg.error) {
+    starOvUnloading();
+    const img = starOv.mask.querySelector("[data-so-img]");
+    if (img) {
+      img.removeAttribute("src");
+    }
+    const cap = starOv.mask.querySelector("[data-so-cap]");
+    if (cap) {
+      cap.textContent = `第 ${page + 1} 张渲染失败：${msg.error}（再点「下一张/上一张」可重试）`;
+    }
     starOvSetEnabled(true);
-    const status = starOv.mask.querySelector("[data-so-status]");
-    if (status) {
-      status.style.display = "none";
-    }
-    const h3 = starOv.mask.querySelector("h3");
-    if (h3) {
-      h3.textContent = `⭐ 星标总览图（${starOv.total} 款 · ${previews.length} 张 · ${starOvDimsLabel(msg)})`;
-    }
-    starOvFrame();
     return;
   }
+  if (msg.preview) {
+    starOv.previews[page] = { name: String(msg.preview.name || ""), data: String(msg.preview.data || "") };
+  }
+  starOvFrame();
+}
+
+function starOvOpenMask(title) {
   closeModal();
-  starOv.idx = 0;
-  starOv.previews = previews;
-  starOv.total = Number(msg.total || 0);
-  starOv.cols = Number(msg.cols || 0);
-  starOv.rows = Number(msg.rows || 0);
-  starOv.generating = false;
-  starOv.reloading = false;
   // 加载保存的标注选项
   try {
     const saved = JSON.parse(state.settings.star_label_options || "{}");
@@ -1189,7 +1251,7 @@ function showStarOverviewPreview(msg) {
   } catch { /* 忽略 */ }
   const L = starOv.labels;
   const mask = showModal(`
-    <h3>⭐ 星标总览图（${starOv.total} 款 · ${previews.length} 张 · ${starOvDimsLabel(msg)}）</h3>
+    <h3 data-so-title>${title || `⭐ 星标总览图（${starOv.total} 款 · ${starOv.pageCount} 张 · ${starOvDimsLabel(starOv)}）`}</h3>
     <div class="muted" style="margin-bottom:6px">预览未落盘——满意后点「✅ 生成」才写入输出目录。</div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
       <span class="muted">每张排版</span>
@@ -1219,6 +1281,10 @@ function showStarOverviewPreview(msg) {
     <div data-so-status class="muted" style="display:none;margin-bottom:4px"></div>
     <div style="text-align:center">
       <div data-so-imgwrap style="position:relative;display:inline-block;line-height:0">
+        <div data-so-loading style="display:none;position:absolute;inset:0;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:rgba(0,0,0,.35);z-index:5;border:1px solid var(--vscode-panel-border);border-radius:4px;min-width:320px;min-height:120px">
+          <div class="so-spinner"></div>
+          <div data-so-msg class="muted" style="color:#fff"></div>
+        </div>
         <img data-so-img style="max-width:min(720px,86vw);max-height:62vh;border:1px solid var(--vscode-panel-border);border-radius:4px" />
       </div>
       <div data-so-cap class="muted" style="margin-top:4px;font-size:12px"></div>
@@ -1268,11 +1334,67 @@ function showStarOverviewPreview(msg) {
     if (starOv.generating || starOv.reloading) {
       return;
     }
-    starOv.idx = Math.min(starOv.previews.length - 1, starOv.idx + 1);
+    starOv.idx = Math.min(starOv.pageCount - 1, starOv.idx + 1);
     starOvFrame();
   };
   mask.querySelector("[data-so-close]").onclick = () => closeModal();
   starOvShowFooter(mask);
+  starOvFrame();
+}
+
+function showStarOverviewPreview(msg) {
+  const previews = Array.isArray(msg.previews) ? msg.previews : [];
+  const total = Number(msg.total || 0);
+  const pageCount = Math.max(1, Number(msg.pageCount ?? 0));
+  // 换排版/重出预览：作废所有在途翻页响应
+  starOv.token++;
+  starOv.reloading = false;
+  starOv.pending = -1;
+  starOv.generating = false;
+  starOv.total = total;
+  starOv.pageCount = pageCount;
+  starOv.cols = Number(msg.cols || 0);
+  starOv.rows = Number(msg.rows || 0);
+  starOv.previews = new Array(pageCount);
+  starOv.idx = Math.min(starOv.idx, pageCount - 1);
+  if (!starOv.mask || !starOv.mask.isConnected) {
+    starOv.idx = 0;
+    starOvOpenMask(`⭐ 星标总览图（${total} 款 · ${pageCount} 张 · ${starOvDimsLabel(msg)}）`);
+  }
+  const h3 = starOv.mask.querySelector("[data-so-title]");
+  if (h3) {
+    h3.textContent = `⭐ 星标总览图（${total} 款 · ${pageCount} 张 · ${starOvDimsLabel(msg)}）`;
+  }
+  starOvSyncGrid();
+  starOvSetEnabled(true);
+  const status = starOv.mask.querySelector("[data-so-status]");
+  if (status) {
+    status.style.display = "none";
+  }
+  const img = starOv.mask.querySelector("[data-so-img]");
+  const cap = starOv.mask.querySelector("[data-so-cap]");
+  starOvUnloading();
+  if (total === 0) {
+    if (img) {
+      img.removeAttribute("src");
+    }
+    if (cap) {
+      cap.textContent = "当前没有星标商品，去商品列表 ⭐ 标记后再来";
+    }
+    toast("没有星标商品可预览（先去 ⭐ 标记）");
+    return;
+  }
+  if (previews.length === 0) {
+    // 第 1 张渲染失败（同排版其余页大概率一样）
+    if (img) {
+      img.removeAttribute("src");
+    }
+    if (cap) {
+      cap.textContent = "第 1 张预览失败，可调整排版后点「👁 重出预览」再试";
+    }
+    return;
+  }
+  starOv.previews[0] = previews[0];
   starOvFrame();
 }
 

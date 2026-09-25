@@ -727,6 +727,17 @@
         color: var(--vscode-descriptionForeground);
         font-size: 12px;
       }
+      .so-spinner {
+        width: 34px;
+        height: 34px;
+        border: 4px solid rgba(255, 255, 255, 0.35);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: so-spin 0.9s linear infinite;
+      }
+      @keyframes so-spin {
+        to { transform: rotate(360deg); }
+      }
       #ipPreview .ip-summ {
         font-size: 13px;
         margin-bottom: 6px;

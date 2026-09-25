@@ -117,12 +117,20 @@ export async function renderLiveGrid(
 
 // 星标封面总览图：自定义排版 cols×rows（每格封面 + 编号/售价标签）
 // 内存版：预览用（不落盘）；写文件版 renderStarOverviewGrid 复用它
+// opts.preview=true 时按低分辨率排版（每格最长边 ≤360），预览快且不落盘；
+// 生成默认全分辨率（≤1024）。任一单图解码失败只占位，不拖垮整张。
 export async function renderStarOverviewBuffer(
   rows: Array<{ code: string; img: string | null; price: number; costPrice: number }>,
   cols: number,
   rowsN: number,
   labels: { code: boolean; costPrice: boolean; salePrice: boolean },
+  opts?: { preview?: boolean },
 ): Promise<Buffer> {
+  // 兜底 clamp：防止传入超大排版把 create 画布顶爆（10×10 上限 ≈10240px 生成 / ≈3600px 预览）
+  cols = Math.min(10, Math.max(1, Math.round(cols) || 1));
+  rowsN = Math.min(10, Math.max(1, Math.round(rowsN) || 1));
+  const MAX_EDGE = opts?.preview ? 360 : 1024;
+  const MIN_EDGE = opts?.preview ? 180 : 256;
   let tileW = 300;
   let tileH = 300;
   const firstImg = rows.find((r) => r.img);
@@ -132,8 +140,6 @@ export async function renderStarOverviewBuffer(
       const w = meta.width || 0;
       const h = meta.height || 0;
       if (w > 40 && h > 40) {
-        const MAX_EDGE = 1024;
-        const MIN_EDGE = 256;
         const scale = Math.min(MAX_EDGE / w, MAX_EDGE / h, 1);
         tileW = Math.max(MIN_EDGE, Math.round(w * scale));
         tileH = Math.max(MIN_EDGE, Math.round(h * scale));
@@ -151,7 +157,14 @@ export async function renderStarOverviewBuffer(
     const cell = rows[idx];
     let input: Buffer;
     if (cell.img) {
-      input = await sharp(cell.img).resize(tileW, tileH, { fit: "fill" }).toBuffer();
+      try {
+        // limitInputPixels:false 让超大源图也能 resize；失败则该格灰底占位
+        input = await sharp(cell.img, { limitInputPixels: false })
+          .resize(tileW, tileH, { fit: "fill" })
+          .toBuffer();
+      } catch {
+        input = Buffer.from(greyCellSvg(tileW, tileH), "utf-8");
+      }
     } else {
       input = Buffer.from(greyCellSvg(tileW, tileH), "utf-8");
     }

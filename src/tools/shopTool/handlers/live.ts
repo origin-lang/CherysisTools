@@ -86,13 +86,33 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       }
       return chunks;
     }
-    const side = Math.max(3, Math.ceil(Math.sqrt(rows.length)));
+    // 自动排版最多 10×10=100 款/张，超出自动拆多张：单张画布 ≤10240px，
+    // 避免超过 sharp 像素上限（0x3FFF²）导致「Input image exceeds pixel limit」
+    const side = Math.min(10, Math.max(3, Math.ceil(Math.sqrt(rows.length))));
     const cap = side * side;
     const chunks: Array<{ rows: StarRow[]; cols: number; rowsN: number }> = [];
     for (let i = 0; i < rows.length; i += cap) {
       chunks.push({ rows: rows.slice(i, i + cap), cols: side, rowsN: side });
     }
     return chunks;
+  };
+
+  // 星标总览图：先出第 1 张预览 → 前端翻页时按需单页渲染（renderStarOverviewPage）
+  const renderPagePreview = async (
+    chunk: { rows: StarRow[]; cols: number; rowsN: number },
+    labels: { code: boolean; costPrice: boolean; salePrice: boolean },
+    pageNo: number,
+    total: number,
+  ): Promise<{ name: string; data: string }> => {
+    const buf = await renderStarOverviewBuffer(chunk.rows, chunk.cols, chunk.rowsN, labels, { preview: true });
+    const small = await sharp(buf, { limitInputPixels: false })
+      .resize({ width: 900, withoutEnlargement: true })
+      .jpeg({ quality: 82 })
+      .toBuffer();
+    return {
+      name: `星标总览_${total}款_第${pageNo + 1}张.jpg`,
+      data: `data:image/jpeg;base64,${small.toString("base64")}`,
+    };
   };
 
   return {
@@ -251,40 +271,61 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       h.postLiveState();
     },
 
-    // 星标总览图：两组 handler 逻辑见工厂顶部 buildStarRows/chunksOf
+    // 星标总览图：先出第 1 张预览 → 前端翻页时按需单页渲染（renderStarOverviewPage）
     async previewStarOverview(msg) {
       const rows = buildStarRows();
       if (!rows) {
+        post({ type: "starOverviewPreview", total: 0, pageCount: 0, previews: [] });
         return;
       }
       const g = resolveGrid(msg);
       const labels = parseLabels(msg);
       db.setSetting("star_label_options", JSON.stringify(labels));
-      const previews: Array<{ name: string; data: string }> = [];
+      const chunks = chunksOf(rows, g.cols, g.rows);
       const total = rows.length;
-      for (const [i, chunk] of chunksOf(rows, g.cols, g.rows).entries()) {
+      const previews: Array<{ name: string; data: string }> = [];
+      if (chunks.length > 0) {
         try {
-          const buf = await renderStarOverviewBuffer(chunk.rows, chunk.cols, chunk.rowsN, labels);
-          const small = await sharp(buf)
-            .resize({ width: 900, withoutEnlargement: true })
-            .jpeg({ quality: 82 })
-            .toBuffer();
-          previews.push({
-            name: `星标总览_${total}款_第${i + 1}张.jpg`,
-            data: `data:image/jpeg;base64,${small.toString("base64")}`,
-          });
+          const first = await renderPagePreview(chunks[0], labels, 0, total);
+          previews.push(first);
         } catch (err: any) {
-          log(`⚠️第 ${i + 1} 张预览失败：${err.message}`);
+          log(`⚠️第 1 张预览失败：${err.message}`);
         }
       }
       post({
         type: "starOverviewPreview",
         total,
-        count: previews.length,
+        pageCount: chunks.length,
         previews,
         cols: g.cols || 0,
         rows: g.rows || 0,
       });
+    },
+
+    // 前端翻页：单页按需渲染（预览低分辨率），失败也回传，前端遮罩可显示并重试
+    async renderStarOverviewPage(msg) {
+      const rows = buildStarRows();
+      if (!rows) {
+        post({ type: "starOverviewPagePreview", page: Number(msg?.page ?? 0), token: String(msg?.token ?? ""), error: "当前没有星标商品" });
+        return;
+      }
+      const g = resolveGrid(msg);
+      const labels = parseLabels(msg);
+      const page = Number(msg?.page ?? 0);
+      const token = String(msg?.token ?? "");
+      const chunks = chunksOf(rows, g.cols, g.rows);
+      if (page < 0 || page >= chunks.length) {
+        log(`⚠️第 ${page + 1} 张超出总览范围（共 ${chunks.length} 张）`);
+        post({ type: "starOverviewPagePreview", page, token, error: "页码超出范围" });
+        return;
+      }
+      try {
+        const preview = await renderPagePreview(chunks[page], labels, page, rows.length);
+        post({ type: "starOverviewPagePreview", page, token, preview });
+      } catch (err: any) {
+        log(`⚠️第 ${page + 1} 张渲染失败：${err.message}`);
+        post({ type: "starOverviewPagePreview", page, token, error: err.message });
+      }
     },
 
     // 预览确认后才落盘（每次弹文件夹选择器 → 写文件 → 打开输出目录）

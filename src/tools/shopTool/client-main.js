@@ -794,6 +794,10 @@ function onMessage(msg) {
       showStarOverviewPreview(msg);
       break;
     }
+    case "starOverviewPagePreview": {
+      starOvOnPagePreview(msg);
+      break;
+    }
     case "starOverviewDone": {
       onStarOverviewDone(msg);
       break;
