@@ -2793,21 +2793,31 @@ function openContextMenu(e, p, field) {
   const editable = EDITABLE_FIELDS.has(field);
   const canPaste =
     !!appClipboard || !!(navigator.clipboard && navigator.clipboard.readText);
+  const sep = `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>`;
+  const starred = !!(state.liveStars && state.liveStars.has(p.code));
+  const cellOps =
+    field
+      ? `<div class="ctx-cellops">` +
+        `<div class="ctx-cellop" data-cellop="copy" title="复制该格 (Ctrl+C)"><span>复制</span></div>` +
+        `<div class="ctx-cellop${canPaste && editable ? "" : " ctx-disabled"}" data-cellop="paste" title="粘贴到该格 (Ctrl+V)"><span>粘贴</span></div>` +
+        `<div class="ctx-cellop${CUTTABLE_FIELDS.has(field) ? "" : " ctx-disabled"}" data-cellop="cut" title="剪切该格并立即清空 (Ctrl+X)"><span>剪切</span></div>` +
+        `</div>` +
+        sep
+      : "";
   menu.innerHTML =
-    `<div class="ctx-cellops">` +
-    `<div class="ctx-cellop" data-cellop="copy" title="复制该格 (Ctrl+C)"><span class="cop-icon">📋</span><span>复制</span></div>` +
-    `<div class="ctx-cellop${canPaste && editable ? "" : " ctx-disabled"}" data-cellop="paste" title="粘贴到该格 (Ctrl+V)"><span class="cop-icon">📥</span><span>粘贴</span></div>` +
-    `<div class="ctx-cellop${CUTTABLE_FIELDS.has(field) ? "" : " ctx-disabled"}" data-cellop="cut" title="剪切该格并立即清空 (Ctrl+X)"><span class="cop-icon">✂</span><span>剪切</span></div>` +
-    `</div>` +
+    cellOps +
+    `<div class="ctx-item" data-pctx="star">${starred ? "取消标星" : "标星"}</div>` +
+    `<div class="ctx-item" data-pctx="fullname">复制完整名称</div>` +
     `<div class="ctx-item" data-copy="row">复制整行</div>` +
     `<div class="ctx-item" data-copy="table">复制整表(筛选后)</div>` +
-    `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
+    sep +
     (p.status === 0
       ? `<div class="ctx-item" data-pctx="off">下架</div>`
       : `<div class="ctx-item" data-pctx="on">上架</div>`) +
+    `<div class="ctx-item" data-pctx="stockin">补货入库</div>` +
+    sep +
     `<div class="ctx-item" data-pctx="clearimg">清空图片文件夹…</div>` +
-    `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
-    `<div class="ctx-item ctx-danger" data-pctx="delrow">🗑 删除整行（含记录）…</div>`;
+    `<div class="ctx-item ctx-danger" data-pctx="delrow">删除整行（含记录）…</div>`;
   menu.style.left = Math.min(e.clientX, window.innerWidth - 140) + "px";
   menu.style.top = Math.min(e.clientY, window.innerHeight - 60) + "px";
   document.body.appendChild(menu);
@@ -2820,10 +2830,13 @@ function openContextMenu(e, p, field) {
       close();
     };
   }
-  menu.querySelector('[data-cellop="copy"]').onclick = () => {
-    copyCell(p, field);
-    close();
-  };
+  const copyBtn = menu.querySelector('[data-cellop="copy"]');
+  if (copyBtn) {
+    copyBtn.onclick = () => {
+      copyCell(p, field);
+      close();
+    };
+  }
   const pasteBtn = menu.querySelector('[data-cellop="paste"]');
   if (pasteBtn) {
     pasteBtn.onclick = () => {
@@ -2883,6 +2896,36 @@ function openContextMenu(e, p, field) {
     });
     close();
   };
+  menu.querySelector('[data-pctx="star"]').onclick = () => {
+    const code = p.code;
+    if (!state.liveStars) {
+      state.liveStars = new Set();
+    }
+    const set = new Set(state.liveStars);
+    if (set.has(code)) {
+      set.delete(code);
+    } else {
+      set.add(code);
+    }
+    state.liveStars = set;
+    post({ type: "toggleLiveStar", code });
+    renderProducts();
+    close();
+  };
+  const fullItem = menu.querySelector('[data-pctx="fullname"]');
+  if (fullItem) {
+    fullItem.onclick = () => {
+      copyText(fullName(p));
+      close();
+    };
+  }
+  const stockItem = menu.querySelector('[data-pctx="stockin"]');
+  if (stockItem) {
+    stockItem.onclick = () => {
+      openStockIn(p);
+      close();
+    };
+  }
   setTimeout(() => {
     const onDown = (ev) => {
       if (!menu.contains(ev.target)) {
@@ -2904,17 +2947,24 @@ function onProductCtx(e) {
     return;
   }
   const td = e.target.closest("td[data-pid]");
-  if (!td) {
+  if (td) {
+    const p = state.products.find((x) => x.id === Number(td.dataset.pid));
+    if (!p) {
+      return;
+    }
+    if (td.dataset.f) {
+      selectListCell(Number(td.dataset.pid), td.dataset.f);
+    }
+    openContextMenu(e, p, td.dataset.f);
     return;
   }
-  const p = state.products.find((x) => x.id === Number(td.dataset.pid));
-  if (!p) {
-    return;
+  const tr = e.target.closest("tr[data-id]");
+  if (tr) {
+    const p = state.products.find((x) => x.id === Number(tr.dataset.id));
+    if (p) {
+      openContextMenu(e, p, undefined);
+    }
   }
-  if (td.dataset.f) {
-    selectListCell(Number(td.dataset.pid), td.dataset.f);
-  }
-  openContextMenu(e, p, td.dataset.f);
 }
 
 function openCoverMenu(e, p) {
