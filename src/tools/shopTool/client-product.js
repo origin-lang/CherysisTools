@@ -2897,6 +2897,8 @@ function openContextMenu(e, p, field) {
 function onProductCtx(e) {
   const coverEl = e.target.closest("[data-p-act='img']");
   if (coverEl) {
+    e.preventDefault();
+    e.stopPropagation();
     const p = state.products.find((x) => x.id === Number(coverEl.dataset.id));
     if (p) {
       openCoverMenu(e, p);
@@ -2922,10 +2924,10 @@ function openCoverMenu(e, p) {
   const items = [];
   if (coverData) {
     items.push({
-      label: "📋 复制封面图",
+      label: "📋 复制图片",
       run: () => {
         copyImageFromDataUrl(coverData).then((ok) =>
-          ok ? toast("已复制封面图") : toast("复制失败"),
+          ok ? toast("已复制图片") : toast("复制失败"),
         );
       },
     });
