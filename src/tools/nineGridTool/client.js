@@ -35,9 +35,8 @@
         state.dragSrcIdx = null;
         renderAll();
       },
-      selectOutputFolder: () => post({ type: "selectOutputFolder", toolName: "nineGridTool" }),
       openMergeOutputFolder: () => post({ type: "openMergeOutputFolder", toolName: "nineGridTool", outDir: state.outDir }),
-      runMerge: () => post({ type: "runMerge", toolName: "nineGridTool", grid: state.gridItems, outDir: state.outDir }),
+      runMerge: () => post({ type: "runMerge", toolName: "nineGridTool", grid: state.gridItems }),
       selectLabelImage: () => post({ type: "selectLabelImage", toolName: "nineGridTool" }),
       selectLabelOutDir: () => post({ type: "selectLabelOutDir", toolName: "nineGridTool" }),
       openLabelOutputFolder: () => post({ type: "openLabelOutputFolder", toolName: "nineGridTool", targetDir: state.labelOutDir }),
@@ -76,6 +75,9 @@
       document.body.onclick = () => {
         if (ctxMenu) {ctxMenu.style.display = "none";}
       };
+      gridContainer.addEventListener("dragover", handleGridDragOver);
+      gridContainer.addEventListener("dragleave", clearDropOver);
+      gridContainer.addEventListener("drop", handleGridDrop);
     }
     renderAll();
     // 回放缓存消息
@@ -110,6 +112,51 @@
     ctxMenu.style.left = ev.pageX + "px";
     ctxMenu.style.top = ev.pageY + "px";
     ctxMenu.style.display = "block";
+  }
+
+  function clearDropOver() {
+    if (!gridContainer) {return;}
+    gridContainer.classList.remove("drop-over");
+    for (const c of gridContainer.children) {
+      c.classList.remove("drop-over");
+    }
+  }
+
+  function handleGridDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    clearDropOver();
+    const cell = e.target && e.target.closest ? e.target.closest(".grid-cell") : null;
+    if (cell) {
+      cell.classList.add("drop-over");
+    } else if (gridContainer) {
+      gridContainer.classList.add("drop-over");
+    }
+  }
+
+  function handleGridDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    clearDropOver();
+    const dt = e.dataTransfer;
+    const uriList =
+      (dt && dt.getData("application/vnd.code.uri-list")) ||
+      (dt && dt.getData("text/uri-list")) ||
+      "";
+    const uris = uriList
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter((s) => s.startsWith("file://"));
+    if (!uris.length) {return;}
+    const cell = e.target && e.target.closest ? e.target.closest(".grid-cell") : null;
+    const targetIdx =
+      cell && gridContainer ? [].indexOf.call(gridContainer.children, cell) : -1;
+    post({
+      type: "dropImageUris",
+      toolName: "nineGridTool",
+      uris,
+      targetIdx,
+    });
   }
 
   function updateStatus() {
@@ -158,8 +205,25 @@
       renderAll();
     } else if (msg.type === "setOutputDir") {
       state.outDir = msg.path;
-      const el = document.getElementById("outDirInput");
-      if (el) {el.value = msg.path;}
+      const btn = document.getElementById("btnOpenOut");
+      if (btn) {btn.disabled = false;}
+    } else if (msg.type === "droppedImagePaths") {
+      const paths = Array.isArray(msg.paths) ? msg.paths : [];
+      if (paths.length) {
+        Object.assign(state.uriMap, msg.uriMap || {});
+        const ti = Number(msg.targetIdx);
+        const target = Number.isInteger(ti) && ti >= 0 && ti < 9 ? ti : null;
+        if (target !== null) {
+          state.gridItems[target] = paths[0];
+        }
+        const rest = target !== null ? paths.slice(1) : paths;
+        for (const p of rest) {
+          const emptyIdx = state.gridItems.findIndex((x) => x === null);
+          if (emptyIdx === -1) {break;}
+          state.gridItems[emptyIdx] = p;
+        }
+        renderAll();
+      }
     } else if (msg.type === "setLabelOutDir") {
       state.labelOutDir = msg.path;
       const el = document.getElementById("labelOutDirInput");

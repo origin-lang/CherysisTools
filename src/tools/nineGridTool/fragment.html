@@ -160,6 +160,13 @@
         overflow: hidden;
         text-overflow: ellipsis;
       }
+      .grid-cell.drop-over {
+        box-shadow: inset 0 0 0 3px var(--vscode-focusBorder, #4080c0);
+      }
+      #gridContainer.drop-over {
+        outline: 2px dashed var(--vscode-focusBorder, #4080c0);
+        outline-offset: 2px;
+      }
       .context-menu {
         position: absolute;
         z-index: 999;
@@ -204,45 +211,26 @@
     <!-- tabMerge 拼图 -->
     <div id="tabMerge" class="sub-panel show">
       <div class="card-panel">
-        <div class="form-group">
-          <label class="form-label">九宫格｜缩略预览 + 底部文件名</label>
-          <div class="form-row">
-            <button id="btnAddImg" data-action="openSelectImages">
-              ➕选择多张图片
-            </button>
-            <button id="btnLoadFolder" data-action="openLoadImageFolder">
-              📂读取文件夹内图片
-            </button>
-            <button id="btnClear" data-action="btnClear">🧹清空全部网格</button>
-          </div>
-          <div class="tip-text">
-            提示：点击格子选中，再点击另一个格子完成交换；右键弹出菜单可旋转 /
-            删除
-          </div>
+        <div class="form-row">
+          <button id="btnAddImg" data-action="openSelectImages">
+            ➕选择多张图片
+          </button>
+          <button id="btnLoadFolder" data-action="openLoadImageFolder">
+            📂读取文件夹内图片
+          </button>
+          <button id="btnClear" data-action="btnClear">🧹清空全部网格</button>
         </div>
         <div class="grid-outer">
           <div class="grid-container" id="gridContainer"></div>
         </div>
         <div class="tip-text" id="statusText">已填充：0 / 9</div>
-      </div>
-      <!-- ✅输出配置移动到网格预览下方，执行按钮放到这个卡片内部 -->
-      <div class="card-panel">
-        <div class="form-group">
-          <label class="form-label">输出配置</label>
-          <div class="form-row">
-            <input
-              id="outDirInput"
-              style="flex: 1; margin: 0"
-              placeholder="请选择输出文件夹"
-            />
-            <button id="btnSelectOut" data-action="selectOutputFolder">
-              选择输出文件夹
-            </button>
-            <button data-action="openMergeOutputFolder">打开文件夹</button>
-          </div>
-          <div class="tip-text">可手动粘贴路径，也可按钮选择文件夹</div>
+        <div class="tip-text">
+          点击两格互换位置 · 右键旋转/删除 · 直接把图片拖进某个格子
         </div>
         <div class="form-actions">
+          <button id="btnOpenOut" data-action="openMergeOutputFolder" disabled>
+            📂 打开输出文件夹
+          </button>
           <button
             id="btnRunMerge"
             data-action="runMerge"

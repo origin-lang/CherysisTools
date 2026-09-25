@@ -174,13 +174,6 @@ export const nineGridTool: ToolDefinition = {
         ctx.postToWebview({ type: "addImagePaths", paths, uriMap });
         break;
       }
-      case "selectOutputFolder": {
-        const dir = await ctx.selectFolder();
-        if (dir) {
-          ctx.postToWebview({ type: "setOutputDir", path: dir });
-        }
-        break;
-      }
       case "openMergeOutputFolder": {
         const outDir = msg.outDir?.trim();
         if (!outDir) {
@@ -263,19 +256,65 @@ export const nineGridTool: ToolDefinition = {
           log("❌失败：网格必须填满9张图片");
           break;
         }
-        if (!msg.outDir || !fs.existsSync(msg.outDir)) {
-          log("❌失败：请选择有效输出文件夹");
+        const dir = await ctx.selectFolder("选择九宫格拼图输出目录");
+        if (!dir) {
+          log("❌未选择输出目录，已取消");
           break;
         }
+        ctx.postToWebview({ type: "setOutputDir", path: dir });
         try {
-          const outFile = await handleNineGridMergeFromList(
-            imgPaths,
-            msg.outDir,
-          );
+          const outFile = await handleNineGridMergeFromList(imgPaths, dir);
           log(`✅拼图完成，输出文件：${outFile}`);
+          try {
+            await vscodeCommandsReveal(outFile);
+          } catch (err) {
+            log(`⚠自动打开输出文件夹失败：${(err as Error).message}`);
+          }
         } catch (err: any) {
           log(`❌拼图异常：${err.message}`);
         }
+        break;
+      }
+      case "dropImageUris": {
+        const uris: unknown[] = Array.isArray(msg.uris) ? msg.uris : [];
+        const paths: string[] = [];
+        for (const u of uris) {
+          const uri = String(u ?? "").trim();
+          if (!uri) {
+            continue;
+          }
+          let fsPath = "";
+          try {
+            fsPath = vscode.Uri.parse(uri).fsPath;
+          } catch {
+            continue;
+          }
+          if (!fsPath || !fs.existsSync(fsPath)) {
+            continue;
+          }
+          const ext = path.extname(fsPath).toLowerCase();
+          if (IMG_EXTS.has(ext)) {
+            paths.push(fsPath);
+          }
+        }
+        if (!paths.length) {
+          log("❌拖入的文件都不是支持的图片格式");
+          break;
+        }
+        const uriMap: Record<string, string> = {};
+        for (const fp of paths) {
+          uriMap[fp] = await readImageToBase64(fp);
+        }
+        const rawIdx = Number(msg.targetIdx);
+        const targetIdx =
+          Number.isInteger(rawIdx) && rawIdx >= 0 && rawIdx < 9 ? rawIdx : -1;
+        ctx.postToWebview({
+          type: "droppedImagePaths",
+          paths,
+          uriMap,
+          targetIdx,
+        });
+        log(`✅拖入 ${paths.length} 张图片`);
         break;
       }
       case "runLabel": {
