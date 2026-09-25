@@ -48,6 +48,12 @@
         post({ type: "runLabel", toolName: "nineGridTool", srcPath: state.labelSrcPath, startNum: state.labelStartNum, outDir: state.labelOutDir });
       },
       rotate: () => post({ type: "rotateImage", toolName: "nineGridTool", idx: state.contextIdx, grid: state.gridItems }),
+      copy: () => {
+        const path = state.gridItems[state.contextIdx];
+        if (!path || !state.uriMap[path]) {return;}
+        copyImageToClipboard(state.uriMap[path]);
+      },
+      paste: () => pasteImageFromClipboard(),
       delete: () => {
         state.gridItems[state.contextIdx] = null;
         renderCell(state.contextIdx);
@@ -110,9 +116,14 @@
 
   function handleRightClick(idx, ev) {
     ev.preventDefault();
-    if (state.gridItems[idx] === null) {return;}
     state.contextIdx = idx;
     if (!ctxMenu) {return;}
+    const hasImg = state.gridItems[idx] !== null;
+    const items = ctxMenu.querySelectorAll("[data-action]");
+    for (const it of items) {
+      const needImg = it.dataset.action === "rotate" || it.dataset.action === "copy" || it.dataset.action === "delete";
+      it.classList.toggle("disabled", needImg && !hasImg);
+    }
     ctxMenu.style.left = ev.pageX + "px";
     ctxMenu.style.top = ev.pageY + "px";
     ctxMenu.style.display = "block";
@@ -205,6 +216,97 @@
     if (el) {
       el.textContent = text;
     }
+  }
+
+  function dataUrlToBlob(dataUrl) {
+    const m = /^data:([^;,]+);base64,(.+)$/.exec(dataUrl);
+    if (!m) {
+      return new Blob();
+    }
+    const bytes = Uint8Array.from(atob(m[2]), (c) => c.charCodeAt(0));
+    return new Blob([bytes], { type: m[1] });
+  }
+
+  function readBlobAsDataURL(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(reader.error || new Error("read error"));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function copyImageToClipboard(dataUrl) {
+    try {
+      const blob = dataUrlToBlob(dataUrl);
+      const type = blob.type || "image/png";
+      innerCopy(blob, type);
+    } catch (err) {
+      statusText("❌复制失败");
+    }
+  }
+
+  function innerCopy(blob, type) {
+    if (navigator.clipboard && navigator.clipboard.write && window.ClipboardItem) {
+      navigator.clipboard
+        .write([new ClipboardItem({ [type]: blob })])
+        .then(() => {
+          statusText("✅图片已复制，可在任意处粘贴");
+        })
+        .catch(() => {
+          statusText("❌复制失败：剪贴板权限被拒");
+        });
+      return;
+    }
+    statusText("❌当前环境不支持复制图片");
+  }
+
+  function pasteImageFromClipboard() {
+    if (!navigator.clipboard || !navigator.clipboard.read) {
+      statusText("❌当前环境不支持读取剪贴板");
+      return;
+    }
+    navigator.clipboard
+      .read()
+      .then((cItems) => {
+        if (!cItems || !cItems.length) {
+          statusText("剪贴板里没有图片");
+          return;
+        }
+        let handled = false;
+        for (const item of cItems) {
+          const t = Array.from(item.types || []).find((x) =>
+            String(x).toLowerCase().startsWith("image/"),
+          );
+          if (!t) {
+            continue;
+          }
+          item
+            .getType(t)
+            .then((blob) => {
+              if (!blob) {
+                statusText("剪贴板里没有图片");
+                return;
+              }
+              return readBlobAsDataURL(blob).then((data) => {
+                if (data) {
+                  postImages([{ name: `clipboard_${Date.now()}`, data }], state.contextIdx);
+                } else {
+                  statusText("剪贴板里没有图片");
+                }
+              });
+            })
+            .catch(() => statusText("❌读取剪贴板图片失败"));
+          handled = true;
+          break;
+        }
+        if (!handled) {
+          statusText("剪贴板里没有图片");
+        }
+      })
+      .catch(() => {
+        statusText("❌读取剪贴板失败：权限被拒");
+      });
   }
 
   // 图片以 base64 交给后端落盘（拿到真实路径后才能拼图），先排队，

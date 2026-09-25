@@ -184,6 +184,11 @@
       .context-menu div:hover {
         background: var(--vscode-list-hoverBackground);
       }
+      .context-menu div.disabled {
+        color: var(--vscode-descriptionForeground);
+        opacity: 0.6;
+        pointer-events: none;
+      }
       /* 序号模块预览框放大 */
       .preview-box {
         width: 180px;
@@ -225,7 +230,7 @@
         </div>
         <div class="tip-text" id="statusText">已填充：0 / 9</div>
         <div class="tip-text">
-          点击两格互换位置 · 右键旋转/删除 · 拖图放进某格 · 也可 Ctrl+V 粘贴图片
+          点击两格互换位置 · 拖图放进某格 · 右键菜单可旋转/复制/粘贴/删除
         </div>
         <div class="form-actions">
           <button id="btnOpenOut" data-action="openMergeOutputFolder" disabled>
@@ -297,6 +302,8 @@
     <!-- 右键菜单 -->
     <div class="context-menu" id="ctxMenu" style="display: none">
       <div data-action="rotate">🔄 顺时针旋转90°</div>
+      <div data-action="copy">📋 复制图片</div>
+      <div data-action="paste">📥 粘贴图片到这里</div>
       <div data-action="delete">🗑 删除当前图片</div>
     </div>
   </body>
