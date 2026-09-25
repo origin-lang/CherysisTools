@@ -341,13 +341,13 @@
     }
 
     function openImportLiveGroup(groupNo) {
-      const radio = (val, label) =>
-        `<label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;cursor:pointer"><input type="radio" name="liSep" value="${val}"/>${label}</label>`;
+      const radio = (val, label, checked) =>
+        `<label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;cursor:pointer"><input type="radio" name="liSep" value="${val}"${checked ? " checked" : ""}/>${label}</label>`;
       const mask = showModal(`
         <h3>导入本组（第 ${groupNo} 组）清单</h3>
         <p class="muted" style="margin-bottom:6px">分隔符（只能选一种，不可混用）：</p>
         <div style="margin-bottom:8px">
-          ${radio("space", "空格")}
+          ${radio("space", "空格", true)}
           ${radio("tab", "Tab")}
           ${radio("comma", "逗号")}
           ${radio("line", "换行")}
@@ -374,7 +374,9 @@
                   : /\r?\n+/,
           )
           .map((t) => t.trim())
-          .filter(Boolean);
+          .filter(Boolean)
+          // 纯数字（如 332）自动规范成真实编号 A332；无法规范的原样保留以便标「不合法」
+          .map((t) => canonicalCode(t) ?? t);
       };
       const curSep = () => {
         const r = [...mask.querySelectorAll('input[name="liSep"]')].find(
