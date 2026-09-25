@@ -31,9 +31,8 @@
       const area = $("liveGridArea");
       const label = $("liveOutLabel");
       if (label) {
-        label.textContent = state.liveOutDir
-          ? `输出：${state.liveOutDir}`
-          : "（未选择输出目录）";
+        label.textContent = state.liveOutDir ? state.liveOutDir : "未选择";
+        label.classList.toggle("live-out-unset", !state.liveOutDir);
       }
       if (!area) {
         return;

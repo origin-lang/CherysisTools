@@ -105,6 +105,10 @@
       .btn-danger {
         color: var(--vscode-errorForeground);
       }
+      .btn-lg {
+        padding: 7px 18px;
+        font-size: 13px;
+      }
       select,
       input,
       textarea {
@@ -965,6 +969,13 @@
       .toolbar-fill {
         flex: 1;
       }
+      #liveOutLabel {
+        color: var(--vscode-foreground);
+        word-break: break-all;
+      }
+      #liveOutLabel.live-out-unset {
+        color: #d19a66;
+      }
       #liveGridArea {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
@@ -1361,14 +1372,19 @@ L032,1"></textarea>
           <span class="toolbar-fill"></span>
           <button id="liveCopyListBtn">复制清单</button>
           <button id="exportLiveBtn" title="导出当前排品清单为 Excel">📤 导出Excel</button>
+          <button id="liveGenerateBtn" class="btn-teal btn-lg">生成全部九宫格</button>
+        </div>
+        <div class="toolbar" style="margin-top: -6px">
+          <span class="muted">📂 输出目录：</span>
+          <span id="liveOutLabel"></span>
+          <button id="livePickOutBtn" title="选择九宫格输出目录">选择…</button>
+          <span class="toolbar-fill"></span>
+          <span class="muted">底部标注：</span>
           <select id="liveGridLabel" title="生成九宫格时每格底部标注的样式">
-            <option value="num">底部 序号（1号）</option>
-            <option value="code">底部 编号（A001）</option>
-            <option value="none">底部不标文字</option>
+            <option value="num">序号（1号）</option>
+            <option value="code">编号（A001）</option>
+            <option value="none">不标文字</option>
           </select>
-          <button id="livePickOutBtn" title="选择九宫格输出目录">输出目录</button>
-          <span class="muted" id="liveOutLabel"></span>
-          <button id="liveGenerateBtn" class="btn-teal">生成全部九宫格</button>
         </div>
         <p class="muted" style="margin: 0 0 8px 0">🟩绿=有效编号 · 🟥红=编号不存在 · 🟧橙=同编号出现≥2次（排品重复）。每组右上角「生成这组」只重出这一张图并复制这组清单。</p>
         <div id="liveGridArea"></div>
