@@ -1006,7 +1006,7 @@ var starOv = {
   cols: 0,
   rows: 0,
   lastDir: "",
-  labels: { code: true, costPrice: false, salePrice: true },
+  labels: { code: true, costPrice: false, salePrice: true, fontSize: 0 },
   dirty: false,
 };
 
@@ -1017,6 +1017,17 @@ const STAR_GRID_PRESETS = [
   ["3x4", "3 × 4"],
   ["4x4", "4 × 4"],
   ["5x5", "5 × 5"],
+];
+
+// 星标图上标注的字号预设：0＝随格子自动（推荐）；其余为格子坐标系固定像素
+const STAR_FONT_PRESETS = [
+  ["0", "自动（推荐）"],
+  ["28", "28"],
+  ["36", "36"],
+  ["48", "48"],
+  ["64", "64"],
+  ["80", "80"],
+  ["96", "96"],
 ];
 
 function starOvDims() {
@@ -1248,6 +1259,7 @@ function starOvOpenMask(title) {
     if (saved.code !== undefined) starOv.labels.code = saved.code;
     if (saved.costPrice !== undefined) starOv.labels.costPrice = saved.costPrice;
     if (saved.salePrice !== undefined) starOv.labels.salePrice = saved.salePrice;
+    if (saved.fontSize !== undefined) starOv.labels.fontSize = Number(saved.fontSize) || 0;
   } catch { /* 忽略 */ }
   const L = starOv.labels;
   const mask = showModal(`
@@ -1272,6 +1284,12 @@ function starOvOpenMask(title) {
       <label class="io-chip"><input type="checkbox" data-so-lbl="code" ${L.code ? "checked" : ""} />编号</label>
       <label class="io-chip"><input type="checkbox" data-so-lbl="costPrice" ${L.costPrice ? "checked" : ""} />进价</label>
       <label class="io-chip"><input type="checkbox" data-so-lbl="salePrice" ${L.salePrice ? "checked" : ""} />售价</label>
+      <span class="muted" style="margin-left:8px">字号</span>
+      <select data-so-fs title="标注文字大小；「自动」随格子尺寸缩放（推荐）">
+        ${STAR_FONT_PRESETS.map(
+          ([v, t]) => `<option value="${v}">${t}</option>`,
+        ).join("")}
+      </select>
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
       <button data-so-prev class="mini-btn">‹ 上一张</button>
@@ -1322,6 +1340,12 @@ function starOvOpenMask(title) {
       starOvSyncDirty();
     };
   });
+  mask.querySelector("[data-so-fs]").value = String(starOv.labels.fontSize || 0);
+  mask.querySelector("[data-so-fs]").onchange = () => {
+    starOv.labels.fontSize = parseInt(mask.querySelector("[data-so-fs]").value || "0", 10) || 0;
+    starOv.dirty = true;
+    starOvSyncDirty();
+  };
   mask.querySelector("[data-so-refresh]").onclick = () => starOvRequestPreview();
   mask.querySelector("[data-so-prev]").onclick = () => {
     if (starOv.generating || starOv.reloading) {

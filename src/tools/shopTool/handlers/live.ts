@@ -6,7 +6,7 @@ import { Handler, HandlerCtx } from "./types.js";
 import { LivePlanRow, Product } from "../db.js";
 import { canonicalCode } from "../pricing.js";
 import { firstImageFile } from "../images.js";
-import { renderLiveGrid, renderStarOverviewBuffer, renderStarOverviewGrid } from "../liveGrid.js";
+import { renderLiveGrid, renderStarOverviewBuffer, renderStarOverviewGrid, StarLabelOptions } from "../liveGrid.js";
 
 function localYmd(): string {
   const d = new Date();
@@ -51,11 +51,18 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
   };
 
   type StarRow = { code: string; img: string | null; price: number; costPrice: number };
-  const parseLabels = (msg: any): { code: boolean; costPrice: boolean; salePrice: boolean } => ({
-    code: msg?.labels?.code !== false,
-    costPrice: msg?.labels?.costPrice === true,
-    salePrice: msg?.labels?.salePrice !== false,
-  });
+  const parseLabels = (msg: any): StarLabelOptions => {
+    const rawFs = Number(msg?.labels?.fontSize);
+    return {
+      code: msg?.labels?.code !== false,
+      costPrice: msg?.labels?.costPrice === true,
+      salePrice: msg?.labels?.salePrice !== false,
+      fontSize:
+        Number.isFinite(rawFs) && rawFs > 0
+          ? Math.min(200, Math.max(14, Math.round(rawFs)))
+          : 0,
+    };
+  };
   // 排版解析：0/缺省＝自动（方形）；否则每张固定 cols×rows，末页留空
   const resolveGrid = (msg: any): { cols: number; rows: number } => {
     const fromMsg =
@@ -100,7 +107,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
   // 星标总览图：先出第 1 张预览 → 前端翻页时按需单页渲染（renderStarOverviewPage）
   const renderPagePreview = async (
     chunk: { rows: StarRow[]; cols: number; rowsN: number },
-    labels: { code: boolean; costPrice: boolean; salePrice: boolean },
+    labels: StarLabelOptions,
     pageNo: number,
     total: number,
   ): Promise<{ name: string; data: string }> => {
