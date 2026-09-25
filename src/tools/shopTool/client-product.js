@@ -2932,6 +2932,32 @@ function openCoverMenu(e, p) {
       },
     });
   }
+  if (navigator.clipboard && navigator.clipboard.read) {
+    items.push({
+      label: "📥 粘贴图片",
+      run: () => {
+        readClipboardImageDataURL()
+          .then((data) => {
+            if (data) {
+              post({
+                type: "receiveImageData",
+                code: p.code,
+                items: [{ name: `paste_${Date.now()}`, data }],
+              });
+            } else {
+              toast("剪贴板里没有图片");
+            }
+          })
+          .catch((err) => {
+            toast(
+              err && err.message === "noimage"
+                ? "剪贴板里没有图片"
+                : "❌读取剪贴板失败：权限被拒",
+            );
+          });
+      },
+    });
+  }
   items.push({ label: "🔍 查看大图", run: () => openLightbox(p) });
   showImageCtxMenu(e.clientX, e.clientY, items);
 }
@@ -2951,6 +2977,39 @@ function readFileAsDataURL(file) {
     reader.onload = () => resolve(String(reader.result || ""));
     reader.onerror = () => reject(reader.error || new Error("read error"));
     reader.readAsDataURL(file);
+  });
+}
+
+function readBlobAsDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("read error"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+// 菜单触发式「粘贴图片」：主动读剪贴板拿第一张图，与 Ctrl+V/拖入走同一条 receiveImageData 落图链路
+function readClipboardImageDataURL() {
+  return navigator.clipboard.read().then((cItems) => {
+    if (!cItems || !cItems.length) {
+      throw new Error("noimage");
+    }
+    for (const item of cItems) {
+      const t = Array.from(item.types || []).find((x) =>
+        String(x).toLowerCase().startsWith("image/"),
+      );
+      if (!t) {
+        continue;
+      }
+      return item.getType(t).then((blob) => {
+        if (!blob) {
+          throw new Error("noimage");
+        }
+        return readBlobAsDataURL(blob);
+      });
+    }
+    throw new Error("noimage");
   });
 }
 
