@@ -14,8 +14,8 @@ export function fileStamp(): string {
 }
 
 /**
- * 编号统一规范：1 个字母前缀 + 数字补零到 3 位，范围 1~9999；纯数字默认 L 前缀。
- * 例：L7→L007、L76→L076、a7→A007、L1044→L1044、76→L076。
+ * 编号统一规范：1 个字母前缀 + 数字补零到 3 位，范围 1~9999；纯数字默认 A 前缀。
+ * 例：L7→L007、L76→L076、a7→A007、L1044→L1044、76→A076。
  * 只做首尾 trim，不剥内部分隔符：A-001 / L 7 / AB012 一律视为格式错误（返回 null）。
  */
 export function canonicalCode(raw: unknown): string | null {
@@ -29,7 +29,7 @@ export function canonicalCode(raw: unknown): string | null {
   } else {
     m = s.match(/^(\d{1,4})$/);
     if (m) {
-      prefix = "L";
+      prefix = "A";
       digits = m[1];
     } else {
       return null;

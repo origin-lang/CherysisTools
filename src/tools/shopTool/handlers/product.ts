@@ -303,7 +303,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
     addProduct(msg) {
       const code = canonicalCode(msg.code);
       if (!code) {
-        log("❌编号格式错误（应形如 L001 或 A007：1 个字母 + 数字，3 位补零，最多 4 位）");
+        log("❌编号格式错误（应形如 A001 或 L007：1 个字母 + 数字，3 位补零，最多 4 位）");
         return;
       }
       if (db.getProductByCode(code)) {
@@ -392,7 +392,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       if (field === "code") {
         const code = canonicalCode(msg.value);
         if (!code) {
-          log("❌编号格式错误（应形如 L001 或 A007：1 个字母 + 数字，3 位补零，最多 4 位）");
+          log("❌编号格式错误（应形如 A001 或 L007：1 个字母 + 数字，3 位补零，最多 4 位）");
           return;
         }
         const exist = db.getProductByCode(code);

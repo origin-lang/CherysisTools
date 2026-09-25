@@ -190,7 +190,7 @@ window.toolClients = window.toolClients || {};
     function canonicalCode(raw) {
       const s = String(raw ?? "").trim();
       let m = s.match(/^([A-Za-z])(\d{1,4})$/);
-      let prefix = "L";
+      let prefix = "A";
       let digits;
       if (m) {
         prefix = m[1].toUpperCase();
@@ -211,7 +211,7 @@ window.toolClients = window.toolClients || {};
 
     /** 某个前缀下最小的未用编号（填空号；1~9999），已用完返回 null。仅前端扫描 state.products。 */
     function nextAvailableCode(rawPrefix) {
-      const prefix = String(rawPrefix || "L").toUpperCase();
+      const prefix = String(rawPrefix || "A").toUpperCase();
       const used = new Set();
       for (const p of state.products || []) {
         const mm = String(p.code || "").match(/^([A-Za-z])(\d{1,4})$/);
