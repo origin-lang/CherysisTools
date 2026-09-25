@@ -991,8 +991,6 @@ function setStarsForSelected(on) {
 }
 
 // ===== 星标总览图「先预览，点生成才落盘」 =====
-var starOv = { mask: null, idx: 0, previews: [], total: 0, generating: false };
-
 var starOv = {
   mask: null,
   idx: 0,
@@ -1007,7 +1005,6 @@ var starOv = {
   rows: 0,
   lastDir: "",
   labels: { code: true, costPrice: false, salePrice: true, fontSize: 0 },
-  dirty: false,
   _fsTimer: null,
 };
 
@@ -1023,12 +1020,10 @@ const STAR_GRID_PRESETS = [
 // 星标图上标注的字号预设：0＝随格子自动（推荐）；其余为格子坐标系固定像素
 const STAR_FONT_PRESETS = [
   ["0", "自动（推荐）"],
-  ["28", "28"],
-  ["36", "36"],
-  ["48", "48"],
-  ["64", "64"],
-  ["80", "80"],
-  ["96", "96"],
+  ["6", "6%"],
+  ["9", "9%"],
+  ["12", "12%"],
+  ["16", "16%"],
 ];
 
 function starOvDims() {
@@ -1079,31 +1074,12 @@ function starOvSetEnabled(on) {
     return;
   }
   const q = (s) => starOv.mask.querySelector(s);
-  ["[data-so-grid]", "[data-so-cc]", "[data-so-cr]", "[data-so-refresh]", "[data-so-prev]", "[data-so-next]", "[data-so-gen]"].forEach((s) => {
+  ["[data-so-grid]", "[data-so-cc]", "[data-so-cr]", "[data-so-prev]", "[data-so-next]", "[data-so-gen]"].forEach((s) => {
     const el = q(s);
     if (el) {
       el.disabled = !on;
     }
   });
-}
-
-function starOvSyncDirty() {
-  if (!starOv.mask || !starOv.mask.isConnected) {
-    return;
-  }
-  const btn = starOv.mask.querySelector("[data-so-refresh]");
-  if (!btn) {
-    return;
-  }
-  if (starOv.dirty) {
-    btn.textContent = "👁 预览（未刷新）";
-    btn.style.color = "#e8a33d";
-    btn.style.borderColor = "#e8a33d";
-  } else {
-    btn.textContent = "👁 重出预览";
-    btn.style.color = "";
-    btn.style.borderColor = "";
-  }
 }
 
 // 图片区遮罩：半透明 + 转圈 + 文案，渲染期间盖住旧图
@@ -1131,10 +1107,8 @@ function starOvUnloading() {
   }
 }
 
-// 改排版/标注/字号后自动重预览（防抖 700ms）；「重出预览」按钮仍可手动强制刷新
+// 改排版/标注/字号后自动重预览（防抖 700ms）
 function starOvScheduleRefresh() {
-  starOv.dirty = true;
-  starOvSyncDirty();
   if (starOv._fsTimer) {
     clearTimeout(starOv._fsTimer);
   }
@@ -1153,8 +1127,6 @@ function starOvRequestPreview() {
   if (starOv.generating || starOv.reloading) {
     return;
   }
-  starOv.dirty = false;
-  starOvSyncDirty();
   const d = starOvDims();
   if ((d.cols && !d.rows) || (!d.cols && d.rows)) {
     toast("自定义排版要同时填「行」和「列」");
@@ -1245,7 +1217,7 @@ function starOvOnPagePreview(msg) {
   }
   const token = Number(msg.token ?? -1);
   if (token !== starOv.token) {
-    return; // 陈旧响应（换排版/重出预览后翻页的旧图）
+    return; // 陈旧响应（换排版/标注后翻页的旧图）
   }
   const page = Number(msg.page ?? starOv.pending);
   if (starOv.pending === page) {
@@ -1296,7 +1268,6 @@ function starOvOpenMask(title) {
         <input data-so-cr type="number" min="1" max="10" style="width:56px" title="行数" />行
         × <input data-so-cc type="number" min="1" max="10" style="width:56px" title="列数" />列
       </span>
-      <button data-so-refresh class="mini-btn" style="margin-left:auto" title="按当前排版和标注重新出预览图">👁 重出预览</button>
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
       <span class="muted">图上标注</span>
@@ -1304,7 +1275,7 @@ function starOvOpenMask(title) {
       <label class="io-chip"><input type="checkbox" data-so-lbl="costPrice" ${L.costPrice ? "checked" : ""} />进价</label>
       <label class="io-chip"><input type="checkbox" data-so-lbl="salePrice" ${L.salePrice ? "checked" : ""} />售价</label>
       <span class="muted" style="margin-left:8px">字号</span>
-      <select data-so-fs title="标注文字大小；「自动」随格子尺寸缩放（推荐）">
+      <select data-so-fs title="标注文字大小＝占格子边长的百分比；预览与生成相对比例一致（推荐「自动」）">
         ${STAR_FONT_PRESETS.map(
           ([v, t]) => `<option value="${v}">${t}</option>`,
         ).join("")}
@@ -1355,12 +1326,17 @@ function starOvOpenMask(title) {
       starOvScheduleRefresh();
     };
   });
-  mask.querySelector("[data-so-fs]").value = String(starOv.labels.fontSize || 0);
-  mask.querySelector("[data-so-fs]").onchange = () => {
-    starOv.labels.fontSize = parseInt(mask.querySelector("[data-so-fs]").value || "0", 10) || 0;
+  const fsSel = mask.querySelector("[data-so-fs]");
+  fsSel.value = String(starOv.labels.fontSize || 0);
+  if (fsSel.selectedIndex === -1) {
+    // 旧版本保存的固定像素值已不适用百分比预设 → 回退自动
+    starOv.labels.fontSize = 0;
+    fsSel.value = "0";
+  }
+  fsSel.onchange = () => {
+    starOv.labels.fontSize = parseInt(fsSel.value || "0", 10) || 0;
     starOvScheduleRefresh();
   };
-  mask.querySelector("[data-so-refresh]").onclick = () => starOvRequestPreview();
   mask.querySelector("[data-so-prev]").onclick = () => {
     if (starOv.generating || starOv.reloading) {
       return;
@@ -1384,7 +1360,7 @@ function showStarOverviewPreview(msg) {
   const previews = Array.isArray(msg.previews) ? msg.previews : [];
   const total = Number(msg.total || 0);
   const pageCount = Math.max(1, Number(msg.pageCount ?? 0));
-  // 换排版/重出预览：作废所有在途翻页响应
+  // 换排版/标注：作废所有在途翻页响应
   starOv.token++;
   starOv.reloading = false;
   starOv.pending = -1;
@@ -1428,7 +1404,7 @@ function showStarOverviewPreview(msg) {
       img.removeAttribute("src");
     }
     if (cap) {
-      cap.textContent = "第 1 张预览失败，可调整排版后点「👁 重出预览」再试";
+      cap.textContent = "第 1 张预览失败，可调整排版/标注后自动重试";
     }
     return;
   }
@@ -1454,6 +1430,10 @@ function starOvGenerate() {
     `<div class="muted" style="align-self:center;margin-right:auto">正在生成…（请选择输出目录）</div>` +
     `<button data-so-close>取消</button>`;
   footer.querySelector("[data-so-close]").onclick = () => closeModal();
+  const status = starOv.mask.querySelector("[data-so-status]");
+  if (status) {
+    status.style.display = "none";
+  }
   post({ type: "generateStarOverview", cols: d.cols || 0, rows: d.rows || 0, labels: starOv.labels });
 }
 
@@ -1476,6 +1456,35 @@ function onStarOverviewCancelled() {
       status.style.display = "";
     }
     starOvShowFooter(starOv.mask);
+  }
+}
+
+// 生成进度：服务端每张写消息时回发一条，界面实时显示，避免误以为卡死
+function starOvOnProgress(msg) {
+  if (!starOv.mask || !starOv.mask.isConnected) {
+    return;
+  }
+  const status = starOv.mask.querySelector("[data-so-status]");
+  if (status) {
+    const total = Number(msg.total || 0);
+    const page = Number(msg.page || 0);
+    const name = String(msg.name || "");
+    const ok = msg.ok !== false;
+    if (!ok) {
+      status.textContent = `第 ${page} / ${total} 张生成失败已跳过（${name}）`;
+    } else if (page <= 0) {
+      status.textContent = total > 0 ? `正在生成…共 ${total} 张` : "正在生成…";
+    } else {
+      status.textContent = `正在生成第 ${page} / ${total} 张…`;
+    }
+    status.style.display = "";
+  }
+  const footer = starOv.mask.querySelector("[data-so-footer]");
+  if (footer) {
+    const div = footer.querySelector('[style*="align-self:center"]');
+    if (div && div.textContent.indexOf("请选择输出目录") !== -1) {
+      div.textContent = "正在生成…";
+    }
   }
 }
 

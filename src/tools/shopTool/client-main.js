@@ -798,6 +798,10 @@ function onMessage(msg) {
       starOvOnPagePreview(msg);
       break;
     }
+    case "starOverviewProgress": {
+      starOvOnProgress(msg);
+      break;
+    }
     case "starOverviewDone": {
       onStarOverviewDone(msg);
       break;

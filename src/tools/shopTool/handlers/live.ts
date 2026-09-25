@@ -57,10 +57,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       code: msg?.labels?.code !== false,
       costPrice: msg?.labels?.costPrice === true,
       salePrice: msg?.labels?.salePrice !== false,
-      fontSize:
-        Number.isFinite(rawFs) && rawFs > 0
-          ? Math.min(200, Math.max(14, Math.round(rawFs)))
-          : 0,
+      fontSize: Number.isFinite(rawFs) && rawFs > 0 ? Math.min(50, Math.max(1, Math.round(rawFs))) : 0,
     };
   };
   // 排版解析：0/缺省＝自动（方形）；否则每张固定 cols×rows，末页留空
@@ -366,12 +363,15 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       }
       const files: string[] = [];
       const total = rows.length;
+      post({ type: "starOverviewProgress", page: 0, total, name: "", ok: true });
       for (const [i, chunk] of chunksOf(rows, g.cols, g.rows).entries()) {
         const fileName = `星标总览_${total}款_第${i + 1}张_${localYmd()}.jpg`;
         try {
           files.push(await renderStarOverviewGrid(chunk.rows, outDir, fileName, chunk.cols, chunk.rowsN, labels));
+          post({ type: "starOverviewProgress", page: i + 1, total, name: fileName, ok: true });
         } catch (err: any) {
           log(`❌第 ${i + 1} 张生成失败：${err.message}`);
+          post({ type: "starOverviewProgress", page: i + 1, total, name: fileName, ok: false });
         }
       }
       if (files.length === 0) {

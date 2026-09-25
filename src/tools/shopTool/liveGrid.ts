@@ -22,8 +22,9 @@ function labelSvg(w: number, h: number, text: string): string {
   </svg>`;
 }
 
-// 星标总览图：根据 labels 选项在底部压一行文字，白字黑描�?
-// labels.fontSize>0 时用固定字号（格子坐标系像素），否则按格子自�?
+// 星标总览图：根据 labels 选项在底部压一行文字，白字黑描边。
+// labels.fontSize>0 时字号＝占格子边长的百分比（0=按格子自动缩放）。
+// 预览(每格≤360px)与生成(每格≤1024px)两者的字/格相对比例完全一致，所见即所得。
 export type StarLabelOptions = {
   code: boolean;
   costPrice: boolean;
@@ -46,18 +47,19 @@ function starLabelSvg(
   if (parts.length === 0) return "";
   const text = parts.join(" ");
   const multi = parts.length > 1;
+  const pct = labels.fontSize > 0 ? Math.min(50, labels.fontSize) : 0;
   const fs =
-    labels.fontSize > 0
-      ? Math.max(14, Math.round(labels.fontSize))
+    pct > 0
+      ? Math.max(14, Math.round((Math.min(w, h) * pct) / 100))
       : Math.max(20, Math.round(Math.min(w, h) * (multi ? 0.09 : 0.12)));
-  const stroke = Math.max(10, Math.round(fs * 0.3));
+  const stroke = Math.max(4, Math.round(fs * 0.3));
   return `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
   <text x="50%" y="${Math.round(h * 0.93)}" font-family="'Consolas','Segoe UI',monospace" font-weight="900" font-size="${fs}" fill="#ffffff" stroke="#000000" stroke-width="${stroke}" stroke-linejoin="round" paint-order="stroke fill" text-anchor="middle" dominant-baseline="bottom">${text}</text>
   </svg>`;
 }
 
-// 直播排品九宫格：cells 长度 9，每�?{ code, img }；缺�?缺码显示灰底占位�?
-// tile 尺寸按第一张有图商品等�?clamp（长�?�?024、短�?�?56），避免 canvas �?sharp 像素上限�?
+// 直播排品九宫格：cells 长度 9，每项 { code, img }；缺图/缺码显示灰底占位。
+// tile 尺寸按第一张有图商品等比 clamp（长边 ≤1024、短边 ≥256），避免 canvas 超 sharp 像素上限。
 export async function renderLiveGrid(
   cells: Array<{ code: string; img: string | null }>,
   outDir: string,
@@ -79,7 +81,7 @@ export async function renderLiveGrid(
         tileH = Math.max(MIN_EDGE, Math.round(h * scale));
       }
     } catch {
-      /* 尺寸读取失败用默�?*/
+      /* 尺寸读取失败用默认 */
     }
   }
   const canvasW = tileW * 3;
@@ -111,7 +113,7 @@ export async function renderLiveGrid(
     }
   }
   const endNum = startNum + 8;
-  const outFile = path.join(outDir, `${startNum}�?${endNum}号_${localYmd()}.jpg`);
+  const outFile = path.join(outDir, `${startNum}号-${endNum}号_${localYmd()}.jpg`);
   await sharp({
     create: {
       width: canvasW,
@@ -126,10 +128,10 @@ export async function renderLiveGrid(
   return outFile;
 }
 
-// 星标封面总览图：自定义排�?cols×rows（每格封�?+ 编号/售价标签�?
-// 内存版：预览用（不落盘）；写文件�?renderStarOverviewGrid 复用�?
-// opts.preview=true 时按低分辨率排版（每格最长边 �?60），预览快且不落盘；
-// 生成默认全分辨率（≤1024）。任一单图解码失败只占位，不拖垮整张�?
+// 星标封面总览图：自定义排版 cols×rows（每格封面 + 编号/售价标签）。
+// 内存版：预览用（不落盘）；写文件版 renderStarOverviewGrid 复用它。
+// opts.preview=true 时按低分辨率排版（每格最长边 ≤360），预览快且不落盘；
+// 生成默认全分辨率（≤1024）。任一单图解码失败只占位，不拖垮整张。
 export async function renderStarOverviewBuffer(
   rows: Array<{ code: string; img: string | null; price: number; costPrice: number }>,
   cols: number,
@@ -137,7 +139,7 @@ export async function renderStarOverviewBuffer(
   labels: StarLabelOptions,
   opts?: { preview?: boolean },
 ): Promise<Buffer> {
-  // 兜底 clamp：防止传入超大排版把 create 画布顶爆�?0×10 上限 �?0240px 生成 / �?600px 预览�?
+  // 兜底 clamp：防止传入超大排版把 create 画布顶爆（10×10 上限 ≈10240px 生成 / ≈3600px 预览）
   cols = Math.min(10, Math.max(1, Math.round(cols) || 1));
   rowsN = Math.min(10, Math.max(1, Math.round(rowsN) || 1));
   const MAX_EDGE = opts?.preview ? 360 : 1024;
@@ -156,7 +158,7 @@ export async function renderStarOverviewBuffer(
         tileH = Math.max(MIN_EDGE, Math.round(h * scale));
       }
     } catch {
-      /* 尺寸读取失败用默�?*/
+      /* 尺寸读取失败用默认 */
     }
   }
   const canvasW = tileW * cols;
@@ -169,7 +171,7 @@ export async function renderStarOverviewBuffer(
     let input: Buffer;
     if (cell.img) {
       try {
-        // limitInputPixels:false 让超大源图也�?resize；失败则该格灰底占位
+        // limitInputPixels:false 让超大源图也能 resize；失败则该格灰底占位
         input = await sharp(cell.img, { limitInputPixels: false })
           .resize(tileW, tileH, { fit: "fill" })
           .toBuffer();
