@@ -241,6 +241,8 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
         }
       }
       const onlyGroups = Array.isArray(msg.groups) ? new Set((msg.groups as any[]).map(Number)) : null;
+      const labelMode: "num" | "code" | "none" =
+        msg.labelMode === "code" || msg.labelMode === "none" ? msg.labelMode : "num";
       let groupNos = [...groups.keys()].sort((a, b) => a - b);
       if (onlyGroups) {
         groupNos = groupNos.filter((g) => onlyGroups.has(g));
@@ -258,7 +260,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
           cells.push({ code, img: code ? firstImageFile(dir, code) : null });
         }
         try {
-          files.push(await renderLiveGrid(cells, outDir, g));
+          files.push(await renderLiveGrid(cells, outDir, g, labelMode));
         } catch (err: any) {
           log(`❌第 ${g} 组生成失败：${err.message}`);
         }

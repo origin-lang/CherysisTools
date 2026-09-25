@@ -59,11 +59,13 @@ function starLabelSvg(
 }
 
 // 直播排品九宫格：cells 长度 9，每项 { code, img }；缺图/缺码显示灰底占位。
+// labelMode：num＝底部标「N号」；code＝标商品真实编号；none＝不标任何文字。
 // tile 尺寸按第一张有图商品等比 clamp（长边 ≤1024、短边 ≥256），避免 canvas 超 sharp 像素上限。
 export async function renderLiveGrid(
   cells: Array<{ code: string; img: string | null }>,
   outDir: string,
   groupNo: number,
+  labelMode: "num" | "code" | "none" = "num",
 ): Promise<string> {
   let tileW = 300;
   let tileH = 300;
@@ -103,8 +105,8 @@ export async function renderLiveGrid(
       left: col * tileW,
       top: row * tileH,
     });
-    if (cell.code) {
-      const text = `${startNum + idx}号`;
+    if (labelMode !== "none" && cell.code) {
+      const text = labelMode === "code" ? cell.code : `${startNum + idx}号`;
       layers.push({
         input: Buffer.from(labelSvg(tileW, tileH, text), "utf-8"),
         left: col * tileW,

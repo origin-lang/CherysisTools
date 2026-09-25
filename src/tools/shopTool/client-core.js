@@ -15,6 +15,7 @@ window.toolClients = window.toolClients || {};
         col_visible_list: "",
         col_visible_gallery: "",
         col_show_ops: "1",
+        live_grid_label: "",
         import_fields: "",
         import_mode: "",
         export_fields: "",

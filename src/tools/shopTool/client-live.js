@@ -1,5 +1,10 @@
 // shopTool 前端模块（加载顺序第 6 个）：直播排品（九宫格/加组/生成/预览）
 // 拆分自原 src/tools/shopTool/client.js，逻辑未改动
+    function liveLabelMode() {
+      const v = String(state.settings.live_grid_label || "num");
+      return v === "code" || v === "none" ? v : "num";
+    }
+
     function renderLiveStars() {
       const wrap = $("liveStarWrap");
       if (!wrap) {
@@ -331,6 +336,7 @@
         type: "generateLiveGrid",
         plan: state.livePlan.map((r) => ({ ...r })),
         groups: [groupNo],
+        labelMode: liveLabelMode(),
       });
     }
 
@@ -453,6 +459,15 @@
       if (pick) {
         pick.onclick = () => post({ type: "pickLiveOutDir" });
       }
+      const labelSel = $("liveGridLabel");
+      if (labelSel) {
+        const saved = String(state.settings.live_grid_label || "num");
+        labelSel.value = saved === "code" || saved === "none" ? saved : "num";
+        labelSel.onchange = () => {
+          state.settings.live_grid_label = labelSel.value;
+          post({ type: "saveSettings", key: "live_grid_label", value: labelSel.value });
+        };
+      }
       const gen = $("liveGenerateBtn");
       if (gen) {
         gen.onclick = () => {
@@ -467,6 +482,7 @@
           post({
             type: "generateLiveGrid",
             plan: state.livePlan.map((r) => ({ ...r })),
+            labelMode: liveLabelMode(),
           });
         };
       }

@@ -417,6 +417,7 @@ export const shopTool: ToolDefinition = {
           col_image_list: getSetting("col_image_list"),
           col_image_gallery: getSetting("col_image_gallery"),
           col_show_ops: String(getSetting("col_show_ops") || "1"),
+          live_grid_label: getSetting("live_grid_label"),
           import_fields: getSetting("import_fields"),
           import_mode: getSetting("import_mode"),
           export_fields: getSetting("export_fields"),
