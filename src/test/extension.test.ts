@@ -144,6 +144,27 @@ suite('直播九宫格输出目录', () => {
 		assert.strictEqual(harness.settings.get('live_out_dir'), nextDir);
 	});
 
+	test('无星标生成时回传取消状态', async () => {
+		const dir = makeDir('star');
+		const messages: any[] = [];
+		const h = {
+			ctx: {
+				selectFolder: async () => undefined,
+			},
+			db: {
+				getLiveStars: () => [],
+				getProducts: () => [],
+			},
+			getSetting: (key: string) => (key === 'image_dir' ? dir : ''),
+			post: (message: any) => messages.push(message),
+			log: () => undefined,
+		} as unknown as HandlerCtx;
+
+		await liveHandlers(h).generateStarOverview({}, h);
+
+		assert.deepStrictEqual(messages, [{ type: 'starOverviewCancelled' }]);
+	});
+
 	test('取消选择目录时不打开确认框', async () => {
 		const harness = createHarness({ pickDirs: [undefined], actions: ['取消'] });
 

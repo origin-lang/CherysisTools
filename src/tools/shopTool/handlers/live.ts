@@ -356,6 +356,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
     async generateStarOverview(msg) {
       const rows = buildStarRows();
       if (!rows) {
+        post({ type: "starOverviewCancelled" });
         return;
       }
       const g = resolveGrid(msg);

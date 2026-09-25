@@ -1381,7 +1381,7 @@ function showStarOverviewPreview(msg) {
     h3.textContent = `⭐ 星标总览图（${total} 款 · ${pageCount} 张 · ${starOvDimsLabel(msg)}）`;
   }
   starOvSyncGrid();
-  starOvSetEnabled(true);
+  starOvSetEnabled(total > 0);
   const status = starOv.mask.querySelector("[data-so-status]");
   if (status) {
     status.style.display = "none";
@@ -1420,6 +1420,10 @@ function starOvGenerate() {
   if (!starOv.mask || !starOv.mask.isConnected) {
     return;
   }
+  if (starOv.total <= 0) {
+    toast("当前没有星标商品，先去商品列表 ⭐ 标记");
+    return;
+  }
   const d = starOvDims();
   if ((d.cols && !d.rows) || (!d.cols && d.rows)) {
     toast("自定义排版要同时填「行」和「列」");
@@ -1450,13 +1454,17 @@ function starOvShowFooter(mask) {
 function onStarOverviewCancelled() {
   starOv.generating = false;
   starOv.reloading = false;
+  const noStars = starOv.total <= 0;
   if (starOv.mask && starOv.mask.isConnected) {
     const status = starOv.mask.querySelector("[data-so-status]");
     if (status) {
-      status.textContent = "已取消生成，可再次生成";
+      status.textContent = noStars
+        ? "当前没有星标商品，无法生成"
+        : "已取消生成，可再次生成";
       status.style.display = "";
     }
     starOvShowFooter(starOv.mask);
+    starOvSetEnabled(!noStars);
   }
 }
 
@@ -2806,9 +2814,9 @@ function openContextMenu(e, p, field) {
     (p.status === 0
       ? `<div class="ctx-item" data-pctx="off">下架</div>`
       : `<div class="ctx-item" data-pctx="on">上架</div>`) +
-    `<div class="ctx-item" data-pctx="clearimg">清空图片文件夹…</div>` +
+    `<div class="ctx-item" data-pctx="clearimg">清空图片文件夹</div>` +
     `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
-    `<div class="ctx-item ctx-danger" data-pctx="delrow">🗑 删除整行（含记录）…</div>`;
+    `<div class="ctx-item ctx-danger" data-pctx="delrow">🗑 删除整行（含记录）</div>`;
   menu.style.left = Math.min(e.clientX, window.innerWidth - 140) + "px";
   menu.style.top = Math.min(e.clientY, window.innerHeight - 60) + "px";
   document.body.appendChild(menu);
