@@ -31,7 +31,6 @@ var pendingImportToken = ""; // 商品导入「解析预览→确认提交」的
 var ipMask = null; // 当前商品导入弹窗遮罩（提交成功/取消后复位）
 
 const TEXT_FILTER_FIELDS = new Set([
-  "code",
   "name",
   "series",
   "soldTotal",
@@ -39,6 +38,149 @@ const TEXT_FILTER_FIELDS = new Set([
   "remark",
 ]);
 const RANGE_FILTER_FIELDS = new Set(["cost_price", "sale_price", "stockTotal"]);
+// 编号列筛选语法：含范围符走「前缀+数字区间」，否则沿用子串匹配。
+const CODE_HINT =
+  "筛选编号：支持 A1~A33 / a1~a33 / 1~33（两端无字母按 A 段）/ 多段 A1~A33,L1~L22；" +
+  "范围符（~ ～ - — 到 至）两侧空格可忽略；单个带字母的编号按精确匹配（L1→L001，" +
+  "要「所有 L1xx」请写 L1~L199）；纯数字或文本按子串匹配（如 007、7、A）。";
+// 一个范围项：字母+数字 ~ 字母+数字，范围符两侧允许空格
+const CODE_TERM_RE = /^([A-Za-z]?)(\d{1,4})\s*[~～\-—到至]\s*([A-Za-z]?)(\d{1,4})$/;
+// 列表分隔（不含空格：空格留给范围符两侧的容错）
+const CODE_LIST_RE = /[,，、;；\n\r]+/;
+const CODE_HAS_RANGE_RE = /[~～\-—到至]/;
+
+/**
+ * 单个编号词元 → {p,n}；字母可省（按 A 段），n ∈ 0~9999。非编号词元返回 null。
+ * bareAsA=false 时要求必须带字母（排序沿用旧口径：裸数字不参与字母分组）。
+ */
+function parseCodeTok(s, bareAsA) {
+  const m = String(s ?? "")
+    .trim()
+    .match(/^([A-Za-z]?)(\d{1,4})$/);
+  if (!m) {
+    return null;
+  }
+  if (!m[1] && bareAsA === false) {
+    return null;
+  }
+  const n = Number(m[2]);
+  if (!Number.isInteger(n) || n < 0 || n > 9999) {
+    return null;
+  }
+  return { p: (m[1] || "A").toUpperCase(), n };
+}
+
+const CODE_BAD_HINT = {
+  mixedPrefix: "两侧字母不一致：请用同一个字母，如 A1~A33",
+  halfPrefix: "字母要么两端都写（A1~A33），要么两端都不写（1~33）",
+  reversed: "区间反了，请从小到大写，如 A1~A33",
+  invalid: "解析不出合法区间：格式为 字母+数字~字母+数字，如 A1~A33",
+};
+
+/**
+ * 解析编号列筛选表达式 → { terms, bad, msg }。
+ * 逗号分段，多段取并集。每段：
+ *  - 含范围符 → 区间项（两端字母要么都有要么都没有，无字母按 A 段）；
+ *  - 带字母的单值（A7 / l007）→ 精确编号项（lo=hi），补零口径与库里一致；
+ *  - 其余（纯数字 7/007、文本 A、链…）→ 子串项，维持旧行为。
+ * 含范围符但解析失败时 bad=true（0 结果 + 红框提示，不静默出空表）。
+ */
+function parseCodeQuery(raw) {
+  const q = { terms: [], bad: false, msg: "" };
+  const groups = String(raw ?? "").split(CODE_LIST_RE);
+  for (const g of groups) {
+    const s = g.trim();
+    if (!s) {
+      continue;
+    }
+    if (!CODE_HAS_RANGE_RE.test(s)) {
+      const one = parseCodeTok(s, false);
+      q.terms.push(
+        one
+          ? { kind: "range", p: one.p, lo: one.n, hi: one.n }
+          : { kind: "text", s: s.toLowerCase() },
+      );
+      continue;
+    }
+    const m = s.match(CODE_TERM_RE);
+    if (!m) {
+      if (!q.bad) {
+        q.bad = true;
+        q.msg = `「${s}」${CODE_BAD_HINT.invalid}`;
+      }
+      continue;
+    }
+    const p1 = m[1].toUpperCase();
+    const p2 = m[3].toUpperCase();
+    let why = "";
+    if (p1 && p2 && p1 !== p2) {
+      why = CODE_BAD_HINT.mixedPrefix;
+    } else if (!!p1 !== !!p2) {
+      why = CODE_BAD_HINT.halfPrefix;
+    }
+    const lo = Number(m[2]);
+    const hi = Number(m[4]);
+    if (!why && lo > hi) {
+      why = CODE_BAD_HINT.reversed;
+    }
+    if (why) {
+      if (!q.bad) {
+        q.bad = true;
+        q.msg = `「${s}」${why}`;
+      }
+      continue;
+    }
+    q.terms.push({ kind: "range", p: p1 || p2 || "A", lo, hi });
+  }
+  return q;
+}
+
+function matchCodeRange(code, t) {
+  const c = parseCodeTok(code);
+  if (!c || c.p !== t.p) {
+    return false;
+  }
+  return c.n >= t.lo && c.n <= t.hi;
+}
+
+/** 编号是否命中筛选表达式；多段取并集（任一段命中即列出）。表达式写错（bad）一律不命中，空表达式视为不过滤。 */
+function matchCodeQuery(code, q) {
+  if (!q) {
+    return true;
+  }
+  if (q.bad) {
+    return false;
+  }
+  if (!q.terms.length) {
+    return true;
+  }
+  for (const t of q.terms) {
+    if (t.kind === "range") {
+      if (matchCodeRange(code, t)) {
+        return true;
+      }
+    } else if (
+      String(code ?? "")
+        .toLowerCase()
+        .includes(t.s)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+let _cqRaw = null;
+let _cqParsed = null;
+/** parseCodeQuery 的一格记忆：一次渲染会多次调 filteredProducts，避免重复解析。 */
+function codeQueryMemo(raw) {
+  const k = String(raw ?? "");
+  if (_cqRaw !== k) {
+    _cqRaw = k;
+    _cqParsed = parseCodeQuery(k);
+  }
+  return _cqParsed;
+}
 
 function saveFieldValue(pid, field, raw) {
   const res = sanitizeProductField(field, raw);
@@ -128,6 +270,7 @@ function syncListCellState() {
 
 function filteredProducts() {
   const st = filters.f_status || "";
+  const cq = codeQueryMemo(filters.f_code);
   return state.products
     .filter((p) => {
       if (st === "on") {
@@ -147,6 +290,7 @@ function filteredProducts() {
       }
       return true;
     })
+    .filter((p) => matchCodeQuery(p.code, cq))
     .filter((p) => {
       for (const key of TEXT_FILTER_FIELDS) {
         const v = filters["f_" + key];
@@ -187,12 +331,10 @@ function filteredProducts() {
     .sort((a, b) => {
       let r = 0;
       if (sortKey === "code") {
-        const ca = String(a.code || "").match(/^([A-Za-z])(\d{1,4})$/);
-        const cb = String(b.code || "").match(/^([A-Za-z])(\d{1,4})$/);
+        const ca = parseCodeTok(a.code, false);
+        const cb = parseCodeTok(b.code, false);
         if (ca && cb) {
-          const pa = ca[1].toUpperCase();
-          const pb = cb[1].toUpperCase();
-          r = pa < pb ? -1 : pa > pb ? 1 : Number(ca[2]) - Number(cb[2]);
+          r = ca.p < cb.p ? -1 : ca.p > cb.p ? 1 : ca.n - cb.n;
         } else {
           r = String(a.code || "").localeCompare(String(b.code || ""));
         }
@@ -408,6 +550,11 @@ function filterControl(key) {
       const label =
         key === "cost_price" ? "进价" : key === "sale_price" ? "售价" : "库存";
       return `<input class="filter-cell" type="text" data-col-f="${key}" data-fr="range" title="筛选${label}：输入 10~30 表示 10 到 30，也可直接输 10 或 >10 / <30" placeholder="范围" value="${esc(String(filters["f_" + key] || ""))}" />`;
+    }
+    case "code": {
+      const cq = codeQueryMemo(cur);
+      const title = cq.bad ? `写法有问题：${cq.msg}` : CODE_HINT;
+      return `<input class="filter-cell${cq.bad ? " err" : ""}" data-col-f="code" title="${esc(title)}" placeholder="编号/范围" value="${esc(String(cur))}" />`;
     }
     default:
       return `<input class="filter-cell" data-col-f="${key}" title="筛选${key}" placeholder="筛选" value="${esc(String(cur))}" />`;
@@ -2807,8 +2954,8 @@ function openContextMenu(e, p, field) {
     `<div class="ctx-cellop${canPaste && editable ? "" : " ctx-disabled"}" data-cellop="paste" title="粘贴到该格 (Ctrl+V)"><span class="cop-icon">📥</span><span>粘贴</span></div>` +
     `<div class="ctx-cellop${CUTTABLE_FIELDS.has(field) ? "" : " ctx-disabled"}" data-cellop="cut" title="剪切该格并立即清空 (Ctrl+X)"><span class="cop-icon">✂</span><span>剪切</span></div>` +
     `</div>` +
-    `<div class="ctx-item" data-pctx="fullname">复制完整名称</div>` +
     `<div class="ctx-item" data-copy="row">复制整行</div>` +
+    `<div class="ctx-item" data-pctx="fullname">复制完整名称</div>` +
     `<div class="ctx-item" data-copy="table">复制整表(筛选后)</div>` +
     `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
     (p.status === 0

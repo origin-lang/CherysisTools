@@ -172,6 +172,8 @@
         width: 100%;
         border-collapse: collapse;
         font-size: var(--table-font-size, 13px);
+        /* 编号列最小宽：原本由「筛选框 44px + 单元格内边距 16px」撑着，约 60px；这里给到 1.5 倍 */
+        --code-col-min: 90px;
       }
       .data-table th,
       .data-table td {
@@ -184,6 +186,7 @@
       }
       .data-table td.cell-code {
         width: 1%;
+        min-width: var(--code-col-min);
       }
       .data-table td.cell-selected {
         outline: 1px solid var(--vscode-focusBorder);
@@ -219,6 +222,7 @@
       }
       .data-table th:has(.th-label[data-sort="code"]) {
         width: 1%;
+        min-width: var(--code-col-min);
       }
       .data-table .filter-row td {
         position: sticky;
@@ -244,6 +248,10 @@
         padding: 2px 4px;
         font-size: 11px;
         box-sizing: border-box;
+      }
+      .data-table .filter-cell.err {
+        border-color: #e0404b;
+        background: rgba(224, 64, 75, 0.08);
       }
       .data-table td[data-f="remark"] {
         max-width: 320px;
@@ -1480,7 +1488,7 @@ L032,1"></textarea>
       </div>
       <div class="panel">
         <h4 style="margin: 0 0 8px 0">商品列表操作提示</h4>
-        <p class="muted" style="margin: 0; line-height: 1.8">表头下小框可筛选对应列；单击单元格框选，Ctrl+C/X/V 复制/剪切/粘贴该格、Esc 取消框选；双击单元格编辑（回车或点击别处即保存）；右键可剪切/复制/粘贴、复制整行/删除整行</p>
+        <p class="muted" style="margin: 0; line-height: 1.8">表头下小框可筛选对应列（编号框可输 A1~A33 范围）；单击单元格框选，Ctrl+C/X/V 复制/剪切/粘贴该格、Esc 取消框选；双击单元格编辑（回车或点击别处即保存）；右键可剪切/复制/粘贴、复制整行/删除整行</p>
       </div>
       <div class="panel">
         <h4 style="margin: 0 0 8px 0">录入与命名规范</h4>
