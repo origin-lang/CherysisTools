@@ -362,16 +362,17 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
         }
       }
       const files: string[] = [];
-      const total = rows.length;
-      post({ type: "starOverviewProgress", page: 0, total, name: "", ok: true });
-      for (const [i, chunk] of chunksOf(rows, g.cols, g.rows).entries()) {
-        const fileName = `星标总览_${total}款_第${i + 1}张_${localYmd()}.jpg`;
+      const chunks = chunksOf(rows, g.cols, g.rows);
+      const pages = chunks.length;
+      post({ type: "starOverviewProgress", page: 0, total: pages, name: "", ok: true });
+      for (const [i, chunk] of chunks.entries()) {
+        const fileName = `星标总览_${rows.length}款_第${i + 1}张_${localYmd()}.jpg`;
         try {
           files.push(await renderStarOverviewGrid(chunk.rows, outDir, fileName, chunk.cols, chunk.rowsN, labels));
-          post({ type: "starOverviewProgress", page: i + 1, total, name: fileName, ok: true });
+          post({ type: "starOverviewProgress", page: i + 1, total: pages, name: fileName, ok: true });
         } catch (err: any) {
           log(`❌第 ${i + 1} 张生成失败：${err.message}`);
-          post({ type: "starOverviewProgress", page: i + 1, total, name: fileName, ok: false });
+          post({ type: "starOverviewProgress", page: i + 1, total: pages, name: fileName, ok: false });
         }
       }
       if (files.length === 0) {
@@ -383,7 +384,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       } catch {
         /* 忽略打开失败 */
       }
-      log(`🖼星标总览：${total} 款，已生成 ${files.length} 张 → ${outDir}`);
+      log(`🖼星标总览：${rows.length} 款，已生成 ${files.length} 张 → ${outDir}`);
       post({ type: "starOverviewDone", dir: outDir, count: files.length });
     },
 
