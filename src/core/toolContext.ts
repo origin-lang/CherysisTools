@@ -24,6 +24,7 @@ export interface ToolContext {
   selectFiles(filters?: Record<string, string[]>): Promise<string[]>;
   /** 弹出模态确认对话框，返回用户是否确认 */
   confirm(message: string, detail?: string): Promise<boolean>;
+  chooseAction(message: string, detail: string, actions: string[]): Promise<string | undefined>;
 }
 
 /** 创建工具上下文 */
@@ -82,6 +83,18 @@ export function createToolContext(
         "确定",
       );
       return pick === "确定";
+    },
+    async chooseAction(message, detail, actions) {
+      const items: vscode.MessageItem[] = actions.map((title, index) => ({
+        title,
+        isCloseAffordance: index === actions.length - 1,
+      }));
+      const picked = await vscode.window.showWarningMessage<vscode.MessageItem>(
+        message,
+        { modal: true, detail },
+        ...items,
+      );
+      return picked?.title;
     },
   };
 }

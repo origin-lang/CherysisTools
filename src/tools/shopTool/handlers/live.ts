@@ -216,13 +216,40 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
         log("❌先填至少一个排品格子再生成");
         return;
       }
-      const picked = await ctx.selectFolder("选择直播排品九宫格输出目录");
-      if (!picked) {
-        log("❌未选择输出目录，已取消");
-        return;
+      let outDir = String(h.getSetting("live_out_dir") || "").trim();
+      while (true) {
+        let validDir = false;
+        if (outDir) {
+          try {
+            validDir = fs.statSync(outDir).isDirectory();
+          } catch {
+            validDir = false;
+          }
+        }
+        if (!validDir) {
+          const picked = await ctx.selectFolder("选择直播排品九宫格输出目录");
+          if (!picked) {
+            log("❌未选择输出目录，已取消");
+            return;
+          }
+          outDir = picked;
+          db.setSetting("live_out_dir", outDir);
+          h.postLiveState();
+        }
+        const action = await ctx.chooseAction(
+          "确认生成九宫格",
+          outDir,
+          ["确定生成", "更换目录", "取消"],
+        );
+        if (action === "确定生成") {
+          break;
+        }
+        if (action !== "更换目录") {
+          log("❌已取消生成");
+          return;
+        }
+        outDir = "";
       }
-      const outDir = picked;
-      db.setSetting("live_out_dir", outDir);
       if (!fs.existsSync(outDir)) {
         try {
           fs.mkdirSync(outDir, { recursive: true });
