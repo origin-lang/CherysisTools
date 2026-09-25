@@ -197,13 +197,6 @@ export const nineGridTool: ToolDefinition = {
         }
         break;
       }
-      case "selectLabelOutDir": {
-        const dir = await ctx.selectFolder();
-        if (dir) {
-          ctx.postToWebview({ type: "setLabelOutDir", path: dir });
-        }
-        break;
-      }
       case "openLabelOutputFolder": {
         const targetDir = msg.targetDir?.trim();
         if (!targetDir) {
@@ -382,7 +375,6 @@ export const nineGridTool: ToolDefinition = {
         log("▶开始执行图片添加序号");
         const srcPath = msg.srcPath;
         const startNum = Number(msg.startNum);
-        const outDir = msg.outDir;
         if (!srcPath || !fs.existsSync(srcPath)) {
           log("❌失败：请先选择有效九宫格图片");
           break;
@@ -391,9 +383,20 @@ export const nineGridTool: ToolDefinition = {
           log("❌失败：起始编号必须是≥1整数");
           break;
         }
+        const dir = await ctx.selectFolder("选择序号生成输出目录");
+        if (!dir) {
+          log("❌未选择输出目录，已取消");
+          break;
+        }
+        ctx.postToWebview({ type: "setOutputDir", path: dir });
         try {
-          const outFile = await handleNineGridLabel(srcPath, startNum, outDir);
+          const outFile = await handleNineGridLabel(srcPath, startNum, dir);
           log(`✅序号生成完成，输出文件：${outFile}`);
+          try {
+            await vscodeCommandsReveal(outFile);
+          } catch (err) {
+            log(`⚠自动打开输出文件夹失败：${(err as Error).message}`);
+          }
         } catch (err: any) {
           log(`❌序号生成异常：${err.message}`);
         }

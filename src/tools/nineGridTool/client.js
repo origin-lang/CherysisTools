@@ -10,7 +10,6 @@
     outDir: "",
     labelSrcPath: "",
     labelStartNum: 1,
-    labelOutDir: "",
   };
   let pendingMessages = [];
   let pendingItems = [];
@@ -25,7 +24,6 @@
     state.outDir = "";
     state.labelSrcPath = "";
     state.labelStartNum = 1;
-    state.labelOutDir = "";
     pendingItems = [];
 
     const actionMap = {
@@ -40,12 +38,11 @@
       openMergeOutputFolder: () => post({ type: "openMergeOutputFolder", toolName: "nineGridTool", outDir: state.outDir }),
       runMerge: () => post({ type: "runMerge", toolName: "nineGridTool", grid: state.gridItems }),
       selectLabelImage: () => post({ type: "selectLabelImage", toolName: "nineGridTool" }),
-      selectLabelOutDir: () => post({ type: "selectLabelOutDir", toolName: "nineGridTool" }),
-      openLabelOutputFolder: () => post({ type: "openLabelOutputFolder", toolName: "nineGridTool", targetDir: state.labelOutDir }),
+      openLabelOutputFolder: () => post({ type: "openLabelOutputFolder", toolName: "nineGridTool", targetDir: state.outDir }),
       runLabel: () => {
         const numEl = document.getElementById("labelStartNum");
         state.labelStartNum = parseInt(numEl?.value || "1", 10);
-        post({ type: "runLabel", toolName: "nineGridTool", srcPath: state.labelSrcPath, startNum: state.labelStartNum, outDir: state.labelOutDir });
+        post({ type: "runLabel", toolName: "nineGridTool", srcPath: state.labelSrcPath, startNum: state.labelStartNum });
       },
       rotate: () => post({ type: "rotateImage", toolName: "nineGridTool", idx: state.contextIdx, grid: state.gridItems }),
       copy: () => {
@@ -435,6 +432,8 @@
       state.outDir = msg.path;
       const btn = document.getElementById("btnOpenOut");
       if (btn) {btn.disabled = false;}
+      const btnLbl = document.getElementById("btnOpenLabelOut");
+      if (btnLbl) {btnLbl.disabled = false;}
     } else if (msg.type === "importedImagePaths") {
       const paths = Array.isArray(msg.paths) ? msg.paths : [];
       if (paths.length) {
@@ -462,10 +461,6 @@
         }
         renderAll();
       }
-    } else if (msg.type === "setLabelOutDir") {
-      state.labelOutDir = msg.path;
-      const el = document.getElementById("labelOutDirInput");
-      if (el) {el.value = msg.path;}
     } else if (msg.type === "setLabelImage") {
       state.labelSrcPath = msg.path;
       const previewBox = document.getElementById("labelPreviewBox");
