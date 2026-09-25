@@ -2799,6 +2799,7 @@ function openContextMenu(e, p, field) {
     `<div class="ctx-cellop${canPaste && editable ? "" : " ctx-disabled"}" data-cellop="paste" title="粘贴到该格 (Ctrl+V)"><span class="cop-icon">📥</span><span>粘贴</span></div>` +
     `<div class="ctx-cellop${CUTTABLE_FIELDS.has(field) ? "" : " ctx-disabled"}" data-cellop="cut" title="剪切该格并立即清空 (Ctrl+X)"><span class="cop-icon">✂</span><span>剪切</span></div>` +
     `</div>` +
+    `<div class="ctx-item" data-pctx="fullname">复制完整名称</div>` +
     `<div class="ctx-item" data-copy="row">复制整行</div>` +
     `<div class="ctx-item" data-copy="table">复制整表(筛选后)</div>` +
     `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>` +
@@ -2849,6 +2850,13 @@ function openContextMenu(e, p, field) {
     copyText(lines.join("\n"));
     close();
   };
+  const fullItem = menu.querySelector('[data-pctx="fullname"]');
+  if (fullItem) {
+    fullItem.onclick = () => {
+      copyText(fullName(p));
+      close();
+    };
+  }
   const offBtn = menu.querySelector('[data-pctx="off"]');
   if (offBtn) {
     offBtn.onclick = () => {
@@ -2958,7 +2966,9 @@ function openCoverMenu(e, p) {
       },
     });
   }
-  items.push({ label: "🔍 查看大图", run: () => openLightbox(p) });
+  if (!items.length) {
+    return;
+  }
   showImageCtxMenu(e.clientX, e.clientY, items);
 }
 
