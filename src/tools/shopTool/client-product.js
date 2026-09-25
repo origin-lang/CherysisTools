@@ -944,7 +944,7 @@ function showStarMenu(btn) {
       run: toggleStarOnly,
     },
     { label: "复制星标清单", run: () => copyStarList() },
-    { label: "星标总览图", run: () => post({ type: "previewStarOverview" }) },
+    { label: "生成星标总览图", run: () => post({ type: "previewStarOverview" }) },
     { sep: true },
     { label: "取消全部星标", run: () => clearAllStars(), danger: true },
   ]);
