@@ -1008,6 +1008,7 @@ var starOv = {
   lastDir: "",
   labels: { code: true, costPrice: false, salePrice: true, fontSize: 0 },
   dirty: false,
+  _fsTimer: null,
 };
 
 const STAR_GRID_PRESETS = [
@@ -1128,6 +1129,24 @@ function starOvUnloading() {
   if (lo) {
     lo.style.display = "none";
   }
+}
+
+// 改排版/标注/字号后自动重预览（防抖 700ms）；「重出预览」按钮仍可手动强制刷新
+function starOvScheduleRefresh() {
+  starOv.dirty = true;
+  starOvSyncDirty();
+  if (starOv._fsTimer) {
+    clearTimeout(starOv._fsTimer);
+  }
+  starOv._fsTimer = setTimeout(() => {
+    if (!starOv.mask || !starOv.mask.isConnected) {
+      return;
+    }
+    if (starOv.generating || starOv.reloading) {
+      return;
+    }
+    starOvRequestPreview();
+  }, 700);
 }
 
 function starOvRequestPreview() {
@@ -1320,31 +1339,26 @@ function starOvOpenMask(title) {
     } else {
       cust.style.display = "none";
     }
-    starOv.dirty = true;
-    starOvSyncDirty();
+    starOvScheduleRefresh();
   };
   mask.querySelector("[data-so-cr]").onchange = () => {
-    starOv.dirty = true;
-    starOvSyncDirty();
+    starOvScheduleRefresh();
   };
   mask.querySelector("[data-so-cc]").onchange = () => {
-    starOv.dirty = true;
-    starOvSyncDirty();
+    starOvScheduleRefresh();
   };
   mask.querySelectorAll("[data-so-lbl]").forEach((el) => {
     el.onchange = () => {
       starOv.labels.code = mask.querySelector("[data-so-lbl='code']").checked;
       starOv.labels.costPrice = mask.querySelector("[data-so-lbl='costPrice']").checked;
       starOv.labels.salePrice = mask.querySelector("[data-so-lbl='salePrice']").checked;
-      starOv.dirty = true;
-      starOvSyncDirty();
+      starOvScheduleRefresh();
     };
   });
   mask.querySelector("[data-so-fs]").value = String(starOv.labels.fontSize || 0);
   mask.querySelector("[data-so-fs]").onchange = () => {
     starOv.labels.fontSize = parseInt(mask.querySelector("[data-so-fs]").value || "0", 10) || 0;
-    starOv.dirty = true;
-    starOvSyncDirty();
+    starOvScheduleRefresh();
   };
   mask.querySelector("[data-so-refresh]").onclick = () => starOvRequestPreview();
   mask.querySelector("[data-so-prev]").onclick = () => {
