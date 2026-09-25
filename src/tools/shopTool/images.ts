@@ -35,7 +35,9 @@ export function firstImageFile(dir: string, code: string): string | null {
   return fs.existsSync(fp) ? fp : null;
 }
 
-export const COVER_THUMB = 160;
+// 封面缩略图边长：画册卡片可显示到数百像素宽且高 DPI 屏幕下需乘 2，160 会被放大变糊；
+// 提到 512 直接变锐。缓存文件名带尺寸版本，改大后旧 160px 缓存自动失效重建。
+export const COVER_THUMB = 512;
 
 export function coverThumbCachePaths(
   storageDir: string,
@@ -50,9 +52,10 @@ export function coverThumbCachePaths(
   } catch {
     return null;
   }
+  const base = `${code}@${COVER_THUMB}.webp`;
   return {
-    thumbPath: path.join(root, `${code}.webp`),
-    metaPath: path.join(root, `${code}.webp.json`),
+    thumbPath: path.join(root, base),
+    metaPath: path.join(root, `${base}.json`),
   };
 }
 
