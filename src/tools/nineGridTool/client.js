@@ -86,6 +86,23 @@
     }
     document.removeEventListener("paste", handlePasteCapture, true);
     document.addEventListener("paste", handlePasteCapture, true);
+    const labelTab = document.getElementById("tabLabel");
+    if (labelTab) {
+      labelTab.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        labelTab.classList.add("drop-over");
+      });
+      labelTab.addEventListener("dragleave", () =>
+        labelTab.classList.remove("drop-over"),
+      );
+      labelTab.addEventListener("drop", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        labelTab.classList.remove("drop-over");
+        handleLabelDrop(e.dataTransfer);
+      });
+    }
     renderAll();
     // 回放缓存消息
     while (pendingMessages.length > 0) {
@@ -361,6 +378,54 @@
     }
   }
 
+  function labelTabShown() {
+    const el = document.getElementById("tabLabel");
+    return !!(el && el.classList.contains("show"));
+  }
+
+  // 给序号 tab 提供大图：复用同一套 base64 落盘流程（intent 区分，不回填九宫格）
+  function postLabelImage(data) {
+    if (!data) {
+      return;
+    }
+    post({
+      type: "importImages",
+      toolName: "nineGridTool",
+      intent: "label",
+      items: [{ name: `label_${Date.now()}`, data }],
+    });
+  }
+
+  function handleLabelDrop(dt) {
+    const files = collectFiles(dt);
+    if (files.length) {
+      filesToImageItems(files).then((items) => {
+        const first = items[0];
+        if (first) {
+          postLabelImage(first.data);
+        } else {
+          statusText("拖入的文件不是图片");
+        }
+      });
+      return;
+    }
+    const uriList =
+      (dt && dt.getData("application/vnd.code.uri-list")) ||
+      (dt && dt.getData("text/uri-list")) ||
+      "";
+    const uris = uriList
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter((s) => s.startsWith("file://"));
+    if (uris.length) {
+      post({
+        type: "dropLabelUri",
+        toolName: "nineGridTool",
+        uris: uris.slice(0, 1),
+      });
+    }
+  }
+
   function handlePasteCapture(e) {
     const t = e.target;
     if (
@@ -376,7 +441,11 @@
     }
     filesToImageItems(files).then((items) => {
       if (items.length) {
-        postImages(items, -1);
+        if (labelTabShown()) {
+          postLabelImage(items[0].data);
+        } else {
+          postImages(items, -1);
+        }
       } else {
         statusText("剪贴板里未检测到图片");
       }

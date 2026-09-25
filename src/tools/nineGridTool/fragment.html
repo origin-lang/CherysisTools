@@ -100,6 +100,12 @@
       button:hover {
         background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-secondaryBackground));
       }
+      /* 按钮内的 emoji 图标统一字号，避免个别图标大小不一致 */
+      .btn-icon {
+        font-size: 13px;
+        line-height: 1;
+        margin-right: 4px;
+      }
       /* 蓝绿色主按钮，醒目执行按钮 */
       .btn-primary-teal {
         background-color: #23a884;
@@ -171,6 +177,10 @@
         outline: 2px dashed var(--vscode-focusBorder, #4080c0);
         outline-offset: 2px;
       }
+      .sub-panel.drop-over {
+        outline: 2px dashed var(--vscode-focusBorder, #4080c0);
+        outline-offset: 2px;
+      }
       .context-menu {
         position: absolute;
         z-index: 999;
@@ -222,12 +232,14 @@
       <div class="card-panel">
         <div class="form-row">
           <button id="btnAddImg" data-action="openSelectImages">
-            ➕选择多张图片
+            <span class="btn-icon">➕</span>选择多张图片
           </button>
           <button id="btnLoadFolder" data-action="openLoadImageFolder">
-            📂读取文件夹内图片
+            <span class="btn-icon">📂</span>读取文件夹内图片
           </button>
-          <button id="btnClear" data-action="btnClear">🧹清空全部网格</button>
+          <button id="btnClear" data-action="btnClear">
+            <span class="btn-icon">🧹</span>清空全部网格
+          </button>
         </div>
         <div class="grid-outer">
           <div class="grid-container" id="gridContainer"></div>
@@ -238,14 +250,14 @@
         </div>
         <div class="form-actions">
           <button id="btnOpenOut" data-action="openMergeOutputFolder" disabled>
-            📂 打开输出文件夹
+            <span class="btn-icon">📂</span>打开输出文件夹
           </button>
           <button
             id="btnRunMerge"
             data-action="runMerge"
             class="btn-primary-teal"
           >
-            ✅ 执行九宫格拼图
+            <span class="btn-icon">✅</span>执行九宫格拼图
           </button>
         </div>
       </div>
@@ -265,7 +277,9 @@
               选择图片
             </button>
           </div>
-          <div class="tip-text">可手动粘贴图片完整路径，也可按钮选择图片</div>
+          <div class="tip-text">
+            可手动粘贴图片完整路径、按钮选择，也可直接将图片拖入此区域或 Ctrl+V 粘贴
+          </div>
           <div class="preview-box" id="labelPreviewBox">
             <span>暂无预览</span>
           </div>
@@ -277,14 +291,14 @@
         </div>
         <div class="form-actions">
           <button id="btnOpenLabelOut" data-action="openLabelOutputFolder" disabled>
-            📂 打开输出文件夹
+            <span class="btn-icon">📂</span>打开输出文件夹
           </button>
           <button
             id="btnRunLabel"
             data-action="runLabel"
             class="btn-primary-teal"
           >
-            🔢 开始生成带编号图片
+            <span class="btn-icon">🔢</span>开始生成带编号图片
           </button>
         </div>
       </div>

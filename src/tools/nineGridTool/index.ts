@@ -290,6 +290,7 @@ export const nineGridTool: ToolDefinition = {
         const importDir = path.join(ctx.storageDir, "nineGridTool_import");
         fs.mkdirSync(importDir, { recursive: true });
         const paths: string[] = [];
+        const base64s: string[] = [];
         const stamp = new Date().toISOString().replace(/[:.]/g, "-");
         let seq = 0;
         for (const it of items) {
@@ -313,6 +314,7 @@ export const nineGridTool: ToolDefinition = {
           try {
             fs.writeFileSync(target, bytes);
             paths.push(target);
+            base64s.push(data);
           } catch (err: any) {
             log(`⚠️写入失败：${err.message}`);
           }
@@ -321,11 +323,50 @@ export const nineGridTool: ToolDefinition = {
           log("❌导入的图片写入失败");
           break;
         }
+        if (msg.intent === "label") {
+          ctx.postToWebview({
+            type: "setLabelImage",
+            path: paths[0],
+            base64: base64s[0],
+          });
+          log(`✅已导入序号大图：${paths[0]}`);
+          break;
+        }
         const rawIdx = Number(msg.targetIdx);
         const targetIdx =
           Number.isInteger(rawIdx) && rawIdx >= 0 && rawIdx < 9 ? rawIdx : -1;
         ctx.postToWebview({ type: "importedImagePaths", paths, targetIdx });
         log(`✅已导入 ${paths.length} 张图片`);
+        break;
+      }
+      case "dropLabelUri": {
+        const uris: unknown[] = Array.isArray(msg.uris) ? msg.uris : [];
+        let done = false;
+        for (const u of uris) {
+          const uri = String(u ?? "").trim();
+          if (!uri) {
+            continue;
+          }
+          let fsPath = "";
+          try {
+            fsPath = vscode.Uri.parse(uri).fsPath;
+          } catch {
+            continue;
+          }
+          if (!fsPath || !fs.existsSync(fsPath)) {
+            continue;
+          }
+          const ext = path.extname(fsPath).toLowerCase();
+          if (!IMG_EXTS.has(ext)) {
+            continue;
+          }
+          ctx.postToWebview({ type: "setLabelImage", path: fsPath });
+          done = true;
+          break;
+        }
+        if (!done) {
+          log("❌拖入的文件不是支持的图片格式");
+        }
         break;
       }
       case "dropImageUris": {
