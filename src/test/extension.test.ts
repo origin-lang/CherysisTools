@@ -478,7 +478,11 @@ suite('商品图片删除（占用重试 / 不做无谓备份）', () => {
 		assert.deepStrictEqual(fs.readdirSync(folder), []);
 	});
 
-	test('文件被占用时会退避重试，重试成功即算删掉', async () => {
+	// 下面四条会真的走完 0/150/400/1000ms 的退避序列，光是等就要 1550ms，再加上建
+	// 临时目录、抽封面这些杂活，本机实测跑到 1.6~1.8s —— 已经贴着 mocha 默认的
+	// 2000ms 了。前面刚跑完 compile/lint、或者赶上杀软扫盘，就会随机变红。显式放宽。
+	test('文件被占用时会退避重试，重试成功即算删掉', async function () {
+		this.timeout(15000);
 		const { root, folder } = seed();
 		const harness = createHarness(root);
 		// 前两次 EBUSY（杀软扫描/句柄未回收这类瞬时占用），第三次放行
@@ -492,7 +496,8 @@ suite('商品图片删除（占用重试 / 不做无谓备份）', () => {
 		assert.ok(!harness.logs.some((l) => l.includes('删不掉')), '不该报错');
 	});
 
-	test('重试到底仍被占用：说清是占用，并把磁盘现状推回前端', async () => {
+	test('重试到底仍被占用：说清是占用，并把磁盘现状推回前端', async function () {
+		this.timeout(15000);
 		const { root, folder } = seed();
 		const harness = createHarness(root);
 		// 次数给足，覆盖全部 4 次尝试
@@ -513,7 +518,8 @@ suite('商品图片删除（占用重试 / 不做无谓备份）', () => {
 		assert.strictEqual(harness.loadAllCount, 1);
 	});
 
-	test('非占用类错误不重试，直接报原始信息', async () => {
+	test('非占用类错误不重试，直接报原始信息', async function () {
+		this.timeout(15000);
 		const { root } = seed();
 		const harness = createHarness(root);
 		await imageHandlers(harness.h, { unlink: failUnlink(99, 'ENOENT') }).deleteImageFile(
@@ -526,7 +532,8 @@ suite('商品图片删除（占用重试 / 不做无谓备份）', () => {
 		assert.ok(!said!.includes('正被占用'), 'ENOENT 不是占用，别误导用户去关预览');
 	});
 
-	test('清空图片夹：部分删不掉时报实际张数，不谎报「已清空」', async () => {
+	test('清空图片夹：部分删不掉时报实际张数，不谎报「已清空」', async function () {
+		this.timeout(15000);
 		const { root, folder } = seed();
 		fs.writeFileSync(path.join(folder, 'a.png'), PNG_1PX);
 		const harness = createHarness(root);

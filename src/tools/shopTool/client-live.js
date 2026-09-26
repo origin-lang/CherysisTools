@@ -111,10 +111,22 @@
       if (!area) {
         return;
       }
+      // innerHTML 会把所有格子连同 value、光标、焦点一起冲掉，所以重建前先把「用户
+      // 正敲着的那个格子」摘出来，末尾再原样还回去。
+      // 原先的做法是「焦点在格子里就整个 return」，看着省事实则盖不住焦点正在两格
+      // 之间切换的那一瞬——漏过去一次，那个格子就被 value="${code}" 回填成上一次确
+      // 认的值，用户敲到一半的内容当场丢掉。改成「照常重绘、保住正在编辑的那一个」。
       const activeEl = document.activeElement;
-      if (activeEl && activeEl.closest && activeEl.closest("[data-ls-cell]")) {
-        return;
-      }
+      const editing =
+        activeEl && activeEl.dataset && activeEl.dataset.lsCell !== undefined
+          ? {
+              g: activeEl.dataset.g,
+              slot: activeEl.dataset.slot,
+              value: activeEl.value,
+              start: activeEl.selectionStart,
+              end: activeEl.selectionEnd,
+            }
+          : null;
       const plan = state.livePlan;
       const groupNos = [...new Set(plan.map((r) => r.group_no))].sort(
         (a, b) => a - b,
@@ -186,28 +198,13 @@
       area.querySelectorAll("[data-ls-cell]").forEach((inp, i) => {
         const groupNo = Number(inp.dataset.g);
         const slotNo = Number(inp.dataset.slot);
-        inp.oninput = () => {
-          const raw = inp.value.trim();
-          const code = raw ? canonicalCode(raw) : "";
-          const p = code ? stateProduct(code) : null;
-          if (p) {
-            inp.classList.add("ok");
-          } else {
-            inp.classList.remove("ok");
-          }
-          const meta = inp.parentElement
-            ? inp.parentElement.querySelector(".live-meta")
-            : null;
-          if (meta) {
-            meta.innerHTML = p
-              ? `<span class="price">¥${money(p.sale_price)}</span>`
-              : "&nbsp;";
-          }
-          upsertLiveSlot(groupNo, slotNo, code);
-          renderLivePreview(groupNo);
-          scheduleLivePlanSave();
-        };
-        inp.onblur = () => {
+        // 输入过程中只改本格的样子，一件事都不往外传。
+        // 因为 canonicalCode 对没输完的内容照样补零：想敲 336，敲下第一个 3 的瞬间
+        // 它得到的就是 A003。此刻若把半成品写进 state.livePlan，一来会被别处触发的
+        // 重绘回填给用户（看到的正是那个 003），二来会被 debounce 后的保存写进共享
+        // 库，别人打开面板看到一串 A003/A033。真正的落地放到 onblur——那才代表用户
+        // 认为这个格子输完了。
+        const commitCell = () => {
           const raw = inp.value.trim();
           const code = raw ? canonicalCode(raw) : "";
           let err = false;
@@ -217,6 +214,18 @@
             err = true;
           }
           inp.classList.toggle("err", err);
+          // 把用户输的 335 显示成规范形式 A335，所见即所存
+          if (code && inp.value !== code) {
+            inp.value = code;
+          }
+          const prev = state.livePlan.find(
+            (r) => r.group_no === groupNo && r.slot_no === slotNo,
+          );
+          if ((prev ? prev.code : "") !== code) {
+            upsertLiveSlot(groupNo, slotNo, code);
+            renderLivePreview(groupNo);
+            scheduleLivePlanSave();
+          }
           if (code) {
             const dupCount = state.livePlan.filter(
               (r) => r.code === code,
@@ -225,6 +234,40 @@
           } else {
             inp.classList.remove("dup");
           }
+        };
+
+        // 真正的落地放在「用户不再动这个格子」的时候：失焦（点别处、Tab、点生成按钮
+        // 都算，blur 早于 click），或者停手满 1.5 秒。
+        // 第二档是为了兜住「输完不失焦直接切走面板」——那种情况 blur 不一定来得及
+        // 触发，少了它最后一个格子的输入会丢。
+        let idleTimer = null;
+        inp.oninput = () => {
+          const raw = inp.value.trim();
+          const code = raw ? canonicalCode(raw) : "";
+          const p = code ? stateProduct(code) : null;
+          inp.classList.toggle("ok", !!p);
+          // 没输完不急着标红（刚敲个 3 就红太吵），等落地那一刻再判
+          inp.classList.remove("err", "dup");
+          const meta = inp.parentElement
+            ? inp.parentElement.querySelector(".live-meta")
+            : null;
+          if (meta) {
+            meta.innerHTML = p
+              ? `<span class="price">¥${money(p.sale_price)}</span>`
+              : "&nbsp;";
+          }
+          // 停手兜底，但只兜「已经查得到商品」的那些：还是半成品（刚敲了 3 得到的
+          // A003）就不写，让它在 plan 外面待着，省得重绘时冒出来
+          clearTimeout(idleTimer);
+          idleTimer = setTimeout(() => {
+            if (p) {
+              commitCell();
+            }
+          }, 1500);
+        };
+        inp.onblur = () => {
+          clearTimeout(idleTimer);
+          commitCell();
         };
         inp.onkeydown = (e) => {
           if (e.key === "Enter") {
@@ -242,6 +285,23 @@
       renderLivePreviews();
       // 分组区刚被 innerHTML 重建，忙碌态要重新贴回按钮上
       applyLiveGridBusy();
+      // 把用户正敲着的那个格子的 value、焦点、光标原位放回去。
+      // 顺序有讲究：focus() 会把光标推到末尾，所以选定范围必须在 focus 之后。
+      // 少了这一段，「重绘」就等于「把人刚敲的半句话擦掉」。
+      if (editing) {
+        const back = area.querySelector(
+          `[data-ls-cell][data-g="${editing.g}"][data-slot="${editing.slot}"]`,
+        );
+        if (back) {
+          back.value = editing.value;
+          back.focus();
+          try {
+            back.setSelectionRange(editing.start, editing.end);
+          } catch {
+            /* 少数输入控件不支持选区，能保住值和焦点已经够 */
+          }
+        }
+      }
     }
 
     function coverTile(bySlot, s, startNum) {
