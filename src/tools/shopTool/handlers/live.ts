@@ -269,45 +269,65 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
           return;
         }
         gridStatus("start");
-        let outDir = String(h.getSetting("live_out_dir") || "").trim();
-        while (true) {
-          // 原生对话框是模态的，网页这边看着像卡住，所以进循环先报一次在等什么
+        const dirUsable = (d: string): boolean => {
+          if (!d) {
+            return false;
+          }
+          try {
+            return fs.statSync(d).isDirectory();
+          } catch {
+            return false;
+          }
+        };
+        // 规矩：同一时刻屏幕上只准有一个框。原来的写法是「目录 statSync 失败 → 先自己弹一次
+        // 目录选择器 → 再无条件弹一次确认框」，叠起来就是两个，取消要按两下。
+        // 现在改成：有得确认就只确认，没得确认才直接要目录，两者绝不叠加。
+        let outDir = "";
+        const saved = String(h.getSetting("live_out_dir") || "").trim();
+        if (!dirUsable(saved)) {
+          // 手上没有「待确认的目录」，这时候弹确认框是没话找话，直接要一个就够
           gridStatus("dialog", {
-            text: outDir ? `确认输出目录：${outDir}` : "请选择输出目录…",
+            text: saved
+              ? `原输出目录已不可用（${saved}），请重新选择…`
+              : "请选择输出目录…",
           });
-          let validDir = false;
-          if (outDir) {
-            try {
-              validDir = fs.statSync(outDir).isDirectory();
-            } catch {
-              validDir = false;
-            }
-          }
-          if (!validDir) {
-            const picked = await ctx.selectFolder("选择直播排品九宫格输出目录");
-            if (!picked) {
-              log("❌未选择输出目录，已取消");
-              gridStatus("cancelled", { text: "未选择输出目录" });
-              return;
-            }
-            outDir = picked;
-            await h.setSetting("live_out_dir", outDir);
-            h.postLiveState();
-          }
-          const action = await ctx.chooseAction(
-            "确认生成九宫格",
-            outDir,
-            ["确定生成", "更换目录", "取消"],
-          );
-          if (action === "确定生成") {
-            break;
-          }
-          if (action !== "更换目录") {
-            log("❌已取消生成");
-            gridStatus("cancelled", { text: "已取消生成" });
+          const picked = await ctx.selectFolder("选择直播排品九宫格输出目录");
+          if (!picked) {
+            log("❌未选择输出目录，已取消");
+            gridStatus("cancelled", { text: "未选择输出目录" });
             return;
           }
-          outDir = "";
+          await h.setSetting("live_out_dir", picked);
+          h.postLiveState();
+          outDir = picked;
+        } else {
+          gridStatus("dialog", { text: `确认输出目录：${saved}` });
+          while (true) {
+            const action = await ctx.chooseAction("确认生成九宫格", saved, [
+              "确定生成",
+              "更换目录",
+              "取消",
+            ]);
+            if (action === "确定生成") {
+              outDir = saved;
+              break;
+            }
+            if (action !== "更换目录") {
+              log("❌已取消生成");
+              gridStatus("cancelled", { text: "已取消生成" });
+              return;
+            }
+            // 换目录是用户自己点的，选完就出图，不再回头确认一遍
+            const picked = await ctx.selectFolder("选择直播排品九宫格输出目录");
+            if (!picked) {
+              // 放弃换目录不等于放弃生成，退回确认框让用户再定
+              continue;
+            }
+            await h.setSetting("live_out_dir", picked);
+            h.postLiveState();
+            outDir = picked;
+            break;
+          }
         }
         if (!fs.existsSync(outDir)) {
           try {

@@ -676,11 +676,26 @@
           }
           const btn = e.target.closest("[data-ls-act='delgroup']");
           if (btn) {
-            removeLiveGroup(Number(btn.dataset.g));
-            renderLiveGrid();
+            const g = Number(btn.dataset.g);
+            const n = state.livePlan.filter(
+              (r) => r.group_no === g && r.code,
+            ).length;
+            // 删组会把这一组的排品从共享库里抹掉、别人那边也会消失，属于不可逆操作
+            confirmBox(
+              n > 0
+                ? `确认删除第 ${g} 组？（该组的 ${n} 个排品格子会被清空，商品本身不受影响）`
+                : `确认删除第 ${g} 组？`,
+            ).then((ok) => {
+              if (ok) {
+                removeLiveGroup(g);
+                renderLiveGrid();
+                toast(`已删除第 ${g} 组`);
+              }
+            });
+            return;
           }
           const clrG = e.target.closest("[data-ls-act='clearg']");
-          if (clrG && !btn) {
+          if (clrG) {
             const g = Number(clrG.dataset.g);
             confirmBox(`确认清空第 ${g} 组的全部格子？`).then((ok) => {
               if (ok) {

@@ -30,6 +30,7 @@ export interface ToolContext {
   selectFiles(filters?: Record<string, string[]>): Promise<string[]>;
   /** 弹出模态确认对话框，返回用户是否确认 */
   confirm(message: string, detail?: string): Promise<boolean>;
+  /** 弹多个自定义按钮的模态对话框，返回被点的那个；关窗或点最后一项兜底项为 undefined */
   chooseAction(message: string, detail: string, actions: string[]): Promise<string | undefined>;
 }
 

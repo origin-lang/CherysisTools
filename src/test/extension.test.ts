@@ -47,6 +47,7 @@ suite('直播九宫格输出目录', () => {
 		const actions = [...(options.actions ?? [])];
 		const confirmedDirs: string[] = [];
 		const actionLabels: string[][] = [];
+		const statuses: any[] = [];
 		let selectCount = 0;
 		const ctx = {
 			selectFolder: async () => {
@@ -77,7 +78,9 @@ suite('直播九宫格输出目录', () => {
 			readOnly: () => options.readOnly === true,
 			imageDir: () => '',
 			log: () => undefined,
-			post: () => undefined,
+			post: (message: any) => {
+				statuses.push(message);
+			},
 			postLiveState: () => undefined,
 		} as unknown as HandlerCtx;
 		const msg = { plan: [{ group_no: 1, slot_no: 1, code: 'A001' }] };
@@ -88,9 +91,15 @@ suite('直播九宫格输出目录', () => {
 			prefs,
 			confirmedDirs,
 			actionLabels,
+			statuses,
 			get selectCount() {
 				return selectCount;
 			},
+			// 每一条退出路径都必须发终态，否则前端按钮会永远卡在「生成中」
+			terminalPhase: () => statuses.filter((m) => m?.type === 'liveGridStatus')
+				.map((m) => m.phase)
+				.filter((p) => p === 'done' || p === 'error' || p === 'cancelled')
+				.pop(),
 		};
 	}
 
@@ -100,9 +109,11 @@ suite('直播九宫格输出目录', () => {
 		}
 	});
 
-	test('已选择有效目录时确认该目录且不再选择', async () => {
+	// 规矩：有得确认就只确认，没得确认才直接要目录，两者绝不叠加 → 屏幕上永远只有 1 个框。
+	test('已设过有效目录：只弹 1 次确认框，不再弹目录选择器', async function () {
+		this.timeout(15000);
 		const dir = makeDir('saved');
-		const harness = createHarness({ savedDir: dir, actions: ['取消'] });
+		const harness = createHarness({ savedDir: dir, actions: ['确定生成'] });
 
 		await harness.run();
 
@@ -113,57 +124,91 @@ suite('直播九宫格输出目录', () => {
 			'更换目录',
 			'取消',
 		]]);
+		assert.strictEqual(harness.terminalPhase(), 'done');
 	});
 
-	test('未选择目录时先选择再确认', async () => {
-		const dir = makeDir('first');
-		const harness = createHarness({ pickDirs: [dir], actions: ['取消'] });
+	test('确认框里按取消：一次就退出，不生成', async function () {
+		this.timeout(15000);
+		const dir = makeDir('saved');
+		const harness = createHarness({ savedDir: dir, actions: ['取消'] });
 
 		await harness.run();
 
-		assert.strictEqual(harness.selectCount, 1);
-		assert.deepStrictEqual(harness.confirmedDirs, [dir]);
-		assert.strictEqual(harness.prefs.get('live_out_dir'), dir);
+		assert.strictEqual(harness.selectCount, 0);
+		assert.strictEqual(harness.terminalPhase(), 'cancelled');
 	});
 
-	test('选择更换目录时使用新目录并再次确认', async () => {
+	test('点「更换目录」：选完直接出图，不再回头确认', async function () {
+		this.timeout(15000);
 		const savedDir = makeDir('saved');
 		const nextDir = makeDir('next');
 		const harness = createHarness({
 			savedDir,
 			pickDirs: [nextDir],
-			actions: ['更换目录', '取消'],
+			actions: ['更换目录'],
 		});
 
 		await harness.run();
 
 		assert.strictEqual(harness.selectCount, 1);
-		assert.deepStrictEqual(harness.confirmedDirs, [savedDir, nextDir]);
+		assert.deepStrictEqual(harness.actionLabels, [[
+			'确定生成',
+			'更换目录',
+			'取消',
+		]]);
 		assert.strictEqual(harness.prefs.get('live_out_dir'), nextDir);
+		assert.strictEqual(harness.terminalPhase(), 'done');
 	});
 
-	test('原目录已删除时重新选择', async () => {
+	test('没设过目录：直接弹 1 次选择器，不弹确认框', async function () {
+		this.timeout(15000);
+		const dir = makeDir('first');
+		const harness = createHarness({ pickDirs: [dir] });
+
+		await harness.run();
+
+		assert.strictEqual(harness.selectCount, 1);
+		assert.deepStrictEqual(harness.actionLabels, []);
+		assert.strictEqual(harness.prefs.get('live_out_dir'), dir);
+		assert.strictEqual(harness.terminalPhase(), 'done');
+	});
+
+	test('在选择器里按取消：不生成，也不记目录', async function () {
+		this.timeout(15000);
+		const harness = createHarness({ pickDirs: [undefined] });
+
+		await harness.run();
+
+		assert.strictEqual(harness.selectCount, 1);
+		assert.strictEqual(harness.terminalPhase(), 'cancelled');
+		assert.strictEqual(harness.prefs.has('live_out_dir'), false);
+	});
+
+	// 目录被删掉 / 共享盘没挂载时 fs.statSync 会抛或返回 false，同样只弹 1 次选择器求新目录
+	test('原目录已删除：重新选一次，不叠加确认框', async function () {
+		this.timeout(15000);
 		const removedDir = makeDir('removed');
 		fs.rmSync(removedDir, { recursive: true });
 		const nextDir = makeDir('next');
 		const harness = createHarness({
 			savedDir: removedDir,
 			pickDirs: [nextDir],
-			actions: ['取消'],
 		});
 
 		await harness.run();
 
 		assert.strictEqual(harness.selectCount, 1);
-		assert.deepStrictEqual(harness.confirmedDirs, [nextDir]);
+		assert.deepStrictEqual(harness.actionLabels, []);
 		assert.strictEqual(harness.prefs.get('live_out_dir'), nextDir);
+		assert.strictEqual(harness.terminalPhase(), 'done');
 	});
 
 	// 共享盘上「全组一份、最后改的人覆盖所有人」就是这么来的：
 	// 输出目录是别人机器上的路径，存进 settings 表就等于把它推给全组。
-	test('输出目录只写本机，绝不写共享库', async () => {
+	test('输出目录只写本机，绝不写共享库', async function () {
+		this.timeout(15000);
 		const dir = makeDir('local-only');
-		const harness = createHarness({ pickDirs: [dir], actions: ['取消'] });
+		const harness = createHarness({ pickDirs: [dir] });
 
 		await harness.run();
 
@@ -171,9 +216,11 @@ suite('直播九宫格输出目录', () => {
 		assert.strictEqual(harness.settings.has('live_out_dir'), false);
 	});
 
-	test('只读模式下不落库（排品不写共享库，出图流程照走）', async () => {
+	test('只读模式下不落库（排品不写共享库，出图流程照走）', async function () {
+		this.timeout(15000);
 		const dir = makeDir('ro');
 		let replaceLivePlanCalls = 0;
+		const statuses: any[] = [];
 		const h = {
 			ctx: {
 				selectFolder: async () => undefined,
@@ -190,7 +237,7 @@ suite('直播九宫格输出目录', () => {
 			readOnly: () => true,
 			imageDir: () => '',
 			log: () => undefined,
-			post: () => undefined,
+			post: (message: any) => statuses.push(message),
 			postLiveState: () => undefined,
 		} as unknown as HandlerCtx;
 
@@ -223,16 +270,6 @@ suite('直播九宫格输出目录', () => {
 		await liveHandlers(h).generateStarOverview({}, h);
 
 		assert.deepStrictEqual(messages, [{ type: 'starOverviewCancelled' }]);
-	});
-
-	test('取消选择目录时不打开确认框', async () => {
-		const harness = createHarness({ pickDirs: [undefined], actions: ['取消'] });
-
-		await harness.run();
-
-		assert.strictEqual(harness.selectCount, 1);
-		assert.deepStrictEqual(harness.confirmedDirs, []);
-		assert.strictEqual(harness.prefs.has('live_out_dir'), false);
 	});
 });
 
