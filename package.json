@@ -3,7 +3,7 @@
   "displayName": "Cherysis",
   "publisher": "Faye",
   "description": "small tools",
-  "version": "0.0.10",
+  "version": "0.0.12",
   "repository": {
     "type": "git",
     "url": "https://github.com/origin-lang/CherysisTools.git"
@@ -48,6 +48,18 @@
       {
         "command": "Cherysis.openTool",
         "title": "Cherysis:打开指定工具"
+      },
+      {
+        "command": "Cherysis.setShopImageDir",
+        "title": "Cherysis:设置商品图片根目录"
+      },
+      {
+        "command": "Cherysis.resetShopImageDir",
+        "title": "Cherysis:重置商品图片根目录"
+      },
+      {
+        "command": "Cherysis.setStorageDir",
+        "title": "Cherysis:设置商品数据库目录"
       }
     ],
     "configuration": {
@@ -56,7 +68,13 @@
         "cherysis.storageDir": {
           "type": "string",
           "default": "",
-          "description": "数据存储目录（订单/厂商等库文件存放位置）。留空则使用 VS Code 全局存储目录（%APPDATA%\\Code\\User\\globalStorage\\Faye.Cherysis）。建议填一个绝对路径，设置后不会自动改。"
+          "description": "数据存储目录（商品/采购/订单等库文件存放位置）。留空则使用 VS Code 全局存储目录（%APPDATA%\\Code\\User\\globalStorage\\Faye.Cherysis）。多人共享同一份数据时，所有人的这个值要指向同一个共享目录（如 Z:\\CherysisData）。推荐在工具面板「规则与设置 → 数据库备份/恢复」那一行点「📁 更换…」，或执行命令「Cherysis:设置商品数据库目录」来选文件夹（VS Code 设置界面本身没有文件夹选择器）；也可以直接在这里填写绝对路径。改完需重开工具面板。"
+        },
+        "cherysis.shopTool.imageDir": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "description": "商品图片根目录（每个商品一个文件夹，内放 {编号}_{序号}.jpg）。这是跟人走的路径：同一份数据库被多人共享时，这里只影响本机，各人各填自己机器上的映射路径（如 Z:\\\\商品图片），互不覆盖。推荐在命令面板执行「Cherysis:设置商品图片根目录」来选文件夹（VS Code 设置界面本身没有文件夹选择器）；也可以直接在这里填写绝对路径。留空则回落到数据库里存的旧值（共享，最后修改的人覆盖所有人）。必须是绝对路径且真实存在，否则本机无法显示/上传/删除图片。改完需重开面板。"
         }
       }
     },
@@ -68,6 +86,12 @@
         {
           "command": "Cherysis.openTool",
           "when": "false"
+        },
+        {
+          "command": "Cherysis.setShopImageDir"
+        },
+        {
+          "command": "Cherysis.resetShopImageDir"
         }
       ]
     }

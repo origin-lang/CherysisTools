@@ -62,6 +62,7 @@ suite('直播九宫格输出目录', () => {
 				},
 			},
 			getSetting: (key: string) => settings.get(key) ?? '',
+			imageDir: () => '',
 			log: () => undefined,
 			post: () => undefined,
 			postLiveState: () => undefined,
@@ -156,6 +157,7 @@ suite('直播九宫格输出目录', () => {
 				getProducts: () => [],
 			},
 			getSetting: (key: string) => (key === 'image_dir' ? dir : ''),
+			imageDir: () => dir,
 			post: (message: any) => messages.push(message),
 			log: () => undefined,
 		} as unknown as HandlerCtx;

@@ -7,8 +7,7 @@ import { readImageToBase64 } from "../../../core/utils.js";
 import {
   UPLOAD_FILTER,
   listImageFiles,
-  coverThumbToBase64,
-  thumbToBase64,
+  thumbToCachedBase64,
 } from "../images.js";
 
 // 图片域：封面/图库缩略图/大图/上传/清空/删除/打开文件夹
@@ -59,7 +58,18 @@ export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
   const { log, post } = h;
   const ctx = h.ctx;
 
-  const imageDir = (): string => String(h.getSetting("image_dir") || "").trim();
+  const imageDir = (): string => h.imageDir();
+
+  // 缩略图缓存一律放本机（defaultStorageDir），不放共享数据目录：缓存键含绝对源路径，
+  // 各人在共享盘上的盘符写法不同，共用一份会每次判定失效并互相覆写。
+  const cacheDir = (): string => ctx.defaultStorageDir;
+
+  // 大图优先给 webview 资源 URI：原图动辄几 MB，转 base64 再 postMessage 一次就是几十 MB 流量，
+  // 而且每次点开放大都要重来一遍。URI 由浏览器自己流式解码，0 拷贝、100% 原图、放大不糊。
+  // 前提是该文件在面板的 localResourceRoots 白名单里（面板创建时按当时的图片根目录收集），
+  // 加载不出来时前端 onerror 回退请求 base64 通道。
+  const webviewUri = (fp: string): string =>
+    ctx.panel.webview.asWebviewUri(vscode.Uri.file(fp)).toString();
 
   const readCover = async (code: string): Promise<string> => {
     const dir = imageDir();
@@ -71,7 +81,7 @@ export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
     if (files.length === 0) {
       return "";
     }
-    return coverThumbToBase64(path.join(folder, files[0]), ctx.storageDir, code);
+    return thumbToCachedBase64(path.join(folder, files[0]), cacheDir(), code);
   };
 
   const reloadImages = async (code: string) => {
@@ -79,19 +89,16 @@ export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
     const folder = path.join(dir, code);
     const files = listImageFiles(folder);
     const imgs: string[] = [];
-    let big0 = "";
-    for (let i = 0; i < files.length; i++) {
-      const fp = path.join(folder, files[i]);
-      if (i === 0) {
-        try {
-          big0 = await readImageToBase64(fp);
-        } catch {
-          big0 = "";
-        }
-      }
-      imgs.push(await thumbToBase64(fp));
+    for (const name of files) {
+      imgs.push(await thumbToCachedBase64(path.join(folder, name), cacheDir(), code, name));
     }
-    post({ type: "imagesLoaded", code, images: imgs, big0 });
+    // 首张大图只发 URI 不发 base64：图库里其它张点开放大时按需取
+    post({
+      type: "imagesLoaded",
+      code,
+      images: imgs,
+      big0Uri: files[0] ? webviewUri(path.join(folder, files[0])) : "",
+    });
   };
 
   return {
@@ -119,23 +126,26 @@ export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
       const code = String(msg.code ?? "");
       const index = Number(msg.index ?? 0);
       const dir = imageDir();
-      if (!dir) {
-        post({ type: "fullImageLoaded", code, index, data: "" });
-        return;
-      }
-      const folder = path.join(dir, code);
-      const files = listImageFiles(folder);
+      const folder = dir ? path.join(dir, code) : "";
+      const files = folder ? listImageFiles(folder) : [];
       const fp = files[index] ? path.join(folder, files[index]) : null;
+      const reply = (extra: Record<string, unknown>) =>
+        post({ type: "fullImageLoaded", code, index, ...extra });
       if (!fp) {
-        post({ type: "fullImageLoaded", code, index, data: "" });
+        reply({ data: "" });
         return;
       }
-      try {
-        const data = await readImageToBase64(fp);
-        post({ type: "fullImageLoaded", code, index, data });
-      } catch {
-        post({ type: "fullImageLoaded", code, index, data: "" });
+      // base64 通道：URI 加载不出来时的兜底，也是「右键复制图片」唯一可用的形式
+      // （剪贴板要 data URL，vscode-webview-resource URL 复制不了）
+      if (msg.base64) {
+        try {
+          reply({ data: await readImageToBase64(fp) });
+        } catch {
+          reply({ data: "" });
+        }
+        return;
       }
+      reply({ uri: webviewUri(fp) });
     },
 
     async uploadImages(msg) {

@@ -210,8 +210,6 @@
     }
 
     function renderSettings() {
-      state.settings.image_dir = state.settings.image_dir || "";
-      $("setImageDir").value = state.settings.image_dir;
       $("setNameTemplate").value =
         state.settings.name_template || "{name}{series}{grade}{code}";
       $("setStockAlert").value = Number(state.settings.stock_alert || 0);
@@ -243,6 +241,36 @@
           : "13";
       }
       updateNameTemplatePreview();
+      renderDbPath();
+    }
+
+    // 数据库目录那一行：只读展示。路径是环境配置、不是共享设置，给输入框就一定会有人
+    // 手滑打成相对路径然后数据「不见了」——要改走旁边的「📁 更换…」。
+    function fmtDbSize(n) {
+      const b = Number(n);
+      if (!Number.isFinite(b) || b < 0) return "（未知）";
+      if (b < 1024) return `${b} B`;
+      if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+      return `${(b / 1024 / 1024).toFixed(1)} MB`;
+    }
+
+    function renderDbPath() {
+      const el = $("dbPathText");
+      const meta = $("dbPathMeta");
+      if (!el) return;
+      const dir = String(state.settings.db_path || "");
+      el.textContent = dir || "（未设置，用 VS Code 全局存储目录）";
+      if (!meta) return;
+      const st = state.settings.db_stat;
+      if (!st || !Number.isFinite(Number(st.size))) {
+        meta.textContent = "shop.db（未创建或读不到——共享盘可能没挂上）";
+        meta.style.color = "#e8a33d";
+        return;
+      }
+      const t = new Date(Number(st.mtimeMs));
+      const p = (x) => String(x).padStart(2, "0");
+      meta.style.color = "";
+      meta.textContent = `shop.db · ${fmtDbSize(st.size)} · 最后修改 ${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ${p(t.getHours())}:${p(t.getMinutes())}`;
     }
 
     function onSettleAct(e) {

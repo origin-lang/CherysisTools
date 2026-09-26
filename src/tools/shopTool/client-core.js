@@ -7,7 +7,6 @@ window.toolClients = window.toolClients || {};
       products: [],
       rules: [],
       settings: {
-        image_dir: "",
         name_template: "",
         stock_alert: 0,
         row_height: "8",
@@ -32,6 +31,8 @@ window.toolClients = window.toolClients || {};
       liveStars: null,
       livePlan: [],
       liveOutDir: "",
+      // 九宫格生成中的加载态：{phase, groups, done, total, text}，null = 空闲
+      liveGridBusy: null,
       selectedProducts: new Set(),
       canUndo: false,
       canRedo: false,

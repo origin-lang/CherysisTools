@@ -559,6 +559,10 @@
         margin: 0 0 14px 0;
         font-size: 15px;
       }
+      /* 固定两列：96px 标签 + 1fr 控件。
+         ⚠ 子元素必须「<label> + 控件」成对出现。加一个没有 label 的裸 div（如单独一整行
+         提示）会顶到第 1 列被压成 96px 窄条，并把后面每一行整体错开一格。跨列内容请显式
+         写 grid-column: 1 / -1。 */
       .form-grid {
         display: grid;
         grid-template-columns: 96px 1fr;
@@ -1394,6 +1398,7 @@ L032,1"></textarea>
             <option value="none">不标文字</option>
           </select>
         </div>
+        <p id="liveGenStatus" class="muted" style="display: none; margin: 0 0 8px 0"></p>
         <p class="muted" style="margin: 0 0 8px 0">🟩绿=有效编号 · 🟥红=编号不存在 · 🟧橙=同编号出现≥2次（排品重复）。每组右上角「生成这组」只重出这一张图并复制这组清单。</p>
         <div id="liveGridArea"></div>
       </div>
@@ -1423,19 +1428,15 @@ L032,1"></textarea>
           <button id="saveRulesBtn" class="btn-teal">保存规则并重算售价</button>
         </div>
       </div>
-      <div class="panel">
-        <h4 style="margin: 0 0 8px 0">店铺设置</h4>
-        <div class="form-grid">
-          <label>图片根目录</label>
-          <div class="rows" style="width: 100%">
-            <input id="setImageDir" style="flex: 1; min-width: 260px" readonly />
-            <button id="pickImageDirBtn">选择文件夹</button>
-          </div>
-          <label>完整名称模板</label>
+        <div class="panel">
+          <h4 style="margin: 0 0 8px 0">店铺设置</h4>
+          <div class="form-grid">
+            <label>完整名称模板</label>
           <div class="rows" style="width: 100%">
             <input id="setNameTemplate" style="flex: 1" />
             <button id="saveNameTemplateBtn">保存</button>
           </div>
+
           <label>实时预览</label>
           <span id="nameTemplatePreview" class="muted">（暂无商品可预览）</span>
           <label>可用变量</label>
@@ -1480,11 +1481,19 @@ L032,1"></textarea>
       </div>
       <div class="panel">
         <h4 style="margin: 0 0 8px 0">数据库备份 / 恢复</h4>
+        <div class="rows" style="width: 100%; align-items: flex-start; margin-bottom: 8px">
+          <span class="muted" style="white-space: nowrap; padding-top: 3px">当前数据库</span>
+          <span style="flex: 1; min-width: 0">
+            <span id="dbPathText" style="word-break: break-all">（读取中…）</span>
+            <span id="dbPathMeta" class="muted" style="display: block; font-size: 11px"></span>
+          </span>
+          <button id="dbPathBtn" class="mini-btn" style="white-space: nowrap; flex: none" title="更换商品数据库所在目录。多人共享时，所有人的这个目录要指向同一份 shop.db（如 Z:\\CherysisData）">📁 更换…</button>
+        </div>
         <div class="rows">
           <button id="dbBackupBtn" class="btn-teal">备份数据库</button>
           <button id="dbRestoreBtn" class="btn-danger">从备份恢复</button>
         </div>
-        <p class="muted" style="margin: 8px 0 0 0">备份会生成一个完整的 .db 快照文件（含 WAL 未落盘数据）；恢复会用所选备份整体替换当前全部数据，操作前建议先备份一次。</p>
+        <p class="muted" style="margin: 8px 0 0 0">备份会生成一个完整的 .db 快照文件（含 WAL 未落盘数据）；恢复会用所选备份整体替换当前全部数据，操作前建议先备份一次。数据库目录是只读的，要换点「📁 更换…」走选文件夹流程，避免手滑把路径改坏；改完需重开工具面板。</p>
       </div>
       <div class="panel">
         <h4 style="margin: 0 0 8px 0">商品列表操作提示</h4>

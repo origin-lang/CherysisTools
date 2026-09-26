@@ -12,6 +12,8 @@ export interface HandlerCtx {
   log: (s: string) => void;
   post: (m: any) => void;
   getSetting: (key: string) => string;
+  /** 生效的商品图片根目录：本机 VS Code 设置优先，回落共享库里的旧值（解析见 ../imageDir.ts） */
+  imageDir: () => string;
   /** 商品封面 base64 按需下发缓存（image/getCover 读写，product 删除时作废） */
   coverCache: Map<string, string>;
   invalidateCover: (code: string) => void;

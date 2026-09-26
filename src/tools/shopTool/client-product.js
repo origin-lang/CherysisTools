@@ -38,16 +38,16 @@ const TEXT_FILTER_FIELDS = new Set([
   "remark",
 ]);
 const RANGE_FILTER_FIELDS = new Set(["cost_price", "sale_price", "stockTotal"]);
-// 编号列筛选语法：含范围符走「前缀+数字区间」，否则沿用子串匹配。
+// 编号列筛选语法：含 ~ 走「前缀+数字区间」，否则沿用子串匹配。
 const CODE_HINT =
   "筛选编号：支持 A1~A33 / a1~a33 / 1~33（两端无字母按 A 段）/ 多段 A1~A33,L1~L22；" +
-  "范围符（~ ～ - — 到 至）两侧空格可忽略；单个带字母的编号按精确匹配（L1→L001，" +
+  "~ 两侧空格可忽略；单个带字母的编号按精确匹配（L1→L001，" +
   "要「所有 L1xx」请写 L1~L199）；纯数字或文本按子串匹配（如 007、7、A）。";
-// 一个范围项：字母+数字 ~ 字母+数字，范围符两侧允许空格
-const CODE_TERM_RE = /^([A-Za-z]?)(\d{1,4})\s*[~～\-—到至]\s*([A-Za-z]?)(\d{1,4})$/;
-// 列表分隔（不含空格：空格留给范围符两侧的容错）
+// 一个范围项：字母+数字 ~ 字母+数字，~ 两侧允许空格
+const CODE_TERM_RE = /^([A-Za-z]?)(\d{1,4})\s*~\s*([A-Za-z]?)(\d{1,4})$/;
+// 列表分隔（不含空格：空格留给 ~ 两侧的容错）
 const CODE_LIST_RE = /[,，、;；\n\r]+/;
-const CODE_HAS_RANGE_RE = /[~～\-—到至]/;
+const CODE_HAS_RANGE_RE = /~/;
 
 /**
  * 单个编号词元 → {p,n}；字母可省（按 A 段），n ∈ 0~9999。非编号词元返回 null。
@@ -80,10 +80,10 @@ const CODE_BAD_HINT = {
 /**
  * 解析编号列筛选表达式 → { terms, bad, msg }。
  * 逗号分段，多段取并集。每段：
- *  - 含范围符 → 区间项（两端字母要么都有要么都没有，无字母按 A 段）；
+ *  - 含 ~ → 区间项（两端字母要么都有要么都没有，无字母按 A 段）；
  *  - 带字母的单值（A7 / l007）→ 精确编号项（lo=hi），补零口径与库里一致；
  *  - 其余（纯数字 7/007、文本 A、链…）→ 子串项，维持旧行为。
- * 含范围符但解析失败时 bad=true（0 结果 + 红框提示，不静默出空表）。
+ * 含 ~ 但解析失败时 bad=true（0 结果 + 红框提示，不静默出空表）。
  */
 function parseCodeQuery(raw) {
   const q = { terms: [], bad: false, msg: "" };
@@ -1091,7 +1091,9 @@ function showStarMenu(btn) {
       run: toggleStarOnly,
     },
     { label: "复制星标清单", run: () => copyStarList() },
-    { label: "生成星标总览图", run: () => post({ type: "previewStarOverview" }) },
+    // 走 starOvRequestPreview 而不是裸 post：它会先弹遮罩 + 转圈，再发请求。
+    // 裸 post 时弹窗要等后端渲染完才出现，点下去看着像没点上。
+    { label: "生成星标总览图", run: starOvRequestPreview },
     { sep: true },
     { label: "取消全部星标", run: () => clearAllStars(), danger: true },
   ]);
@@ -1150,18 +1152,21 @@ var starOv = {
   token: 0,
   cols: 0,
   rows: 0,
+  auto: false,
   lastDir: "",
   labels: { code: true, costPrice: false, salePrice: true, fontSize: 0 },
   _fsTimer: null,
 };
 
+// 3×3 排第一：自动档已不是默认（星标 60 款开方就是首屏 64 格，每格从共享盘拉 4.5MB 原图）。
+// 想要一屏塞满的人自己往下选「自动（智能）」。
 const STAR_GRID_PRESETS = [
-  ["0", "自动（智能）"],
   ["3x3", "3 × 3"],
   ["4x3", "4 × 3"],
   ["3x4", "3 × 4"],
   ["4x4", "4 × 4"],
   ["5x5", "5 × 5"],
+  ["0", "自动（智能）"],
 ];
 
 // 星标图上标注的字号预设：0＝随格子自动（推荐）；其余为格子坐标系固定像素
@@ -1175,6 +1180,13 @@ const STAR_FONT_PRESETS = [
 ];
 
 function starOvDims() {
+  // 弹窗还没开时（第一次从工具栏菜单进来）没有 mask 可问，交给后端回落（默认 3×3）。
+  // starOvRequestPreview 是「先读排版、再开窗」，所以这里必须能扛住 mask 为空。
+  // auto 只在用户真的点了「自动（智能）」时为 true：光靠 cols/rows=0 分不出
+  // 「选了自动」和「没选」，后端会把自动当没选、回落到上次记的固定排版上。
+  if (!starOv.mask) {
+    return { cols: 0, rows: 0, auto: false };
+  }
   const sel = starOv.mask.querySelector("[data-so-grid]");
   if (sel && sel.value === "custom") {
     const c = parseInt(starOv.mask.querySelector("[data-so-cc]").value || "0", 10);
@@ -1182,20 +1194,24 @@ function starOvDims() {
     return {
       cols: Number.isFinite(c) ? Math.min(10, Math.max(1, c)) : 0,
       rows: Number.isFinite(r) ? Math.min(10, Math.max(1, r)) : 0,
+      auto: false,
     };
   }
-  if (sel && sel.value && sel.value !== "0") {
-    const [c, r] = sel.value.split("x").map((x) => parseInt(x, 10));
-    return { cols: c || 0, rows: r || 0 };
+  if (sel && sel.value === "0") {
+    return { cols: 0, rows: 0, auto: true };
   }
-  return { cols: 0, rows: 0 };
+  if (sel && sel.value) {
+    const [c, r] = sel.value.split("x").map((x) => parseInt(x, 10));
+    return { cols: c || 0, rows: r || 0, auto: false };
+  }
+  return { cols: 0, rows: 0, auto: false };
 }
 
 function starOvDimsLabel(d) {
-  if (!d || !d.cols || !d.rows) {
-    return "自动方阵";
+  if (d && d.cols && d.rows) {
+    return `${d.rows} 行 × ${d.cols} 列`;
   }
-  return `${d.rows} 行 × ${d.cols} 列`;
+  return d && d.auto ? "自动方阵" : "3 × 3（默认）";
 }
 
 function starOvSyncGrid() {
@@ -1283,17 +1299,19 @@ function starOvRequestPreview() {
   starOv.reloading = true;
   starOv.pending = -1;
   starOv.previews = [];
-  starOvSetEnabled(false);
   // 第一次打开：先弹窗占位（遮罩可见），出图后再填；已开弹窗：遮罩盖旧图
   if (!starOv.mask || !starOv.mask.isConnected) {
     starOvOpenMask("⭐ 星标总览图（加载中…）");
   }
+  // 放在开窗之后：首次打开时上一句之前 mask 还不存在，那次置灰是空转，
+  // 控件会保持可点（好在 starOvLoadPage 有 reloading 拦着，但别依赖这层兜底）
+  starOvSetEnabled(false);
   starOvLoading(`正在按「${starOvDimsLabel(d)}」排版第 1 张…`);
   const status = starOv.mask.querySelector("[data-so-status]");
   if (status) {
     status.style.display = "none";
   }
-  post({ type: "previewStarOverview", cols: d.cols || 0, rows: d.rows || 0, labels: starOv.labels });
+  post({ type: "previewStarOverview", cols: d.cols || 0, rows: d.rows || 0, auto: !!d.auto, labels: starOv.labels });
 }
 
 function starOvFrame() {
@@ -1354,6 +1372,7 @@ function starOvLoadPage(idx) {
     page: idx,
     cols: d.cols || 0,
     rows: d.rows || 0,
+    auto: !!d.auto,
     labels: starOv.labels,
     token,
   });
@@ -1517,6 +1536,7 @@ function showStarOverviewPreview(msg) {
   starOv.pageCount = pageCount;
   starOv.cols = Number(msg.cols || 0);
   starOv.rows = Number(msg.rows || 0);
+  starOv.auto = !!msg.auto;
   starOv.previews = new Array(pageCount);
   starOv.idx = Math.min(starOv.idx, pageCount - 1);
   if (!starOv.mask || !starOv.mask.isConnected) {
@@ -1586,7 +1606,7 @@ function starOvGenerate() {
   if (status) {
     status.style.display = "none";
   }
-  post({ type: "generateStarOverview", cols: d.cols || 0, rows: d.rows || 0, labels: starOv.labels });
+  post({ type: "generateStarOverview", cols: d.cols || 0, rows: d.rows || 0, auto: !!d.auto, labels: starOv.labels });
 }
 
 function starOvShowFooter(mask) {

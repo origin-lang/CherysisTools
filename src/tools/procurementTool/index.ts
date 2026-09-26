@@ -21,6 +21,15 @@ const undoStack: Array<{ suppliers: Supplier[]; orders: Order[]; desc: string }>
 /** 重做快照栈：撤销时把「当前状态」压入，重做时取出来恢复 */
 const redoStack: Array<{ suppliers: Supplier[]; orders: Order[]; desc: string }> = [];
 
+/**
+ * 丢弃撤销/重做快照。换数据库目录时必须调：快照里存的是旧库的行 id，
+ * restoreAll 照着写会把这些 id 指向的行写回新库里毫不相干的厂商/订单。
+ */
+export function resetProcurementUndoRedo(): void {
+  undoStack.length = 0;
+  redoStack.length = 0;
+}
+
 /** 字段 key → 中文名，撤销提示里显示改的是哪个字段 */
 const FIELD_LABELS: Record<string, Record<string, string>> = {
   supplier: {

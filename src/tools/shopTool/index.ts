@@ -5,7 +5,8 @@ import { ToolDefinition } from "../../core/toolRegistry.js";
 import { ToolContext } from "../../core/toolContext.js";
 import { getDB, initDB, ShopDB, ShopDBSnapshot } from "./db.js";
 import { canonicalCode, fileStamp, todayStr } from "./pricing.js";
-import { coverThumbCachePaths } from "./images.js";
+import { pruneCodeThumbs, pruneOldThumbs } from "./images.js";
+import { resolveImageDir, effectiveImageDir } from "./imageDir.js";
 import { Handler, HandlerCtx } from "./handlers/types.js";
 import { productHandlers } from "./handlers/product.js";
 import { salesHandlers } from "./handlers/sales.js";
@@ -19,6 +20,10 @@ import { settingsHandlers } from "./handlers/settings.js";
 const AUTO_BACKUP_KEEP = 14;
 const PRE_BACKUP_KEEP = 20;
 let lastAutoBackupCheckDate = "";
+// 旧缩略图清理的日期戳：扫目录按天一次，别每条 webview 消息都重扫
+let lastThumbPruneDate = "";
+// 图片根目录异常提示只在这个 VS Code 会话里说一次（开关面板不重复刷）
+let imageDirWarned = false;
 const backupDir = (storageDir: string): string => path.join(storageDir, "backups");
 
 async function backupToDir(storageDir: string, prefix: string): Promise<string | null> {
@@ -55,6 +60,23 @@ function pruneBackups(storageDir: string, prefix: string, keep: number): void {
   }
 }
 
+// 某目录今天是否已留过自动备份：备份文件名 shop_auto_YYYYMMDD_HHMMSS.db（见 fileStamp），
+// 命中即跳过。判据落在各人自己可写的目录上，而非共享库——放共享库里会变成「谁先打开谁打戳，
+// 别人当天全部跳过」，各机 C 盘的异地备份就再也不会产生。
+function hasAutoBackupToday(storageDir: string, stamp: string): boolean {
+  const prefix = "shop_auto_";
+  try {
+    return fs
+      .readdirSync(backupDir(storageDir))
+      .some(
+        (f) =>
+          f.startsWith(prefix) && f.slice(prefix.length, prefix.length + 8) === stamp,
+      );
+  } catch {
+    return false;
+  }
+}
+
 function backupTargetDirs(storageDir: string, defaultStorageDir: string): string[] {
   const set = new Set<string>();
   if (storageDir) {
@@ -74,12 +96,14 @@ async function maybeAutoBackup(storageDir: string, defaultStorageDir: string, lo
   }
   lastAutoBackupCheckDate = stamp;
   try {
-    if (String(getDB().getSetting("auto_backup_date") || "") === stamp) {
-      return;
-    }
     const okFiles: string[] = [];
     const failDirs: string[] = [];
+    let skipped = 0;
     for (const dir of backupTargetDirs(storageDir, defaultStorageDir)) {
+      if (hasAutoBackupToday(dir, stamp)) {
+        skipped++;
+        continue;
+      }
       const file = await backupToDir(dir, "shop_auto");
       if (file) {
         okFiles.push(file);
@@ -88,15 +112,17 @@ async function maybeAutoBackup(storageDir: string, defaultStorageDir: string, lo
         failDirs.push(dir);
       }
     }
-    if (okFiles.length > 0) {
-      getDB().setSetting("auto_backup_date", stamp);
-    }
-    if (okFiles.length > 0 && failDirs.length === 0) {
-      log(`✅每日自动备份完成（${okFiles.length} 份）${okFiles.join(" | ")}`);
-    } else if (okFiles.length > 0) {
-      log(`⚠️每日自动备份部分成功（${failDirs.length} 个目录失败）${okFiles.join(" | ")}`);
-    } else {
+    if (okFiles.length === 0) {
+      if (skipped > 0) {
+        return;
+      }
       log("⚠️每日自动备份失败");
+      return;
+    }
+    if (failDirs.length === 0) {
+      log(`✅每日自动备份完成（${okFiles.length} 份）${okFiles.join(" | ")}`);
+    } else {
+      log(`⚠️每日自动备份部分成功（${failDirs.length} 个目录失败）${okFiles.join(" | ")}`);
     }
   } catch (err: any) {
     log(`⚠️每日自动备份失败：${err.message}`);
@@ -134,6 +160,16 @@ const REDO_LIMIT = 20;
 const undoStack: Array<{ snap: ShopDBSnapshot; desc: string }> = [];
 const redoStack: Array<{ snap: ShopDBSnapshot; desc: string }> = [];
 
+/**
+ * 丢弃撤销/重做快照。换数据库目录时必须调：快照是「整库 SELECT 出来的行」，
+ * 里面存的是旧库的行 id / 主键值，restoreAll 会照着写回当时的表——库换了以后
+ * 这些 id 指向的是新库里毫不相干的商品，一撤销就把新库写烂了。
+ */
+export function resetShopUndoRedo(): void {
+  undoStack.length = 0;
+  redoStack.length = 0;
+}
+
 export const shopTool: ToolDefinition = {
   toolName: "shopTool",
   category: "system",
@@ -151,7 +187,7 @@ export const shopTool: ToolDefinition = {
   resourceRoots(storageDir) {
     try {
       initDB(storageDir);
-      const dir = String(getDB().getSetting("image_dir") || "").trim();
+      const dir = effectiveImageDir(resolveImageDir(getDB().getSetting("image_dir")));
       return dir ? [dir] : [];
     } catch {
       return [];
@@ -169,6 +205,28 @@ export const shopTool: ToolDefinition = {
     const state: { current: ShopDB } = { current: getDB() };
 
     await maybeAutoBackup(ctx.storageDir, ctx.defaultStorageDir, log);
+    // 缩略图缓存清理跟着备份触发：都是「本机目录维护」性质，同一处做。
+    // 每天只扫一次目录——这条消息每条 webview 消息都会走一遍，重复扫几千个文件会拖慢面板。
+    const thumbPruneStamp = todayStr();
+    if (thumbPruneStamp !== lastThumbPruneDate) {
+      lastThumbPruneDate = thumbPruneStamp;
+      pruneOldThumbs(ctx.defaultStorageDir);
+    }
+
+    // 图片根目录搬去 VS Code 设置后，面板里那一行是只读展示、不能改；
+    // 这里的日志是「打开面板时立刻知道本机配没配/配得对不对」的地方。
+    // 只在「没配 / 配了但不可用」时说一次，正常情况不刷屏。改配置的即时反馈走通知（见 extension.ts）。
+    if (!imageDirWarned) {
+      imageDirWarned = true;
+      const img = resolveImageDir(state.current.getSetting("image_dir"));
+      if (img.configBroken) {
+        log(`⚠本机设置里填的图片根目录不可用，已忽略：${img.dir || "（空）"}（需绝对路径且真实存在）`);
+      } else if (!img.dir) {
+        log("ℹ尚未设置商品图片根目录，本机无法显示/上传/删除图片。执行命令「Cherysis:设置商品图片根目录」设置一次。");
+      } else if (!img.valid) {
+        log(`⚠商品图片根目录不可用：${img.dir}（可能是别人机器上的路径，或共享盘没挂上/被改名）`);
+      }
+    }
 
     if (!codeMigrated) {
       codeMigrated = true;
@@ -179,7 +237,7 @@ export const shopTool: ToolDefinition = {
             state.current.updateProductField(p.id, "code", padded);
           }
         }
-        const dir = String(state.current.getSetting("image_dir") || "").trim();
+        const dir = effectiveImageDir(resolveImageDir(state.current.getSetting("image_dir")));
         if (dir) {
           let subs: string[] = [];
           try {
@@ -218,26 +276,21 @@ export const shopTool: ToolDefinition = {
     }
 
     const getSetting = (key: string): string => state.current.getSetting(key);
-    const imageDir = (): string => String(getSetting("image_dir") || "").trim();
+    // 图片根目录走 imageDir.ts：本机 VS Code 设置优先，库里旧值只作回落。
+    // 各 handler 统一用 h.imageDir()，别再直接读 image_dir，否则会绕过解析。
+    // 再经 effectiveImageDir 过滤：路径不可用时给空串，让上层按「没配」处理，而不是拼出一串 ENOENT 路径。
+    const imageDir = (): string => effectiveImageDir(resolveImageDir(getSetting("image_dir")));
     const stockAlert = (): number => {
       const v = Number(getSetting("stock_alert") || 0);
       return Number.isFinite(v) ? v : 0;
     };
 
-    // 商品封面用 base64 按需下发（与放大看图的 lightbox 同一机制），
-    // 不依赖 webview 资源白名单，任意图片目录、上传/清空后都能即时生效
+    // 商品封面用 base64 按需下发（放大看图的大图另走 webview 资源 URI，见 handlers/image.ts）。
+    // 缩略图磁盘缓存在本机 defaultStorageDir，改编号/删图时按编号前缀一次删净。
     const coverCache = new Map<string, string>();
     const invalidateCover = (code: string) => {
       coverCache.delete(code);
-      const paths = coverThumbCachePaths(ctx.storageDir, code);
-      if (paths) {
-        try {
-          fs.rmSync(paths.thumbPath, { force: true });
-          fs.rmSync(paths.metaPath, { force: true });
-        } catch {
-          /* 忽略缓存清理失败 */
-        }
-      }
+      pruneCodeThumbs(ctx.defaultStorageDir, code);
       ctx.postToWebview({ type: "coverInvalidated", code });
     };
 
@@ -396,6 +449,17 @@ export const shopTool: ToolDefinition = {
       h.postStockIns();
     };
 
+    // 面板里那一行只读展示用：当前库路径 + shop.db 大小/最后修改时间。
+    // stat 拿不到就报 undefined，前端显示「（未创建）」——共享盘没挂上时别假装正常。
+    const dbFileStat = (): { size: number; mtimeMs: number } | null => {
+      try {
+        const st = fs.statSync(path.join(ctx.storageDir, "shop.db"));
+        return { size: st.size, mtimeMs: st.mtimeMs };
+      } catch {
+        return null;
+      }
+    };
+
     const loadAll = () => {
       ctx.postToWebview({
         type: "productsLoaded",
@@ -406,7 +470,6 @@ export const shopTool: ToolDefinition = {
       ctx.postToWebview({
         type: "settingsLoaded",
         settings: {
-          image_dir: imageDir(),
           name_template: getSetting("name_template"),
           stock_alert: stockAlert(),
           sales_deduct_stock: String(getSetting("sales_deduct_stock") || "1"),
@@ -421,6 +484,9 @@ export const shopTool: ToolDefinition = {
           import_fields: getSetting("import_fields"),
           import_mode: getSetting("import_mode"),
           export_fields: getSetting("export_fields"),
+          // 只读展示用，不进 allowedKeys：路径是本机/全组的环境配置，不该被面板改写
+          db_path: ctx.storageDir,
+          db_stat: dbFileStat(),
         },
       });
       ctx.postToWebview({ type: "settlesLoaded", settles: state.current.getSettleMonths() });
@@ -449,6 +515,7 @@ export const shopTool: ToolDefinition = {
       log,
       post: (m) => ctx.postToWebview(m),
       getSetting,
+      imageDir,
       coverCache,
       invalidateCover,
       removeImageFolder,

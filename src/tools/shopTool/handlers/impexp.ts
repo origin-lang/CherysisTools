@@ -106,7 +106,7 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
         );
         const outFile = path.join(dir, `商品清单_${fileStamp()}.xlsx`);
         if (withImages) {
-          const imageDir = String(h.getSetting("image_dir") || "").trim();
+          const imageDir = h.imageDir();
           const stIdx = cols.findIndex((c) => c.key === "status");
           const plIdx = cols.findIndex((c) => c.key === "purchase_link");
           const imgColIdx =

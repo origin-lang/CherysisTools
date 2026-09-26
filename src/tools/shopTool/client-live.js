@@ -5,6 +5,80 @@
       return v === "code" || v === "none" ? v : "num";
     }
 
+    // ===== 九宫格生成的加载态 =====
+    // 存在 state 里而不是只改 DOM：renderLiveGrid 会整块重建分组区的 innerHTML，
+    // 只改按钮的话，用户中途改一格编号，忙碌提示就被冲掉了。
+    // 一次只允许一个生成任务在跑（所有生成按钮共用这一份忙碌态）。
+    function liveGridBusyText(busy) {
+      if (busy.phase === "dialog") {
+        return busy.text ? `生成中…（${busy.text}）` : "生成中…（选目录中）";
+      }
+      if (busy.phase === "running") {
+        return busy.total > 0
+          ? `生成中…（第 ${busy.done}/${busy.total} 组）`
+          : "生成中…";
+      }
+      return "生成中…（准备中）";
+    }
+
+    function setLiveGridBusy(busy) {
+      state.liveGridBusy = busy || null;
+      applyLiveGridBusy();
+    }
+
+    function applyLiveGridBusy() {
+      const busy = state.liveGridBusy;
+      const text = busy ? liveGridBusyText(busy) : "";
+      const gen = $("liveGenerateBtn");
+      if (gen) {
+        gen.disabled = !!busy;
+        gen.textContent = busy ? "⏳ 生成中…" : "生成全部九宫格";
+      }
+      const bar = $("liveGenStatus");
+      if (bar) {
+        bar.textContent = text;
+        bar.style.display = busy ? "" : "none";
+      }
+      const area = $("liveGridArea");
+      if (area) {
+        // busy 存在但 groups 丢了也要顶住：这里抛错会把 apply 打断，按钮就再也恢复不了
+        const groups = (busy && busy.groups) || [];
+        area.querySelectorAll("[data-ls-act='gen']").forEach((b) => {
+          const mine = !!busy && groups.indexOf(Number(b.dataset.g)) >= 0;
+          b.disabled = !!busy;
+          b.textContent = mine ? `⏳ ${text}` : "🖼 生成这组";
+        });
+      }
+    }
+
+    // 后端进度回传：start/dialog/running 续上，done/error/cancelled 一律收工
+    function onLiveGridStatus(msg) {
+      const phase = String(msg.phase || "");
+      if (phase === "done" || phase === "error" || phase === "cancelled") {
+        setLiveGridBusy(null);
+        return;
+      }
+      const cur = state.liveGridBusy || { groups: [], done: 0, total: 0 };
+      setLiveGridBusy({
+        ...cur,
+        phase,
+        text: String(msg.text || ""),
+        done: Number(msg.done ?? cur.done),
+        total: Number(msg.total ?? cur.total),
+      });
+    }
+
+    // 可生成的组（有有效编号的那些）
+    function liveGeneratableGroups() {
+      return [
+        ...new Set(
+          state.livePlan
+            .filter((r) => r.code && stateProduct(r.code))
+            .map((r) => r.group_no),
+        ),
+      ].sort((a, b) => a - b);
+    }
+
     function renderLiveStars() {
       const wrap = $("liveStarWrap");
       if (!wrap) {
@@ -47,6 +121,7 @@
       );
       if (groupNos.length === 0) {
         area.innerHTML = `<p class="muted">（空：点「＋ 加一组」开始，或从上方备选里填格子）</p>`;
+        applyLiveGridBusy();
         return;
       }
       const seen = new Set();
@@ -165,6 +240,8 @@
         plan.filter((r) => r.code).map((r) => ({ code: r.code })),
       );
       renderLivePreviews();
+      // 分组区刚被 innerHTML 重建，忙碌态要重新贴回按钮上
+      applyLiveGridBusy();
     }
 
     function coverTile(bySlot, s, startNum) {
@@ -331,6 +408,8 @@
         return;
       }
       scheduleLivePlanSave();
+      // 先置「生成中」再发请求：后端要弹原生目录/确认框，网页这边不先动一下看着像没点上
+      setLiveGridBusy({ phase: "start", groups: [groupNo], done: 0, total: 1 });
       post({
         type: "generateLiveGrid",
         plan: state.livePlan.map((r) => ({ ...r })),
@@ -472,14 +551,13 @@
       const gen = $("liveGenerateBtn");
       if (gen) {
         gen.onclick = () => {
-          const filled = state.livePlan.filter(
-            (r) => r.code && stateProduct(r.code),
-          );
-          if (filled.length === 0) {
+          const groupNos = liveGeneratableGroups();
+          if (groupNos.length === 0) {
             toast("先往格子里填至少一个有效编号");
             return;
           }
           scheduleLivePlanSave();
+          setLiveGridBusy({ phase: "start", groups: groupNos, done: 0, total: groupNos.length });
           post({
             type: "generateLiveGrid",
             plan: state.livePlan.map((r) => ({ ...r })),

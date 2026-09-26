@@ -5,6 +5,19 @@ import { createToolContext, ToolContext } from "./toolContext.js";
 /** 工具所属分组：system=系统管理（带数据库等重依赖），utility=小工具 */
 export type ToolCategory = "system" | "utility";
 
+/**
+ * 数据存储目录：优先用用户配置的 cherysis.storageDir，留空则退回 VS Code 全局存储目录。
+ * 面板创建、每条消息、以及需要自己碰数据库的命令都要用同一份口径，抽出来避免各处抄一遍
+ * 抄歪（抄歪的后果是「面板和命令连的不是同一个库」）。
+ */
+export function resolveStorageDir(context: vscode.ExtensionContext): string {
+  const configured = vscode.workspace
+    .getConfiguration("cherysis")
+    .get<string>("storageDir", "")
+    .trim();
+  return configured || context.globalStorageUri.fsPath;
+}
+
 /** 每个工具必须导出的定义 */
 export interface ToolDefinition {
   toolName: string;
@@ -128,9 +141,7 @@ class ToolRegistry {
       return;
     }
     const toolList = this.tools;
-    const storageDir =
-      vscode.workspace.getConfiguration("cherysis").get<string>("storageDir", "").trim() ||
-      context.globalStorageUri.fsPath;
+    const storageDir = resolveStorageDir(context);
     const resourceRoots = [
       vscode.Uri.joinPath(context.extensionUri, "src", "webview"),
       vscode.Uri.joinPath(context.extensionUri, "src", "tools"),
@@ -169,8 +180,7 @@ class ToolRegistry {
 
     panel.webview.onDidReceiveMessage(async (msg) => {
       // 数据存储目录：优先用用户配置的 cherysis.storageDir，留空则退回 VS Code 全局存储目录
-      const configured = vscode.workspace.getConfiguration("cherysis").get<string>("storageDir", "");
-      const storageDir = configured.trim() || context.globalStorageUri.fsPath;
+      const storageDir = resolveStorageDir(context);
       fs.mkdirSync(storageDir, { recursive: true });
       const ctx = createToolContext(
         panel,

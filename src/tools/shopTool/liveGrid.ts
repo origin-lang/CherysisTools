@@ -139,8 +139,17 @@ export async function renderStarOverviewBuffer(
   cols: number,
   rowsN: number,
   labels: StarLabelOptions,
-  opts?: { preview?: boolean },
+  opts?: { preview?: boolean; imgFor?: (code: string, src: string | null) => Promise<string | null> },
 ): Promise<Buffer> {
+  // 预览时 imgFor 给的是本机 512 等比小图（见 images.ts 的 previewThumbPath），省掉每格都从
+  // 共享盘拉原图再解码。取不到就回退 cell.img，行为与原来一致。导出写盘那条路不传 imgFor，
+  // 永远用原图 —— 预览快不能牺牲成品清晰度。
+  const srcOf = async (code: string, src: string | null): Promise<string | null> => {
+    if (!opts?.imgFor) {
+      return src;
+    }
+    return (await opts.imgFor(code, src)) || src;
+  };
   // 兜底 clamp：防止传入超大排版把 create 画布顶爆（10×10 上限 ≈10240px 生成 / ≈3600px 预览）
   cols = Math.min(10, Math.max(1, Math.round(cols) || 1));
   rowsN = Math.min(10, Math.max(1, Math.round(rowsN) || 1));
@@ -148,10 +157,12 @@ export async function renderStarOverviewBuffer(
   const MIN_EDGE = opts?.preview ? 180 : 256;
   let tileW = 300;
   let tileH = 300;
-  const firstImg = rows.find((r) => r.img);
-  if (firstImg) {
+  // 探尺寸也走同一张图：小图等比缩放、边长 512 > 预览格上限 360，算出来的格子尺寸与原图一致
+  const firstRow = rows.find((r) => r.img);
+  const probeSrc = firstRow ? await srcOf(firstRow.code, firstRow.img) : null;
+  if (probeSrc) {
     try {
-      const meta = await sharp(firstImg.img!).metadata();
+      const meta = await sharp(probeSrc).metadata();
       const w = meta.width || 0;
       const h = meta.height || 0;
       if (w > 40 && h > 40) {
@@ -171,10 +182,11 @@ export async function renderStarOverviewBuffer(
     const row = Math.floor(idx / cols);
     const cell = rows[idx];
     let input: Buffer;
-    if (cell.img) {
+    const src = cell.img ? await srcOf(cell.code, cell.img) : null;
+    if (src) {
       try {
         // limitInputPixels:false 让超大源图也能 resize；失败则该格灰底占位
-        input = await sharp(cell.img, { limitInputPixels: false })
+        input = await sharp(src, { limitInputPixels: false })
           .resize(tileW, tileH, { fit: "fill" })
           .toBuffer();
       } catch {

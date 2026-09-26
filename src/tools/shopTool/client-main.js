@@ -433,7 +433,6 @@ function bindEvents() {
     }
   });
 
-  $("pickImageDirBtn").onclick = () => post({ type: "pickImageDir" });
   $("saveNameTemplateBtn").onclick = () =>
     post({
       type: "saveSettings",
@@ -491,6 +490,12 @@ function bindEvents() {
     fsSel.onchange = () => saveFontSize(fsSel.value);
   }
   $("dbBackupBtn").onclick = () => post({ type: "exportDB" });
+  if ($("dbPathBtn")) {
+    // webview 里没有 executeCommand，只能 post 给扩展侧去叫命令。选目录的流程
+    // 只有命令里那一份（校验/确认/关连接/清快照），面板不重复实现，免得两处对不上。
+    $("dbPathBtn").onclick = () => post({ type: "pickStorageDir" });
+  }
+
   $("dbRestoreBtn").onclick = () =>
     confirmBox(
       "恢复会用所选备份整体替换当前全部数据（商品/库存/销售/月报/排品）。确定继续？",
@@ -790,6 +795,10 @@ function onMessage(msg) {
       toast(`已生成 ${msg.count || 0} 张九宫格 → ${msg.dir || ""}`);
       break;
     }
+    case "liveGridStatus": {
+      onLiveGridStatus(msg);
+      break;
+    }
     case "starOverviewPreview": {
       showStarOverviewPreview(msg);
       break;
@@ -888,22 +897,20 @@ function onMessage(msg) {
         big.style.display = "none";
         return;
       }
-      const big0 = msg.big0 || "";
       const hadIdx = state.lbIdx || 0;
       const idx = Math.min(hadIdx, msg.images.length - 1);
       state.lbIdx = idx;
       big.style.display = "inline-block";
       const key = `${msg.code}:${idx}`;
-      if (idx === 0) {
-        state.lbFullCache[key] = big0;
-        big.src = big0;
+      // lbFullCache 只存 base64（来自兜底/复制通道）；显示优先走 URI，不必也不该缓存
+      const cached = state.lbFullCache[key];
+      if (cached) {
+        big.onerror = null;
+        big.src = cached;
+      } else if (idx === 0 && msg.big0Uri) {
+        setLightboxBig(big, msg.code, 0, msg.big0Uri);
       } else {
-        const cached = state.lbFullCache[key];
-        if (cached) {
-          big.src = cached;
-        } else {
-          post({ type: "getFullImage", code: msg.code, index: idx });
-        }
+        post({ type: "getFullImage", code: msg.code, index: idx });
       }
       thumbs.innerHTML = msg.images
         .map(
@@ -922,10 +929,8 @@ function onMessage(msg) {
           img.classList.add("active");
           const cached = state.lbFullCache[key];
           if (cached) {
+            big.onerror = null;
             big.src = cached;
-          } else if (idx === 0 && big0) {
-            state.lbFullCache[key] = big0;
-            big.src = big0;
           } else {
             post({ type: "getFullImage", code: msg.code, index: idx });
           }
@@ -934,22 +939,30 @@ function onMessage(msg) {
           e.preventDefault();
           const idx = Number(img.dataset.i);
           const key = `${msg.code}:${idx}`;
-          let data = state.lbFullCache[key] || "";
-          if (!data && idx === 0) {
-            data = big0;
-          }
-          let loading = !data;
+          // 复制只能吃 data URL：没有 base64 就现取一份，取回后自动复制
+          const data = state.lbFullCache[key] || "";
+          const loading = !data;
           if (loading) {
             state.lbPendingCopy = { code: msg.code, idx };
-            post({ type: "getFullImage", code: msg.code, index: idx });
+            post({ type: "getFullImage", code: msg.code, index: idx, base64: true });
           }
           openLightboxMenu(e, msg.code, idx, data, loading);
         };
       });
-      big.addEventListener("contextmenu", (e) => {
+      // 用 oncontextmenu 赋值而不是 addEventListener：同一张 big 元素会被反复赋值，
+      // addEventListener 会越堆越多，且旧闭包里的 code 会导致右键删错商品
+      big.oncontextmenu = (e) => {
         e.preventDefault();
-        openLightboxMenu(e, msg.code, state.lbIdx || 0, big.src || "", false);
-      });
+        const idx = state.lbIdx || 0;
+        const data = state.lbFullCache[`${msg.code}:${idx}`] || "";
+        if (data) {
+          openLightboxMenu(e, msg.code, idx, data, false);
+          return;
+        }
+        state.lbPendingCopy = { code: msg.code, idx };
+        post({ type: "getFullImage", code: msg.code, index: idx, base64: true });
+        openLightboxMenu(e, msg.code, idx, "", true);
+      };
       break;
     }
     case "fullImageLoaded": {
@@ -957,21 +970,32 @@ function onMessage(msg) {
         break;
       }
       const big = document.getElementById("lbBig");
-      if (!big || !msg.data) {
+      if (!big) {
         break;
       }
-      state.lbFullCache[`${msg.code}:${msg.index}`] = msg.data;
-      big.src = msg.data;
-      if (
-        state.lbPendingCopy &&
-        state.lbPendingCopy.code === msg.code &&
-        state.lbPendingCopy.idx === msg.index
-      ) {
-        const pc = state.lbPendingCopy;
-        state.lbPendingCopy = null;
-        copyImageFromDataUrl(msg.data).then((ok) =>
-          ok ? toast("已复制图片") : toast("复制失败"),
-        );
+      // base64 通道：兜底显示 + 右键复制的实际来源，存进 lbFullCache 供本次会话复用
+      if (msg.data) {
+        state.lbFullCache[`${msg.code}:${msg.index}`] = msg.data;
+        if (state.lbIdx === msg.index) {
+          big.onerror = null;
+          big.src = msg.data;
+        }
+        if (
+          state.lbPendingCopy &&
+          state.lbPendingCopy.code === msg.code &&
+          state.lbPendingCopy.idx === msg.index
+        ) {
+          const pc = state.lbPendingCopy;
+          state.lbPendingCopy = null;
+          copyImageFromDataUrl(msg.data).then((ok) =>
+            ok ? toast("已复制图片") : toast("复制失败"),
+          );
+        }
+        break;
+      }
+      // URI 通道：默认显示路径；加载失败由 setLightboxBig 的 onerror 回退
+      if (msg.uri && state.lbIdx === msg.index) {
+        setLightboxBig(big, msg.code, msg.index, msg.uri);
       }
       break;
     }
@@ -1010,6 +1034,22 @@ function patchCoverRow(code, data) {
   }
   old.replaceWith(node);
   return true;
+}
+
+// 大图显示：优先用后端给的 webview 资源 URI（0 拷贝、100% 原图）。
+// 加载不出来时（图片目录不在面板的 localResourceRoots 白名单里，或 UNC 路径加载不出）
+// onerror 自动回退请求 base64 通道；重设 src 前先摘掉 handler，否则兜底再失败会无限打转。
+function setLightboxBig(big, code, index, uri) {
+  if (!uri) {
+    big.onerror = null;
+    big.src = "";
+    return;
+  }
+  big.onerror = () => {
+    big.onerror = null;
+    post({ type: "getFullImage", code, index, base64: true });
+  };
+  big.src = uri;
 }
 
 function openLightboxMenu(e, code, idx, dataUrl, loading) {
