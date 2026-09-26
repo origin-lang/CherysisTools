@@ -208,6 +208,20 @@ function bindEvents() {
   if ($("refreshProductsBtn")) {
     $("refreshProductsBtn").onclick = () => post({ type: "loadAll" });
   }
+  if ($("readOnlyBtn")) {
+    $("readOnlyBtn").onclick = () => {
+      // 切到只读前先说一句：真有人开着写的时候锁上，会挡住自己的活
+      if (state.readOnly) {
+        post({ type: "setReadOnly", value: false });
+        return;
+      }
+      confirmBox("切到只读模式？").then((ok) => {
+        if (ok) {
+          post({ type: "setReadOnly", value: true });
+        }
+      });
+    };
+  }
   if ($("delSelBtn")) {
     $("delSelBtn").onclick = () => {
       if (selSales.size === 0) {
@@ -723,7 +737,9 @@ function onMessage(msg) {
       renderRules();
       break;
     }
-    case "settingsLoaded": {
+    case "settingsLoaded":
+    // 只改本机偏好时后端只回这一条（不重载整库），走同一套应用逻辑
+    case "localPrefsLoaded": {
       state.settings = { ...state.settings, ...(msg.settings || {}) };
       renderSettings();
       applyRowHeight(state.settings.row_height);
@@ -754,6 +770,15 @@ function onMessage(msg) {
       showImageGallery = state.settings.col_image_gallery !== "0";
       showOpsList = state.settings.col_show_ops !== "0";
       renderProducts();
+      // localPrefsLoaded 不带 readOnly，只有整份 settingsLoaded 才顺带同步模式
+      if (msg.readOnly !== undefined) {
+        applyReadOnly(!!msg.readOnly);
+      }
+      break;
+    }
+    case "readOnlyChanged": {
+      // 后端才是真闸门，这里只负责把界面摆成对的样子
+      applyReadOnly(!!msg.readOnly);
       break;
     }
     case "salesLoaded": {
@@ -1142,13 +1167,24 @@ function openLightboxMenu(e, code, idx, dataUrl, loading) {
       label: "🗑️ 删除图片",
       danger: true,
       run: () => {
-        confirmBox(
-          `确认删除 ${code} 的第 ${idx + 1} 张图片？（删除前先自动备份数据目录）`,
-        ).then((ok) => {
-          if (ok) {
-            post({ type: "deleteImageFile", code, index: idx });
-          }
-        });
+        confirmBox(`确认删除 ${code} 的第 ${idx + 1} 张图片？（文件会被真的删除）`).then(
+          (ok) => {
+            if (!ok) {
+              return;
+            }
+            // 必须先关图库抽屉再删：抽屉里 #lbBig 是用 webview 资源 URI 直接读原图的
+            // （放大走 0 拷贝那条路），Chromium 会一直攥着文件句柄不放，
+            // SMB 上 unlink 立刻 EBUSY。而右键菜单只能从抽屉里的缩略图弹出，
+            // 也就是说「打开图库 → 右键删图」这条最自然的路径 100% 撞这个错。
+            // 关掉抽屉同时也是对的：删完 reloadImages 推回的 imagesLoaded 会被
+            // client-main.js 里 `if (!thumbs || !big) break;` 安全挡掉，不用额外适配。
+            closeLightbox();
+            // 摘掉 DOM 不等于句柄立刻释放，给浏览器一帧
+            requestAnimationFrame(() => {
+              post({ type: "deleteImageFile", code, index: idx });
+            });
+          },
+        );
       },
     },
     {

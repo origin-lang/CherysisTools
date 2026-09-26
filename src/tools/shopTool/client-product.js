@@ -417,7 +417,12 @@ function openLightbox(product) {
         `确认清空 ${product.code} 的图片文件夹？（文件会真的删除）`,
       )
     ) {
-      post({ type: "clearImages", code: product.code });
+      // 同右键删图：这个按钮就长在抽屉里，#lbBig 正在用 webview URI 读原图，
+      // Chromium 攥着句柄不清空不掉。先关抽屉再发请求。
+      closeLightbox();
+      requestAnimationFrame(() => {
+        post({ type: "clearImages", code: product.code });
+      });
     }
   };
   post({ type: "getImages", code: product.code });

@@ -135,8 +135,10 @@ function writeCache(entry: CacheEntry, src: string, data: string): void {
 
 /** 把单张图缩成 webp base64 小图；失败时回退原图 base64 */
 export async function thumbToBase64(src: string, size = COVER_THUMB): Promise<string> {
+  let job: sharp.Sharp | undefined;
   try {
-    const out = await sharp(src)
+    job = sharp(src);
+    const out = await job
       .resize(size, size, { fit: "cover" })
       .webp({ quality: 80 })
       .toBuffer();
@@ -147,6 +149,10 @@ export async function thumbToBase64(src: string, size = COVER_THUMB): Promise<st
     } catch {
       return "";
     }
+  } finally {
+    // libvips 会把打开的源文件句柄挂在 job 上，等到 GC 才关。Windows/SMB 上
+    // 「刚生成过缩略图就删原图」会因此撞 EBUSY，所以这里立刻关掉，不等 GC。
+    job?.destroy();
   }
 }
 

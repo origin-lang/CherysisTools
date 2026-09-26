@@ -86,9 +86,9 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       return { cols: clamp(mc), rows: clamp(mr) };
     }
     // 只有上次用的也是固定排版才回落；记的是 auto 就继续保持自动
-    if (db.getSetting("star_grid_mode") !== "auto") {
-      const sc = Number(db.getSetting("star_grid_cols") || "0");
-      const sr = Number(db.getSetting("star_grid_rows") || "0");
+    if (h.getSetting("star_grid_mode") !== "auto") {
+      const sc = Number(h.getSetting("star_grid_cols") || "0");
+      const sr = Number(h.getSetting("star_grid_rows") || "0");
       if (sc > 0 && sr > 0) {
         return { cols: clamp(sc), rows: clamp(sr) };
       }
@@ -227,7 +227,8 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       if (!dir) {
         return;
       }
-      db.setSetting("live_out_dir", dir);
+      // 输出目录是本机偏好：各人生成到各自机器，不写共享盘（只读模式下也允许改）
+      await h.setSetting("live_out_dir", dir);
       log(`📁直播排品输出目录：${dir}`);
       h.postLiveState();
     },
@@ -240,7 +241,10 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
           slot_no: Number(r.slot_no),
           code: String(r.code ?? ""),
         }));
-        db.replaceLivePlan(plan);
+        // 只读模式下不落库：plan 用前端传来的那份直接生成图片，输出到各人本机的 live_out_dir
+        if (!h.readOnly()) {
+          db.replaceLivePlan(plan);
+        }
         const dir = h.imageDir();
         const products = db.getProducts();
         const byCode = new Map<string, Product>();
@@ -287,7 +291,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
               return;
             }
             outDir = picked;
-            db.setSetting("live_out_dir", outDir);
+            await h.setSetting("live_out_dir", outDir);
             h.postLiveState();
           }
           const action = await ctx.chooseAction(
@@ -366,7 +370,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       }
       const g = resolveGrid(msg);
       const labels = parseLabels(msg);
-      db.setSetting("star_label_options", JSON.stringify(labels));
+      await h.setSetting("star_label_options", JSON.stringify(labels));
       const chunks = chunksOf(sel.codes, g.cols, g.rows);
       const total = sel.codes.length;
       const previews: Array<{ name: string; data: string }> = [];
@@ -426,15 +430,16 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       }
       const g = resolveGrid(msg);
       const labels = parseLabels(msg);
-      // 弹窗里选过排版 → 记住（含「选了自动」这件事本身），下次预览/生成直接用
+      // 弹窗里选过排版 → 记住（含「选了自动」这件事本身），下次预览/生成直接用。
+      // 都是本机偏好：各人屏幕宽窄不同，排版就该各选各的，且只读模式下也允许改
       if (msg?.auto === true) {
-        db.setSetting("star_grid_mode", "auto");
+        await h.setSetting("star_grid_mode", "auto");
       } else if (Number(msg?.cols) > 0 && Number(msg?.rows) > 0) {
-        db.setSetting("star_grid_cols", String(g.cols));
-        db.setSetting("star_grid_rows", String(g.rows));
-        db.setSetting("star_grid_mode", "fixed");
+        await h.setSetting("star_grid_cols", String(g.cols));
+        await h.setSetting("star_grid_rows", String(g.rows));
+        await h.setSetting("star_grid_mode", "fixed");
       }
-      db.setSetting("star_label_options", JSON.stringify(labels));
+      await h.setSetting("star_label_options", JSON.stringify(labels));
       const outDir = await ctx.selectFolder("选择星标总览输出目录");
       if (!outDir) {
         log("❌未选择输出目录，已取消");

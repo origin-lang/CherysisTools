@@ -774,7 +774,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       }
     },
 
-    previewImportProducts(msg) {
+    async previewImportProducts(msg) {
       const mode = msg.mode === "add" || msg.mode === "update" ? msg.mode : "both";
       // 导入列 = “编号” + 客户端勾选的可写字段（优先）；缺省回退 当前可见列∩可写字段
       let importable: Array<{ key: string; label: string }>;
@@ -804,9 +804,10 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
           importable = hasVisConfig ? [] : IMPORTABLE_FIELD_ORDER;
         }
       }
-      // 记住这次的勾选与模式，下次打开弹窗默认
-      db.setSetting("import_fields", JSON.stringify(importable.map((f) => f.key)));
-      db.setSetting("import_mode", mode);
+      // 记住这次的勾选与模式，下次打开弹窗默认。
+      // 导入列选什么是各人习惯（各有各的表格），落本机不写共享库
+      await h.setSetting("import_fields", JSON.stringify(importable.map((f) => f.key)));
+      await h.setSetting("import_mode", mode);
       const importFields = ["code"].concat(
         importable.map((f) => f.key),
       );

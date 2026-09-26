@@ -21,6 +21,58 @@ const IMG_MIME_EXT: Record<string, string> = {
 };
 const MAX_IMG_BYTES = 25 * 1024 * 1024;
 
+const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Windows/SMB 上「文件正被占用」常是瞬时的：杀软扫一下、缩略图生成器、上一条命令的
+ * 句柄还没回收，都会让 unlink 报 EBUSY/EPERM/EACCES，隔一下重试就好。
+ * 这三个错码重试有意义；ENOENT（已经没了）之类的直接抛。
+ *
+ * 重试救不了的是「另一台机器正开着这张图」——SMB 上对方没开 FILE_SHARE_DELETE 时
+ * 本来就删不掉，协议行为，只能由调用方提示用户去关掉。
+ */
+export const RETRYABLE_UNLINK = new Set(["EBUSY", "EPERM", "EACCES"]);
+
+/**
+ * unlink 参数抽出成可注入（默认就是 fs.unlinkSync），是为了能测退避重试：
+ * fs 是 ESM namespace，对它的属性赋值会抛 read-only，测试里 monkey-patch 不掉。
+ */
+export async function unlinkWithRetry(
+	fp: string,
+	unlink: (p: string) => void = (p) => fs.unlinkSync(p),
+): Promise<void> {
+	const waits = [0, 150, 400, 1000];
+	let last: NodeJS.ErrnoException | null = null;
+	for (const w of waits) {
+		if (w) {
+			await delay(w);
+		}
+		try {
+			unlink(fp);
+			return;
+		} catch (err: any) {
+			if (!RETRYABLE_UNLINK.has(err?.code)) {
+				throw err;
+			}
+			last = err;
+		}
+	}
+	throw last ?? new Error(`删除失败：${fp}`);
+}
+
+/** 占用类报错的统一话术：说清是「被占用」而不是把 EBUSY 甩给用户 */
+export function busyHint(subject: string, err: any): string {
+  const head = `⚠️${subject}（${err?.message || "未知错误"}）`;
+  if (!RETRYABLE_UNLINK.has(err?.code)) {
+    return head;
+  }
+  return (
+    `${head}\n` +
+    `　文件正被占用。删图前请先关掉正在看的大图预览；` +
+    `如果是别的机器（或 Windows 资源管理器）正打开着这张图，也关掉再试。`
+  );
+}
+
 const stamp = (): string => {
   const d = new Date();
   const p2 = (n: number) => String(n).padStart(2, "0");
@@ -58,9 +110,19 @@ const sameContentExists = (folder: string, bytes: Buffer): boolean => {
   return false;
 };
 
-export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
+/**
+ * 依赖注入，只为测试能造出「文件被占用」：fs 是 ESM namespace，测试里 patch 不了它的
+ * unlinkSync，而 Windows/SMB 上真实的 EBUSY 在 CI 上没法复现。
+ * 生产调用只传 h，不传 deps，走下面的真实 fs.unlinkSync。
+ */
+export interface ImageHandlerDeps {
+  unlink?: (fp: string) => void;
+}
+
+export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Record<string, Handler> {
   const { log, post } = h;
   const ctx = h.ctx;
+  const unlinkFile = deps.unlink ?? ((fp: string) => fs.unlinkSync(fp));
 
   const imageDir = (): string => h.imageDir();
 
@@ -105,15 +167,36 @@ export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
     });
   };
 
+  /**
+   * 商品图片夹的 mtime，一次 SMB stat。文件夹被删/读不到时返回 -1：
+   * 与缓存里任何真实值都不相等，所以「文件夹没了」也会走重取分支拿到空图，
+   * 别人把整个夹删掉同样能刷出来。
+   */
+  const folderMtime = (code: string): number => {
+    const dir = imageDir();
+    if (!dir) {
+      return -1;
+    }
+    try {
+      return Math.floor(fs.statSync(path.join(dir, code)).mtimeMs);
+    } catch {
+      return -1;
+    }
+  };
+
   return {
     async getCover(msg) {
       const code = String(msg.code ?? "");
-      let data = h.coverCache.get(code);
-      if (data === undefined) {
-        data = await readCover(code);
-        h.coverCache.set(code, data);
+      const hit = h.coverCache.get(code);
+      // 命中不等于能用：先 stat 一下夹的 mtime（1 次 SMB 往返，比逐个文件 stat 便宜一个量级）。
+      // 别人往这个夹里加图/删图/改名都会改目录 mtime，对不上才值得重取。
+      if (hit !== undefined && folderMtime(code) === hit.dirMtime) {
+        // gen 原样带回：前端整批作废封面缓存后会 +1，靠它认出「作废之前发出的请求」
+        post({ type: "coverLoaded", code, data: hit.data, gen: msg.gen });
+        return;
       }
-      // gen 原样带回：前端整批作废封面缓存后会 +1，靠它认出「作废之前发出的请求」
+      const data = await readCover(code);
+      h.coverCache.set(code, { data, dirMtime: folderMtime(code) });
       post({ type: "coverLoaded", code, data, gen: msg.gen });
     },
 
@@ -259,15 +342,35 @@ export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
         return;
       }
       const files = listImageFiles(folder);
-      await h.preOpBackup();
+      // 同 deleteImageFile：清空图片夹也不碰数据库，不该为它白拷一次整库
+      let ok = 0;
+      let busy = 0;
+      let lastErr: any = null;
       for (const f of files) {
         try {
-          fs.unlinkSync(path.join(folder, f));
-        } catch {
-          /* 忽略单张删除失败 */
+          await unlinkWithRetry(path.join(folder, f), unlinkFile);
+          ok++;
+        } catch (err: any) {
+          lastErr = err;
+          if (RETRYABLE_UNLINK.has(err?.code)) {
+            busy++;
+          }
         }
       }
-      log(`🗑已清空 ${code} 图片文件夹（${files.length} 张）`);
+      if (files.length === 0) {
+        log(`🗑${code} 图片夹本来就是空的`);
+      } else if (busy === 0 && ok === files.length) {
+        log(`🗑已清空 ${code} 图片文件夹（${ok} 张）`);
+      } else if (busy > 0) {
+        // 原来这里是 catch {} 空吞掉单张失败、照样报「已清空 N 张」，属于谎报
+        log(
+          `${busyHint(`清空 ${code} 图片夹失败`, lastErr)}\n` +
+            `　本次只删掉了 ${ok}/${files.length} 张，剩下的还在。` +
+            `请确认图库抽屉已关、别的机器没在看这些图，再点一次「清空图片夹」。`,
+        );
+      } else {
+        log(`⚠️清空 ${code} 图片夹只成功 ${ok}/${files.length} 张（${lastErr?.message || ""}）`);
+      }
       post({ type: "imagesLoaded", code, images: [] });
       h.invalidateCover(code);
       h.loadAll();
@@ -310,11 +413,18 @@ export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
         log(`⚠️${code} 没有第 ${index + 1} 张图片`);
         return;
       }
-      await h.preOpBackup();
+      // 刻意不 preOpBackup：删图只动文件系统、一个字节都不写数据库，
+      // 备份出来的库跟操作前一模一样，纯白等一次共享盘整库拷贝（实测 4 秒）。
+      // 本机的备份也不留——真要找回误删的图，去共享盘上的图片夹里翻原件。
       try {
-        fs.unlinkSync(fp);
+        await unlinkWithRetry(fp, unlinkFile);
       } catch (err: any) {
-        log(`⚠️删除图片失败：${err.message}`);
+        // 失败也要把磁盘的真实情况推回前端，否则列表/图库停在「还在」的状态，
+        // 用户分不清到底删掉没有
+        log(busyHint(`删不掉 ${code} 的第 ${index + 1} 张图片`, err));
+        await reloadImages(code);
+        h.invalidateCover(code);
+        h.loadAll();
         return;
       }
       log(`🗑已删除 ${code} 的第 ${index + 1} 张图片`);

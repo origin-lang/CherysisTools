@@ -17,6 +17,12 @@ export interface ToolContext {
   storageDir: string;
   /** VS Code 全局存储目录（C盘默认位置），storageDir 未配置时两者相同，用于双目录异地备份 */
   defaultStorageDir: string;
+  /**
+   * 本机偏好存取（ExtensionContext.globalState → %APPDATA%\Code\User\globalStorage\state.vscdb，C 盘）。
+   * 同一份 shop.db 被多人共享时，各人机器上的路径写法 / 字号 / 字段显隐各不相同，
+   * 存进库里就是「全组一份、最后改的人覆盖所有人」。这些键一律走这里，永不写共享盘。
+   */
+  prefs: vscode.Memento;
   postToWebview(msg: any): void;
   log(text: string): void;
   selectFolder(title?: string): Promise<string | undefined>;
@@ -33,12 +39,14 @@ export function createToolContext(
   extensionUri: vscode.Uri,
   storageDir: string,
   defaultStorageDir: string,
+  prefs: vscode.Memento,
 ): ToolContext {
   return {
     panel,
     extensionUri,
     storageDir,
     defaultStorageDir,
+    prefs,
     postToWebview(msg: any) {
       panel.webview.postMessage(msg);
     },

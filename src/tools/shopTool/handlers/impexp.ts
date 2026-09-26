@@ -67,7 +67,8 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
           if (wantImage) {
             savedFields.push("_image");
           }
-          db.setSetting("export_fields", JSON.stringify(savedFields));
+          // 导出勾了哪些列是各人习惯，落本机不写共享库（只读模式下也能改）
+          await h.setSetting("export_fields", JSON.stringify(savedFields));
         } else {
           let rawVis: unknown;
           try {

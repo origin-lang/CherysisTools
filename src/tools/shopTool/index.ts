@@ -2,7 +2,6 @@ import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
 import { ToolDefinition } from "../../core/toolRegistry.js";
-import { ToolContext } from "../../core/toolContext.js";
 import { getDB, initDB, ShopDB, ShopDBSnapshot } from "./db.js";
 import { canonicalCode, fileStamp, todayStr } from "./pricing.js";
 import { pruneCodeThumbs, pruneOldThumbs } from "./images.js";
@@ -163,60 +162,101 @@ const undoStack: UndoItem[] = [];
 const redoStack: UndoItem[] = [];
 
 /**
- * 轮询：让「只读的人」不用关面板重开就能看到写的人的改动。
- * 每 POLL_INTERVAL_MS 读一次 SQLite 的 data_version —— 它是唯一为这个用途设计的计数器：
- * 别的连接（=别的进程/别的机器）提交过才变，自己通过本连接写的不会让它变。
- * 没变就什么都不做（不重读、不重渲染、不发消息），所以绝大多数轮次是空转。
- * 正因为自己写不会让它变，而下面的重推链路全是只读（clearAggCache + loadAll），
- * 「刷新→写库→再刷新」的自反馈死循环在结构上就不可能发生。
+ * 存本机（VS Code globalState，C 盘 state.vscdb）的偏好键。
+ *
+ * 同一份 shop.db 被多人共享时，下面这些在各人机器上本就该各不相同：
+ * 输出目录是别人机器上的路径、字号行高是个人审美、字段显隐是各自的屏幕宽窄、
+ * 导入导出勾了哪些列因人而异。存进库里就是「全组一份、最后改的人覆盖所有人」——
+ * 你把字号调大，同事那边也跟着变大。（跟当年的 image_dir 一个毛病。）
+ *
+ * 代价：库里那些旧值从此无人读，留在原处不删（删了反而让「谁改的」无从追溯）。
+ *
+ * 导出供测试断言用——「个人偏好不进共享库」这条得能测。
  */
-const POLL_INTERVAL_MS = 5000;
-let pollTimer: ReturnType<typeof setInterval> | null = null;
-/** 最近一次 handleMessage 挂上来的「发现别人改了 → 重推」入口 */
-let pollRefresh: (() => void) | null = null;
-let lastDataVersion = -1;
+export const LOCAL_PREF_KEYS = new Set([
+  // 显示
+  "row_height",
+  "font_size",
+  "col_visible_list",
+  "col_visible_gallery",
+  "col_image_list",
+  "col_image_gallery",
+  "col_show_ops",
+  // 直播排品 / 星标总览
+  "live_out_dir",
+  "live_grid_label",
+  "star_label_options",
+  "star_grid_mode",
+  "star_grid_cols",
+  "star_grid_rows",
+  // 导入导出
+  "import_fields",
+  "import_mode",
+  "export_fields",
+]);
 
-function stopPoll(): void {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
-  pollRefresh = null;
-  lastDataVersion = -1;
-}
+/** 留在共享库里的设置项：全组共用的业务规则，必须一致，改动要有记录 */
+const SHARED_SETTING_KEYS = new Set([
+  "name_template",
+  "stock_alert",
+  "sales_deduct_stock",
+]);
 
-function startPoll(ctx: ToolContext): void {
-  if (pollTimer) {
-    return;
-  }
-  try {
-    lastDataVersion = getDB().dataVersion();
-  } catch {
-    return;
-  }
-  pollTimer = setInterval(() => {
-    if (!pollRefresh) {
-      return;
-    }
-    let dv: number;
-    try {
-      dv = getDB().dataVersion();
-    } catch {
-      // 撞上别人提交中的排他锁（SQLITE_BUSY），跳过本轮，5 秒后再试
-      return;
-    }
-    if (dv === lastDataVersion) {
-      return;
-    }
-    lastDataVersion = dv;
-    try {
-      pollRefresh?.();
-    } catch (err: any) {
-      ctx.log(`⚠自动同步失败：${err?.message ?? err}`);
-    }
-  }, POLL_INTERVAL_MS);
-  ctx.panel.onDidDispose(() => stopPoll());
-}
+/**
+ * 只读模式下要拦下的消息类型：一切会写共享库或改共享盘图片的入口。
+ *
+ * 推荐的用法是「一台机器写，其他机器看」（见 docs/shopTool-manual.md §7.5/§7.6）。
+ * 共享盘是 SMB/SQLite：多个人同时写会互抢排他锁，写事务在网络上失败就是
+ * `disk I/O error`。所以让读的那几台直接别写，比事后补救便宜得多。
+ *
+ * 放行的：所有读、🔄 刷新、全部导出、🔄 从备份恢复以外的库操作、
+ * 九宫格与星标总览的预览/生成（输出到各人本机的 live_out_dir，不碰库）。
+ * 换数据库目录（pickStorageDir）也放行——它只改本机配置，不写库，
+ * 而且点错了还需要能换回来。
+ */
+const WRITE_ACTIONS = new Set([
+  // 商品
+  "addProduct",
+  "updateProductField",
+  "setStockQty",
+  "deleteProduct",
+  "setStatus",
+  "saveRules",
+  "setProductsStatus",
+  "setProductsStock",
+  "setProductsField",
+  "deleteProducts",
+  "addStockIn",
+  "delStockIn",
+  "commitImportProducts",
+  // 销售
+  "saveSale",
+  "pasteSales",
+  "deleteSales",
+  "updateSalesField",
+  // 结算
+  "monthBuild",
+  "saveSettle",
+  "lockSettle",
+  "unlockSettle",
+  "deleteSettle",
+  // 图片（写共享盘上的图片文件）
+  "uploadImages",
+  "receiveImageData",
+  "clearImages",
+  "deleteImageFile",
+  // 直播排品（live_plan / live_star 落库）
+  "toggleLiveStar",
+  "setLiveStars",
+  "clearLiveStars",
+  "saveLivePlan",
+  "clearLivePlan",
+  // 撤销 / 重做（整库回退）
+  "undoRequest",
+  "redoRequest",
+  // 从备份恢复 = 整库替换
+  "importDB",
+]);
 
 /**
  * 丢弃撤销/重做快照。换数据库目录时必须调：快照是「整库 SELECT 出来的行」，
@@ -333,7 +373,29 @@ export const shopTool: ToolDefinition = {
       }
     }
 
-    const getSetting = (key: string): string => state.current.getSetting(key);
+    /**
+     * 设置项读入口：17 个个人偏好键读本机 globalState，其余读共享库。
+     * 各 handler 一律走这里（或 h.getSetting），别再直接 db.getSetting，
+     * 否则会绕过这道分流、又写/读到共享盘上去。
+     */
+    const getSetting = (key: string): string => {
+      if (LOCAL_PREF_KEYS.has(key)) {
+        const v = ctx.prefs.get(key, "");
+        return v === undefined || v === null ? "" : String(v);
+      }
+      return state.current.getSetting(key);
+    };
+    /** 设置项写入口，与 getSetting 同一套分流。本机键落 globalState，不碰共享盘 */
+    const setSetting = async (key: string, value: string): Promise<void> => {
+      if (LOCAL_PREF_KEYS.has(key)) {
+        await ctx.prefs.update(key, value);
+        return;
+      }
+      state.current.setSetting(key, value);
+    };
+    /** 本机只读开关：true 时 WRITE_ACTIONS 里那些消息一律不执行（见顶部注释） */
+    const readOnly = (): boolean => ctx.prefs.get<boolean>("readOnly", false) === true;
+
     // 图片根目录走 imageDir.ts：本机 VS Code 设置优先，库里旧值只作回落。
     // 各 handler 统一用 h.imageDir()，别再直接读 image_dir，否则会绕过解析。
     // 再经 effectiveImageDir 过滤：路径不可用时给空串，让上层按「没配」处理，而不是拼出一串 ENOENT 路径。
@@ -345,7 +407,10 @@ export const shopTool: ToolDefinition = {
 
     // 商品封面用 base64 按需下发（放大看图的大图另走 webview 资源 URI，见 handlers/image.ts）。
     // 缩略图磁盘缓存在本机 defaultStorageDir，改编号/删图时按编号前缀一次删净。
-    const coverCache = new Map<string, string>();
+    // 内存这份额外记下当时商品图片夹的 mtime：手动 🔄 时 getCover 靠它判断「这个编号的
+    // 图有没有被别人动过」，动过才重取。没这层的话，别人换了图点 🔄 也刷不出来
+    // （后端内存直接把旧 base64 原样吐回）。
+    const coverCache = new Map<string, { data: string; dirMtime: number }>();
     const invalidateCover = (code: string) => {
       coverCache.delete(code);
       pruneCodeThumbs(ctx.defaultStorageDir, code);
@@ -547,9 +612,15 @@ export const shopTool: ToolDefinition = {
     };
 
     const loadAll = () => {
-      // 一次读出 settings 全表：原来这里连着 16 次 getSetting，在共享盘上就是 16 次网络往返
+      // 共享库那边一次读出 settings 全表：原来这里连着 16 次 getSetting，
+      // 在共享盘上就是 16 次网络往返。本机偏好从 globalState 读，不占往返。
       const cfg = state.current.getSettingsMap();
       const setting = (k: string): string => cfg[k] ?? "";
+      /** 本机偏好：没设过就给 def（各调用点自己带默认值） */
+      const pref = (k: string, def = ""): string => {
+        const v = ctx.prefs.get(k, def);
+        return v === undefined || v === null ? def : String(v);
+      };
       ctx.postToWebview({
         type: "productsLoaded",
         products: state.current.getProductsWithTotals(),
@@ -558,21 +629,27 @@ export const shopTool: ToolDefinition = {
       ctx.postToWebview({ type: "rulesLoaded", rules: state.current.getRules() });
       ctx.postToWebview({
         type: "settingsLoaded",
+        // 本机只读开关（存 globalState）：放在 settings 外面，它是模式不是设置项
+        readOnly: readOnly(),
         settings: {
+          // —— 共享库：全组共用的业务规则 ——
           name_template: setting("name_template"),
           stock_alert: stockAlert(),
           sales_deduct_stock: setting("sales_deduct_stock") || "1",
-          row_height: setting("row_height") || "8",
-          font_size: setting("font_size") || "13",
-          col_visible_list: setting("col_visible_list"),
-          col_visible_gallery: setting("col_visible_gallery"),
-          col_image_list: setting("col_image_list"),
-          col_image_gallery: setting("col_image_gallery"),
-          col_show_ops: setting("col_show_ops") || "1",
-          live_grid_label: setting("live_grid_label"),
-          import_fields: setting("import_fields"),
-          import_mode: setting("import_mode"),
-          export_fields: setting("export_fields"),
+          // —— 本机偏好：globalState，各人各设，不写共享盘 ——
+          row_height: pref("row_height", "8"),
+          font_size: pref("font_size", "13"),
+          col_visible_list: pref("col_visible_list"),
+          col_visible_gallery: pref("col_visible_gallery"),
+          col_image_list: pref("col_image_list"),
+          col_image_gallery: pref("col_image_gallery"),
+          col_show_ops: pref("col_show_ops", "1"),
+          live_grid_label: pref("live_grid_label"),
+          // 以前从没下发过，前端却在 starOvOpenMask 里读它 → 存下的标注选项永远回填不进去
+          star_label_options: pref("star_label_options"),
+          import_fields: pref("import_fields"),
+          import_mode: pref("import_mode"),
+          export_fields: pref("export_fields"),
           // 只读展示用，不进 allowedKeys：路径是本机/全组的环境配置，不该被面板改写
           db_path: ctx.storageDir,
           db_stat: dbFileStat(),
@@ -583,12 +660,30 @@ export const shopTool: ToolDefinition = {
       postUndoState();
     };
 
-    // 「别人改了库 → 我这边跟上」：只清内存汇总缓存后重推，绝不写库（理由见 POLL_INTERVAL_MS 处注释）
-    pollRefresh = () => {
-      state.current.clearAggCache();
-      loadAll();
+    /** 只切本机偏好用：只回 17 个本机键，不触发整库重载（共享盘上那是几十次网络往返） */
+    const postLocalPrefs = () => {
+      const pref = (k: string, def = ""): string => {
+        const v = ctx.prefs.get(k, def);
+        return v === undefined || v === null ? def : String(v);
+      };
+      ctx.postToWebview({
+        type: "localPrefsLoaded",
+        settings: {
+          row_height: pref("row_height", "8"),
+          font_size: pref("font_size", "13"),
+          col_visible_list: pref("col_visible_list"),
+          col_visible_gallery: pref("col_visible_gallery"),
+          col_image_list: pref("col_image_list"),
+          col_image_gallery: pref("col_image_gallery"),
+          col_show_ops: pref("col_show_ops", "1"),
+          live_grid_label: pref("live_grid_label"),
+          star_label_options: pref("star_label_options"),
+          import_fields: pref("import_fields"),
+          import_mode: pref("import_mode"),
+          export_fields: pref("export_fields"),
+        },
+      });
     };
-    startPoll(ctx);
 
     const postProductsDelta = (ids: number[], removed: number[] = []) => {
       ctx.postToWebview({
@@ -611,6 +706,10 @@ export const shopTool: ToolDefinition = {
       log,
       post: (m) => ctx.postToWebview(m),
       getSetting,
+      setSetting,
+      readOnly,
+      localPrefKey: (key: string) => LOCAL_PREF_KEYS.has(key),
+      postLocalPrefs,
       imageDir,
       coverCache,
       invalidateCover,
@@ -636,8 +735,6 @@ export const shopTool: ToolDefinition = {
       resetUndo: () => {
         undoStack.length = 0;
         redoStack.length = 0;
-        // 换库后 data_version 基线要重取，否则下一轮会拿新库的值跟旧库的基线比，误判成「别人改过」
-        lastDataVersion = getDB().dataVersion();
         postUndoState();
       },
     };
@@ -707,6 +804,19 @@ export const shopTool: ToolDefinition = {
         postUndoState(true);
       },
     };
+    // 只读闸门：整个分发的唯一入口，在这里拦。前端把写按钮灰显只是给人看的，
+    // 这里是真正不执行 —— 共享盘上多机同写会互抢排他锁，写事务在网络上失败
+    // 就是那句 `disk I/O error`（见顶部 WRITE_ACTIONS 注释）。
+    if (readOnly()) {
+      // saveSettings 一条消息带一个键：共享规则拦，本机偏好放行（只读机照样能调自己的字号/字段显隐）
+      const blocked =
+        WRITE_ACTIONS.has(msg.type)
+        || (msg.type === "saveSettings" && SHARED_SETTING_KEYS.has(String(msg.key ?? "")));
+      if (blocked) {
+        log("🔒 只读模式：这一步会写共享库，已拦下。要改数据请先在顶栏点 🔓 解除只读");
+        return;
+      }
+    }
     const fn = handlers[msg.type];
     if (!fn) {
       log(`❌未处理的消息类型:${msg.type}`);

@@ -187,6 +187,8 @@ class ToolRegistry {
         context.extensionUri,
         storageDir,
         context.globalStorageUri.fsPath,
+        // 本机偏好走 globalState（C 盘 state.vscdb），与共享的 storageDir 无关
+        context.globalState,
       );
 
       switch (msg.type) {

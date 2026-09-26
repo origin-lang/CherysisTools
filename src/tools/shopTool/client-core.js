@@ -6,19 +6,29 @@ window.toolClients = window.toolClients || {};
     var state = {
       products: [],
       rules: [],
+      // 个人偏好（行高/字号/字段显隐/导入导出勾选/九宫格输出目录/星标排版与标注）
+      // 由后端从本机 globalState 下发，不来自共享库 shop.db
       settings: {
+        // 全组共享的业务规则
         name_template: "",
         stock_alert: 0,
+        sales_deduct_stock: "1",
+        // 本机偏好
         row_height: "8",
         font_size: "13",
         col_visible_list: "",
         col_visible_gallery: "",
+        col_image_list: "",
+        col_image_gallery: "",
         col_show_ops: "1",
         live_grid_label: "",
+        star_label_options: "",
         import_fields: "",
         import_mode: "",
         export_fields: "",
       },
+      // 本机只读开关（存 globalState，别的机器看不见）
+      readOnly: false,
       settles: [],
       sales: [],
       salesDate: "",
@@ -42,18 +52,45 @@ window.toolClients = window.toolClients || {};
     function applyUndoState(avail, redoAvail) {
       state.canUndo = !!avail;
       state.canRedo = !!redoAvail;
+      // 只读模式下恒为灰：撤销/重做是整库回退，必然被后端那道闸拦下，亮着也是白亮
+      var off = state.readOnly;
       ["undoBtn", "undoSalesBtn", "drawerUndoBtn"].forEach((id) => {
         const b = document.getElementById(id);
         if (b) {
-          b.disabled = !state.canUndo;
+          b.disabled = off || !state.canUndo;
         }
       });
       ["redoBtn", "redoSalesBtn", "drawerRedoBtn"].forEach((id) => {
         const b = document.getElementById(id);
         if (b) {
-          b.disabled = !state.canRedo;
+          b.disabled = off || !state.canRedo;
         }
       });
+    }
+
+    // 只读模式：把界面摆成「看得了、但别改」的样子。
+    // 注意这只是给人看的提示——真正拦住写的是后端 WRITE_ACTIONS 那道闸，
+    // 所以就算某个按钮忘了灰显，点下去也只会收到一句「🔒 只读模式」。
+    function applyReadOnly(on) {
+      state.readOnly = !!on;
+      var btn = document.getElementById("readOnlyBtn");
+      if (btn) {
+        btn.textContent = on ? "🔒 只读" : "🔓 可写";
+        btn.classList.toggle("btn-danger", !!on);
+        btn.title = on
+          ? "当前只读：不会写共享库。点一下解除，可以改数据（同一时间只让一台机器写）"
+          : "当前可写：会改共享库。点一下锁上，只看不动最稳";
+      }
+      var hint = document.getElementById("readOnlyHint");
+      if (hint) {
+        hint.style.display = on ? "" : "none";
+      }
+      // 撤销/重做交给 applyUndoState 统一管（它也看 state.readOnly），这里只管新建
+      var nb = document.getElementById("newProductBtn");
+      if (nb) {
+        nb.disabled = state.readOnly;
+      }
+      applyUndoState(state.canUndo, state.canRedo);
     }
 
     var PRESET_CATEGORIES = ["手链", "项链", "耳环", "戒指", "手镯"];
@@ -103,7 +140,10 @@ window.toolClients = window.toolClients || {};
     var showOpsList = true;
     var viewMode = "list";
     var listPage = 1;
-    var pageSize = 200;
+    // 每页 50：每次渲染列表都会 ensureCovers(当前页)，页越大首屏要发的封面 base64 越多
+    // （每张一条 postMessage），在共享盘上还要为每个编号 stat 一次图片夹。
+    // 200 的时候光打开面板第一秒就要发 200 条消息、浏览器解码 200 张图。
+    var pageSize = 50;
     var lastFilterSig = "";
     var selSales = new Set();
     var sortKey = "code";

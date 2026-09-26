@@ -30,3 +30,7 @@ src/test/**
 !src/tools/**/client.js
 
 # pnpm环境：vsce-pnpm(默认依赖解析模式)只会把生产依赖加入打包列表，node_modules无需排除
+
+# AI 工具的工作数据：不是扩展的一部分，且可能夹带本机绝对路径与项目内部笔记
+.workbuddy/**
+.agents/**

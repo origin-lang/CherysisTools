@@ -310,6 +310,13 @@
     }
 
     function scheduleLivePlanSave() {
+      // 只读模式下压根不发：后端那道闸本来也会拦，发过去只会让日志区每隔 350ms
+      // 冒一句「🔒 只读模式」。排品格子在本机照样能拖着改、照样能生成九宫格
+      // （生成走 generateLiveGrid，只读时不落库、用前端这份 plan 直接出图），
+      // 只是这一次的排布不会存进共享库。
+      if (state.readOnly) {
+        return;
+      }
       clearTimeout(livePlanSaveTimer);
       livePlanSaveTimer = setTimeout(() => {
         post({

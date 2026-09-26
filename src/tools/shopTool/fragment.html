@@ -1173,8 +1173,10 @@
         <button id="undoBtn" disabled title="撤销上一步修改（最多回退 20 步）">↩</button>
         <button id="redoBtn" disabled title="重做上一步被撤销的操作">↪</button>
         <span class="tb-sep"></span>
-        <button id="refreshProductsBtn" class="mini-btn" title="重新从数据库加载商品（别的电脑改过后，点这里看最新数据）">🔄 刷新</button>
+        <button id="refreshProductsBtn" class="mini-btn" title="重新从数据库加载商品（共享盘被别的电脑改过后，点这里看最新数据）">🔄 刷新</button>
+        <button id="readOnlyBtn" class="mini-btn" title="只读模式：锁上以后，商品/销售/结算/图片/排品一律不写共享库（读取、刷新、导出、生成图照常）。同一时间只让一台机器写，别的机器点这个锁上最稳。">🔓 可写</button>
       </div>
+      <div id="readOnlyHint" class="muted" style="display: none; margin: -4px 0 6px">🔒 只读模式：可以看、刷新、导出、生成九宫格和星标总览；改数据前先点顶栏的 🔓。</div>
       <div id="productListView"></div>
       <div id="productGalleryView"></div>
       <div id="productPager"></div>
