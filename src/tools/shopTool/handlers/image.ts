@@ -24,7 +24,11 @@ const MAX_IMG_BYTES = 25 * 1024 * 1024;
 const stamp = (): string => {
   const d = new Date();
   const p2 = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+  const p3 = (n: number) => String(n).padStart(3, "0");
+  // 毫秒段是给「两台机器同一秒上传同一编号」兜底的：文件名原来只到秒，
+  // 两边算出同一个名字时会挑到同一个空位互相覆盖，而图片从来没进过备份（preOpBackup 只备 .db），
+  // 盖掉就是永久丢失。加毫秒后撞名几率约万分之一，uniqueTargetPath 再兜底。
+  return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}${p3(d.getMilliseconds())}`;
 };
 
 const uniqueTargetPath = (folder: string, base: string, ext: string): string => {
@@ -109,7 +113,8 @@ export function imageHandlers(h: HandlerCtx): Record<string, Handler> {
         data = await readCover(code);
         h.coverCache.set(code, data);
       }
-      post({ type: "coverLoaded", code, data });
+      // gen 原样带回：前端整批作废封面缓存后会 +1，靠它认出「作废之前发出的请求」
+      post({ type: "coverLoaded", code, data, gen: msg.gen });
     },
 
     async getImages(msg) {

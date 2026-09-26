@@ -113,6 +113,9 @@ window.toolClients = window.toolClients || {};
     var COVER_CONCURRENCY = 6;
     var coverQueue = [];
     var coverInFlight = 0;
+    // 封面请求的代次。整批作废缓存时 +1，用来认出台账里「作废之前就发出去的请求」，
+    // 它们的响应是旧图，回来后不能写进缓存，否则那一行的旧封面会一直留着
+    var coverGen = 0;
 
     var $ = (id) => document.getElementById(id);
     var post = (msg) => vs.postMessage({ toolName: "shopTool", ...msg });
@@ -398,8 +401,20 @@ window.toolClients = window.toolClients || {};
       while (coverInFlight < COVER_CONCURRENCY && coverQueue.length > 0) {
         const code = coverQueue.shift();
         coverInFlight++;
-        post({ type: "getCover", code });
+        post({ type: "getCover", code, gen: coverGen });
       }
+    }
+
+    /**
+     * 整批丢弃封面缓存。后端重推 productsLoaded（手动 🔄 或轮询发现别人改了库）时必须先调它：
+     * ensureCovers 见到 coverCache 里有就直接跳过，不调的话封面永远停在旧图。
+     * 只清已知的两处：列表/图库重渲染后会重新 ensureCovers 当前页，所以重取的是「看得见的行」。
+     */
+    function invalidateAllCovers() {
+      coverGen++;
+      state.coverCache = {};
+      state.coverPending = {};
+      coverQueue.length = 0;
     }
 
     function ensureCovers(list) {

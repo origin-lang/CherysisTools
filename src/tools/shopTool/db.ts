@@ -134,6 +134,12 @@ export interface ShopDB {
   setLock(month: string, locked: number): void;
   getSetting(key: string): string;
   setSetting(key: string, value: string): void;
+  /** 一次读出 settings 全表。共享盘上 16 次 getSetting 就是 16 次网络往返，合并成 1 次 */
+  getSettingsMap(): Record<string, string>;
+  /** 丢弃销量汇总缓存（别人改了库、轮询发现变化后调用） */
+  clearAggCache(): void;
+  /** 读 SQLite 的 data_version：只在「别的连接提交过」时才变，自己写不动自己 */
+  dataVersion(): number;
   getLiveStars(): string[];
   replaceLiveStars(codes: string[]): void;
   getLivePlan(): LivePlanRow[];
@@ -553,6 +559,7 @@ export function getDB(): ShopDB {
   const monthDelete = c.prepare("DELETE FROM monthly_settle WHERE month = ?");
   const monthLock = c.prepare("UPDATE monthly_settle SET locked = ?, updated_at = ? WHERE month = ?");
   const settingGet = c.prepare("SELECT value FROM settings WHERE key = ?");
+  const settingsAll = c.prepare("SELECT key, value FROM settings");
   const settingSet = c.prepare(`
     INSERT INTO settings (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -863,8 +870,24 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
       const r = settingGet.get(key) as any;
       return r ? String(r.value) : "";
     },
+    getSettingsMap(): Record<string, string> {
+      const out: Record<string, string> = {};
+      for (const r of settingsAll.all() as any[]) {
+        out[String(r.key)] = String(r.value ?? "");
+      }
+      return out;
+    },
     setSetting(key, value) {
       settingSet.run(key, value);
+    },
+    clearAggCache() {
+      resetAggCache();
+    },
+    dataVersion(): number {
+      // 必须用主连接读：PRAGMA data_version 的语义是「别的连接提交过就变」，
+      // 自己通过这条连接写的不会让它变。换个独立只读连接的话自己写也会触发，
+      // 每次自己改动后都白刷一遍。撞上别人提交中的排他锁会抛 SQLITE_BUSY，交给调用方跳过本轮。
+      return Number(c.pragma("data_version", { simple: true }));
     },
     getLiveStars(): string[] {
       return (liveStarsList.all() as any[]).map((r) => String(r.code));

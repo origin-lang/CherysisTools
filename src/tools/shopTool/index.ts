@@ -157,8 +157,66 @@ let codeMigrated = false;
 // 撤销/重做快照栈（仅内存，面板重开/网页重载即清）：每条 = 某次改动「之前」的整库快照 + 动作描述
 const UNDO_LIMIT = 20;
 const REDO_LIMIT = 20;
-const undoStack: Array<{ snap: ShopDBSnapshot; desc: string }> = [];
-const redoStack: Array<{ snap: ShopDBSnapshot; desc: string }> = [];
+/** 撤销项额外记下拍照时的 data_version：撤销前发现它变了 = 期间别人提交过，要先确认 */
+type UndoItem = { snap: ShopDBSnapshot; desc: string; dv: number };
+const undoStack: UndoItem[] = [];
+const redoStack: UndoItem[] = [];
+
+/**
+ * 轮询：让「只读的人」不用关面板重开就能看到写的人的改动。
+ * 每 POLL_INTERVAL_MS 读一次 SQLite 的 data_version —— 它是唯一为这个用途设计的计数器：
+ * 别的连接（=别的进程/别的机器）提交过才变，自己通过本连接写的不会让它变。
+ * 没变就什么都不做（不重读、不重渲染、不发消息），所以绝大多数轮次是空转。
+ * 正因为自己写不会让它变，而下面的重推链路全是只读（clearAggCache + loadAll），
+ * 「刷新→写库→再刷新」的自反馈死循环在结构上就不可能发生。
+ */
+const POLL_INTERVAL_MS = 5000;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+/** 最近一次 handleMessage 挂上来的「发现别人改了 → 重推」入口 */
+let pollRefresh: (() => void) | null = null;
+let lastDataVersion = -1;
+
+function stopPoll(): void {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  pollRefresh = null;
+  lastDataVersion = -1;
+}
+
+function startPoll(ctx: ToolContext): void {
+  if (pollTimer) {
+    return;
+  }
+  try {
+    lastDataVersion = getDB().dataVersion();
+  } catch {
+    return;
+  }
+  pollTimer = setInterval(() => {
+    if (!pollRefresh) {
+      return;
+    }
+    let dv: number;
+    try {
+      dv = getDB().dataVersion();
+    } catch {
+      // 撞上别人提交中的排他锁（SQLITE_BUSY），跳过本轮，5 秒后再试
+      return;
+    }
+    if (dv === lastDataVersion) {
+      return;
+    }
+    lastDataVersion = dv;
+    try {
+      pollRefresh?.();
+    } catch (err: any) {
+      ctx.log(`⚠自动同步失败：${err?.message ?? err}`);
+    }
+  }, POLL_INTERVAL_MS);
+  ctx.panel.onDidDispose(() => stopPoll());
+}
 
 /**
  * 丢弃撤销/重做快照。换数据库目录时必须调：快照是「整库 SELECT 出来的行」，
@@ -433,14 +491,42 @@ export const shopTool: ToolDefinition = {
     };
 
     // 改动成功后推进撤销栈（失败的路由到 handleMessage 顶部统一报错，不污染栈）
+    const currentDataVersion = (): number => {
+      try {
+        return state.current.dataVersion();
+      } catch {
+        return -1;
+      }
+    };
     const pushUndo = (snap: ShopDBSnapshot, desc: string) => {
-      undoStack.push({ snap, desc });
+      undoStack.push({ snap, desc, dv: currentDataVersion() });
       if (undoStack.length > UNDO_LIMIT) {
         undoStack.shift();
       }
       // 产生新改动即作废重做分支
       redoStack.length = 0;
       postUndoState();
+    };
+
+    /**
+     * 撤销/重做是「整库回退到某个快照」，所以快照之后任何人（别的机器）提交的改动都会被一起抹掉。
+     * 快照上记了拍照时的 data_version：撤销前发现它变了，就说明期间有别人提交过，先问一句。
+     * 一个人写的时候它不会变，所以这个确认框正常情况下根本不出现；两个以上的人写才会响。
+     */
+    const confirmExternalWrite = async (item: UndoItem | undefined, verb: string): Promise<boolean> => {
+      if (!item || item.dv < 0) {
+        return true;
+      }
+      const now = currentDataVersion();
+      if (now < 0 || now === item.dv) {
+        return true;
+      }
+      return ctx.confirm(
+        `${verb}：${item.desc}`,
+        `你按下这个操作之后，数据库被别的机器改过。${verb}会把整库回退到那次改动之前，`
+          + `期间别人提交的内容会一起被撤掉。\n\n`
+          + `如果这几秒里只有你一个人在写，看到这个提示说明状态判断异常，可以直接确定。`,
+      );
     };
 
     const refreshAfterRestore = () => {
@@ -461,6 +547,9 @@ export const shopTool: ToolDefinition = {
     };
 
     const loadAll = () => {
+      // 一次读出 settings 全表：原来这里连着 16 次 getSetting，在共享盘上就是 16 次网络往返
+      const cfg = state.current.getSettingsMap();
+      const setting = (k: string): string => cfg[k] ?? "";
       ctx.postToWebview({
         type: "productsLoaded",
         products: state.current.getProductsWithTotals(),
@@ -470,20 +559,20 @@ export const shopTool: ToolDefinition = {
       ctx.postToWebview({
         type: "settingsLoaded",
         settings: {
-          name_template: getSetting("name_template"),
+          name_template: setting("name_template"),
           stock_alert: stockAlert(),
-          sales_deduct_stock: String(getSetting("sales_deduct_stock") || "1"),
-          row_height: String(getSetting("row_height") || "8"),
-          font_size: String(getSetting("font_size") || "13"),
-          col_visible_list: getSetting("col_visible_list"),
-          col_visible_gallery: getSetting("col_visible_gallery"),
-          col_image_list: getSetting("col_image_list"),
-          col_image_gallery: getSetting("col_image_gallery"),
-          col_show_ops: String(getSetting("col_show_ops") || "1"),
-          live_grid_label: getSetting("live_grid_label"),
-          import_fields: getSetting("import_fields"),
-          import_mode: getSetting("import_mode"),
-          export_fields: getSetting("export_fields"),
+          sales_deduct_stock: setting("sales_deduct_stock") || "1",
+          row_height: setting("row_height") || "8",
+          font_size: setting("font_size") || "13",
+          col_visible_list: setting("col_visible_list"),
+          col_visible_gallery: setting("col_visible_gallery"),
+          col_image_list: setting("col_image_list"),
+          col_image_gallery: setting("col_image_gallery"),
+          col_show_ops: setting("col_show_ops") || "1",
+          live_grid_label: setting("live_grid_label"),
+          import_fields: setting("import_fields"),
+          import_mode: setting("import_mode"),
+          export_fields: setting("export_fields"),
           // 只读展示用，不进 allowedKeys：路径是本机/全组的环境配置，不该被面板改写
           db_path: ctx.storageDir,
           db_stat: dbFileStat(),
@@ -493,6 +582,13 @@ export const shopTool: ToolDefinition = {
       postLiveState();
       postUndoState();
     };
+
+    // 「别人改了库 → 我这边跟上」：只清内存汇总缓存后重推，绝不写库（理由见 POLL_INTERVAL_MS 处注释）
+    pollRefresh = () => {
+      state.current.clearAggCache();
+      loadAll();
+    };
+    startPoll(ctx);
 
     const postProductsDelta = (ids: number[], removed: number[] = []) => {
       ctx.postToWebview({
@@ -540,6 +636,8 @@ export const shopTool: ToolDefinition = {
       resetUndo: () => {
         undoStack.length = 0;
         redoStack.length = 0;
+        // 换库后 data_version 基线要重取，否则下一轮会拿新库的值跟旧库的基线比，误判成「别人改过」
+        lastDataVersion = getDB().dataVersion();
         postUndoState();
       },
     };
@@ -555,16 +653,20 @@ export const shopTool: ToolDefinition = {
       ...impexpHandlers(h),
 
       // ===== 撤销 / 重做 =====
-      undoRequest() {
-        const item = undoStack.pop();
-        if (!item) {
+      async undoRequest() {
+        if (undoStack.length === 0) {
           log("⚠没有可撤销的操作");
           postUndoState();
           return;
         }
+        if (!(await confirmExternalWrite(undoStack[undoStack.length - 1], "撤销"))) {
+          log("↪ 已取消撤销");
+          return;
+        }
+        const item = undoStack.pop() as UndoItem;
         try {
           // 把当前状态压入重做栈，之后可「重做」抵销这次撤销
-          redoStack.push({ snap: state.current.snapshotAll(), desc: item.desc });
+          redoStack.push({ snap: state.current.snapshotAll(), desc: item.desc, dv: currentDataVersion() });
           if (redoStack.length > REDO_LIMIT) {
             redoStack.shift();
           }
@@ -578,16 +680,20 @@ export const shopTool: ToolDefinition = {
         postUndoState(true);
       },
 
-      redoRequest() {
-        const item = redoStack.pop();
-        if (!item) {
+      async redoRequest() {
+        if (redoStack.length === 0) {
           log("⚠没有可重做的操作");
           postUndoState();
           return;
         }
+        if (!(await confirmExternalWrite(redoStack[redoStack.length - 1], "重做"))) {
+          log("↪ 已取消重做");
+          return;
+        }
+        const item = redoStack.pop() as UndoItem;
         try {
           // 重新执行后，当前状态也压入撤销栈，可再「撤销」回退到这里
-          undoStack.push({ snap: state.current.snapshotAll(), desc: item.desc });
+          undoStack.push({ snap: state.current.snapshotAll(), desc: item.desc, dv: currentDataVersion() });
           if (undoStack.length > UNDO_LIMIT) {
             undoStack.shift();
           }

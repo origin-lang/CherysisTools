@@ -604,6 +604,69 @@ function init() {
   post({ type: "monthBuild", month: monthNow() });
 }
 
+// productsLoaded 原来只换掉 state.products、只重绘详情抽屉，列表 DOM 一直是旧的 ——
+// 这是「点刷新没反应」的第三个原因（另两个：后端 aggCache、前端 coverCache 没清）。
+// 这里补上列表重绘：300ms 合并连续多次全量推送；光标还在输入框里就等离开输入框再画，不抢焦点。
+var productsRerenderTimer = null;
+var productsRerenderWaiting = false;
+var productsLoadedOnce = false;
+
+function isEditingTextField() {
+  const el = document.activeElement;
+  if (!el) {
+    return false;
+  }
+  const tag = (el.tagName || "").toLowerCase();
+  return (
+    tag === "input" || tag === "textarea" || tag === "select"
+    || el.isContentEditable === true
+  );
+}
+
+function applyFreshProducts() {
+  // 封面缓存必须连着作废：数据换了、图也可能跟着换了，
+  // ensureCovers 见到 coverCache 里有就跳过，不清的话封面停在旧图
+  invalidateAllCovers();
+  renderProducts();
+  if (typeof renderLivePreviews === "function") {
+    renderLivePreviews();
+  }
+}
+
+function scheduleProductsRerender() {
+  if (!productsLoadedOnce) {
+    // 首次：init() 里已经 renderProducts() 过一次（那时列表还是空的），
+    // 这里立刻补画一次，不走 300ms 防抖，免得开面板慢了半拍
+    productsLoadedOnce = true;
+    applyFreshProducts();
+    return;
+  }
+  if (productsRerenderTimer) {
+    return;
+  }
+  productsRerenderTimer = setTimeout(() => {
+    productsRerenderTimer = null;
+    if (isEditingTextField()) {
+      // 正在打字：这一轮先不画，等 focusout 之后再补一次
+      if (!productsRerenderWaiting) {
+        productsRerenderWaiting = true;
+        document.addEventListener(
+          "focusout",
+          () => {
+            if (productsRerenderWaiting) {
+              productsRerenderWaiting = false;
+              scheduleProductsRerender();
+            }
+          },
+          { once: true },
+        );
+      }
+      return;
+    }
+    applyFreshProducts();
+  }, 300);
+}
+
 function onMessage(msg) {
   switch (msg.type) {
     case "productsLoaded": {
@@ -615,6 +678,7 @@ function onMessage(msg) {
       if (typeof renderProductDrawer === "function") {
         renderProductDrawer();
       }
+      scheduleProductsRerender();
       break;
     }
     case "productsDelta": {
@@ -758,6 +822,14 @@ function onMessage(msg) {
       break;
     }
     case "coverLoaded": {
+      // 作废缓存之前就发出去的请求，回来的是旧图：只销掉在途计数，不写缓存，
+      // 否则这一行会被旧封面钉住，直到下一次改图或手动刷新才变
+      if (typeof msg.gen === "number" && msg.gen !== coverGen) {
+        delete state.coverPending[msg.code];
+        coverInFlight = Math.max(0, coverInFlight - 1);
+        pumpCovers();
+        break;
+      }
       state.coverCache[msg.code] = msg.data || "";
       delete state.coverPending[msg.code];
       coverInFlight = Math.max(0, coverInFlight - 1);
