@@ -4,9 +4,12 @@ import * as path from "path";
 import * as vscode from "vscode";
 import sharp from "sharp";
 import { ToolDefinition } from "../../core/toolRegistry.js";
-import { readImageToBase64 } from "../../core/utils.js";
+import { readImageToBase64, withSharpFile } from "../../core/utils.js";
 
 const IMG_EXTS = new Set([".jpg", ".jpeg", ".png", ".bmp", ".webp"]);
+
+// 凡是拿**磁盘路径**开 sharp 的地方都走 withSharpFile（结束即 destroy 句柄）。
+// rotateImageInPlace 尤其要：它读完就直接 unlink + rename 源文件，句柄还在就必撞 EBUSY。
 
 const IMPORT_MIME_EXT: Record<string, string> = {
   jpg: ".jpg",
@@ -23,7 +26,7 @@ export async function handleNineGridMergeFromList(
   imgPaths: string[],
   outDir: string,
 ) {
-  const meta0 = await sharp(imgPaths[0]).metadata();
+  const meta0 = await withSharpFile((f) => f(imgPaths[0]).metadata());
   const tileW = meta0.width ?? 300;
   const tileH = meta0.height ?? 300;
   const outW = tileW * 3;
@@ -33,9 +36,9 @@ export async function handleNineGridMergeFromList(
     const fp = imgPaths[idx];
     const col = idx % 3;
     const row = Math.floor(idx / 3);
-    const tileBuf = await sharp(fp)
-      .resize(tileW, tileH, { fit: "fill" })
-      .toBuffer();
+    const tileBuf = await withSharpFile((f) =>
+      f(fp).resize(tileW, tileH, { fit: "fill" }).toBuffer(),
+    );
     compositeList.push({
       input: tileBuf,
       left: col * tileW,
@@ -64,7 +67,7 @@ export async function handleNineGridLabel(
   startNum: number,
   outDir: string | undefined,
 ) {
-  const meta = await sharp(srcFile).metadata();
+  const meta = await withSharpFile((f) => f(srcFile).metadata());
   const w = meta.width!;
   const h = meta.height!;
   const cellW = w / 3;
@@ -98,10 +101,9 @@ export async function handleNineGridLabel(
     const base = path.basename(srcFile, path.extname(srcFile));
     outFile = path.join(path.dirname(srcFile), `${base}_labeled.jpg`);
   }
-  await sharp(srcFile)
-    .composite(compositeList)
-    .jpeg({ quality: 95 })
-    .toFile(outFile);
+  await withSharpFile((f) =>
+    f(srcFile).composite(compositeList).jpeg({ quality: 95 }).toFile(outFile),
+  );
   return outFile;
 }
 
@@ -113,7 +115,8 @@ export async function rotateImageInPlace(filePath: string): Promise<void> {
     `.rotate_tmp_${Date.now()}${path.extname(filePath)}`,
   );
   try {
-    await sharp(filePath).rotate(90).toFile(tempPath);
+    // 句柄必须在这行结束时就关掉：下面紧接着 unlink 源文件，句柄还攥着就 EBUSY
+    await withSharpFile((f) => f(filePath).rotate(90).toFile(tempPath));
     await fs.promises.unlink(filePath);
     await fs.promises.rename(tempPath, filePath);
   } catch (err) {

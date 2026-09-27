@@ -8,6 +8,7 @@ import {
   UPLOAD_FILTER,
   listImageFiles,
   thumbToCachedBase64,
+  drainInflightThumbs,
 } from "../images.js";
 
 // 图片域：封面/图库缩略图/大图/上传/清空/删除/打开文件夹
@@ -60,17 +61,65 @@ export async function unlinkWithRetry(
 	throw last ?? new Error(`删除失败：${fp}`);
 }
 
+/**
+ * 占用探针：把文件在**同目录内**改名一下再改回来。
+ *
+ * 为什么这个探针能自证：Windows 上 rename 和 unlink 走的是同一个 DELETE 权限检查，
+ * 共享盘上更是同一套 SMB 语义。所以
+ *   - rename 也失败 → 那一刻确实有别人开着它（锁），不是权限/路径/只读的问题；
+ *   - rename 成功   → 那一刻没有锁，能改名就能删除，直接再点一次删除即可。
+ * 同一目录内改名，字节内容与 mtime 都不变，只是极短时间内换了个名字。
+ */
+function probeLock(fp: string): { locked: boolean; detail: string } {
+  const probe = path.join(path.dirname(fp), `.lockprobe_${path.basename(fp)}`);
+  try {
+    fs.renameSync(fp, probe);
+  } catch (err: any) {
+    return { locked: true, detail: err?.code || String(err?.message || err) };
+  }
+  try {
+    fs.renameSync(probe, fp);
+    return { locked: false, detail: "" };
+  } catch (err: any) {
+    // 改走了却没能改回来：文件没丢，只是名字变了。如实说出来，别默默吞掉。
+    return { locked: false, detail: `没能改回原名，现在叫 ${probe}（${err?.code || err}）` };
+  }
+}
+
 /** 占用类报错的统一话术：说清是「被占用」而不是把 EBUSY 甩给用户 */
-export function busyHint(subject: string, err: any): string {
+export function busyHint(subject: string, err: any, fp?: string): string {
   const head = `⚠️${subject}（${err?.message || "未知错误"}）`;
   if (!RETRYABLE_UNLINK.has(err?.code)) {
     return head;
   }
-  return (
-    `${head}\n` +
+  const lines = [
+    head,
     `　文件正被占用。删图前请先关掉正在看的大图预览；` +
-    `如果是别的机器（或 Windows 资源管理器）正打开着这张图，也关掉再试。`
-  );
+      `如果是别的机器（或 Windows 资源管理器）正打开着这张图，也关掉再试。`,
+  ];
+  const name = fp ? path.basename(fp) : "";
+  if (name) {
+    const probe = probeLock(fp as string);
+    lines.push(
+      probe.locked
+        ? `　自证：改名探针**也失败**了（${probe.detail}）→ 确实是锁，不是权限或路径问题。`
+        : `　自证：改名探针**成功**了${probe.detail ? `（${probe.detail}）` : ""}` +
+            ` → 此刻已经没有锁（能改名就能删除），直接再点一次删除即可。`,
+    );
+    lines.push(
+      `　最可能是这三类占用者之一：` +
+        `① 本机 VS Code 正显示着这张大图，Chromium 攥着句柄 → 关掉大图浮层；` +
+        `② 本机照片查看器 / 资源管理器预览窗格正开着它；` +
+        `③ 共享盘那台提供方机器上有会话正开着它（对方没开 FILE_SHARE_DELETE，协议如此，重试无解）。`,
+    );
+    lines.push(
+      `　查是谁占着（两条命令直接粘）：` +
+        `本机 → handle.exe -nobanner "${name}"` +
+        `　共享提供方那台机器（PowerShell）→ ` +
+        `Get-SmbOpenFile | Where-Object { $_.Path -like "*${name}*" }`,
+    );
+  }
+  return lines.join("\n");
 }
 
 const stamp = (): string => {
@@ -343,17 +392,22 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       }
       const files = listImageFiles(folder);
       // 同 deleteImageFile：清空图片夹也不碰数据库，不该为它白拷一次整库
+      // 先把后台缩缩略图的活儿等完：它们正在读的就是这个夹里的原图，读的时候删不掉
+      await drainInflightThumbs();
       let ok = 0;
       let busy = 0;
       let lastErr: any = null;
+      let firstBusy: string | null = null;
       for (const f of files) {
+        const fp = path.join(folder, f);
         try {
-          await unlinkWithRetry(path.join(folder, f), unlinkFile);
+          await unlinkWithRetry(fp, unlinkFile);
           ok++;
         } catch (err: any) {
           lastErr = err;
           if (RETRYABLE_UNLINK.has(err?.code)) {
             busy++;
+            firstBusy ??= fp;
           }
         }
       }
@@ -364,7 +418,7 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       } else if (busy > 0) {
         // 原来这里是 catch {} 空吞掉单张失败、照样报「已清空 N 张」，属于谎报
         log(
-          `${busyHint(`清空 ${code} 图片夹失败`, lastErr)}\n` +
+          `${busyHint(`清空 ${code} 图片夹失败`, lastErr, firstBusy ?? undefined)}\n` +
             `　本次只删掉了 ${ok}/${files.length} 张，剩下的还在。` +
             `请确认图库抽屉已关、别的机器没在看这些图，再点一次「清空图片夹」。`,
         );
@@ -416,12 +470,16 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       // 刻意不 preOpBackup：删图只动文件系统、一个字节都不写数据库，
       // 备份出来的库跟操作前一模一样，纯白等一次共享盘整库拷贝（实测 4 秒）。
       // 本机的备份也不留——真要找回误删的图，去共享盘上的图片夹里翻原件。
+      // 先把后台缩缩略图的活儿等完：星标总览预览会往后台扔十几个「读原图」的任务，
+      // 不等就删的话正好撞上人家在读（libvips 读输入期间源文件是锁着的），这就是
+      // 「谁跑过星标总览谁就删不掉」的成因。上限 3 秒，断连的共享盘拖不死删除。
+      await drainInflightThumbs();
       try {
         await unlinkWithRetry(fp, unlinkFile);
       } catch (err: any) {
         // 失败也要把磁盘的真实情况推回前端，否则列表/图库停在「还在」的状态，
         // 用户分不清到底删掉没有
-        log(busyHint(`删不掉 ${code} 的第 ${index + 1} 张图片`, err));
+        log(busyHint(`删不掉 ${code} 的第 ${index + 1} 张图片`, err, fp));
         await reloadImages(code);
         h.invalidateCover(code);
         h.loadAll();

@@ -8,6 +8,16 @@ import { canonicalCode } from "../pricing.js";
 import { firstImageFile, previewThumbPath } from "../images.js";
 import { renderLiveGrid, renderStarOverviewBuffer, renderStarOverviewGrid, localStamp, StarLabelOptions } from "../liveGrid.js";
 
+// 同一时刻只准一个九宫格生成任务在跑。
+// 必须挂在模块上而不是 liveHandlers 闭包里：index.ts 每条消息都重新调一次
+// liveHandlers(h) 组装 handlers 表，闭包里的标记每次都是新的，等于没写。
+//
+// 为什么需要它：确认框是模态的，VS Code 会把第二个 showWarningMessage 排队，
+// 等前一个关掉再弹。用户看到的就是「我点了确定，怎么又弹了一个」——
+// 一次点击进来两条 generateLiveGrid（双击、按钮置灰前的那一瞬、或上游重复投递）
+// 就会这样。这里把后来者直接拒掉，屏幕上永远只有一个框。
+let gridJobActive = false;
+
 // 直播域：选品星标、排品九宫格、星标/排品开关与生成
 export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
   const { db, log, post } = h;
@@ -228,6 +238,11 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
     },
 
     generateLiveGrid(msg) {
+      if (gridJobActive) {
+        log("⏭️已有一个九宫格任务在跑，这一次点击已忽略（等它出完再点）");
+        return;
+      }
+      gridJobActive = true;
       return runGridJob(async () => {
         const rawPlan = Array.isArray(msg.plan) ? (msg.plan as any[]) : [];
         const plan: LivePlanRow[] = rawPlan.map((r) => ({
@@ -372,6 +387,8 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
         post({ type: "liveGenerated", dir: outDir, count: files.length });
         gridStatus("done", { count: files.length, dir: outDir });
         h.postLiveState();
+      }).finally(() => {
+        gridJobActive = false;
       });
     },
 

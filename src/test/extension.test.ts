@@ -3,12 +3,20 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import sharp from 'sharp';
 import { liveHandlers } from '../tools/shopTool/handlers/live.js';
 import { imageHandlers } from '../tools/shopTool/handlers/image.js';
 import { settingsHandlers } from '../tools/shopTool/handlers/settings.js';
 import { HandlerCtx } from '../tools/shopTool/handlers/types.js';
 import { ToolContext } from '../core/toolContext.js';
 import { LOCAL_PREF_KEYS } from '../tools/shopTool/index.js';
+import { previewThumbPath, drainInflightThumbs } from '../tools/shopTool/images.js';
+import { renderStarOverviewBuffer, renderLiveGrid } from '../tools/shopTool/liveGrid.js';
+import {
+	handleNineGridLabel,
+	handleNineGridMergeFromList,
+	rotateImageInPlace,
+} from '../tools/nineGridTool/index.js';
 
 suite('Extension Test Suite', () => {
 	vscode.window.showInformationMessage('Start all tests.');
@@ -125,6 +133,55 @@ suite('直播九宫格输出目录', () => {
 			'取消',
 		]]);
 		assert.strictEqual(harness.terminalPhase(), 'done');
+	});
+
+	// 模态框是排队显示的：一次点击进来两条 generateLiveGrid，第二条会等第一条关掉再弹，
+	// 用户看到的就是「我点了确定，怎么又弹了一个」。后到的必须被直接忽略。
+	test('重复投递：只认第一条，后来的不再弹框', async function () {
+		this.timeout(15000);
+		const dir = makeDir('dup');
+		let release: (value: string) => void = () => undefined;
+		const actionLabels: string[][] = [];
+		const logs: string[] = [];
+		const h = {
+			ctx: {
+				selectFolder: async () => undefined,
+				chooseAction: async (_m: string, _d: string, labels: string[]) => {
+					actionLabels.push(labels);
+					// 卡在这里模拟「用户正盯着这个框」，第二条消息就在这段时间里到
+					return new Promise<string>((resolve) => {
+						release = resolve;
+					});
+				},
+			} as unknown as ToolContext,
+			db: {
+				replaceLivePlan: () => undefined,
+				getProducts: () => [{ code: 'A001' }],
+			},
+			getSetting: (key: string) => (key === 'live_out_dir' ? dir : ''),
+			setSetting: async () => undefined,
+			readOnly: () => false,
+			imageDir: () => '',
+			log: (text: string) => logs.push(text),
+			post: () => undefined,
+			postLiveState: () => undefined,
+		} as unknown as HandlerCtx;
+		const msg = { plan: [{ group_no: 1, slot_no: 1, code: 'A001' }] };
+
+		const first = liveHandlers(h).generateLiveGrid(msg, h);
+		for (let i = 0; i < 200 && actionLabels.length === 0; i += 1) {
+			await new Promise((r) => setTimeout(r, 5));
+		}
+		assert.strictEqual(actionLabels.length, 1, '第一条消息应当弹出确认框');
+		await liveHandlers(h).generateLiveGrid(msg, h);
+		release('确定生成');
+		await first;
+
+		assert.strictEqual(actionLabels.length, 1, '第二条消息不得再弹框');
+		assert.ok(
+			logs.some((t) => t.includes('已有一个九宫格任务在跑')),
+			`应当有一条说明为什么被忽略，实际日志：${logs.join(' | ')}`,
+		);
 	});
 
 	test('确认框里按取消：一次就退出，不生成', async function () {
@@ -615,5 +672,287 @@ suite('商品图片删除（占用重试 / 不做无谓备份）', () => {
 				`${f} 改库，必须保留 h.preOpBackup()`,
 			);
 		}
+	});
+
+	test('删不掉时日志要能自证：改名探针 + 三类占用者 + 两条可粘命令', async function () {
+		this.timeout(15000);
+		const { root, folder } = seed();
+		const harness = createHarness(root);
+		await imageHandlers(harness.h, { unlink: failUnlink(99, 'EBUSY') }).deleteImageFile(
+			{ code: 'L001', index: 0 },
+			harness.h,
+		);
+
+		const said = harness.logs.find((l) => l.includes('删不掉'))!;
+		// 探针结论：这里的 EBUSY 是注入的假占用，磁盘上并没有人真的开着它，
+		// 所以改名探针（真 fs.renameSync）应当成功 → 日志要敢下这个结论
+		assert.ok(said.includes('自证'), `应给出探针结论，实际：${said}`);
+		assert.ok(
+			said.includes('改名探针**成功**了'),
+			`没锁时不该说成锁，实际：${said}`,
+		);
+		// 三类占用者 + 两条命令，一样都不能少（用户照着就能自己查）
+		assert.ok(said.includes('三类占用者'), `应列出最可能的占用者，实际：${said}`);
+		assert.ok(said.includes('handle.exe'), '应给出本机查占用者的命令');
+		assert.ok(said.includes('Get-SmbOpenFile'), '应给出共享提供方那台机器查会话的命令');
+		assert.ok(said.includes('b.png'), '命令里要带上真实文件名，否则没法照抄');
+		// 探针把文件改名又改回来了，磁盘现状不能被它弄乱
+		assert.deepStrictEqual(fs.readdirSync(folder), ['b.png']);
+	});
+
+	test('删图会先等后台缩略图：星标总览留在后台的那个读，跑完再删就删得掉', async function () {
+		this.timeout(15000);
+		const { root, folder } = seed();
+		const harness = createHarness(root);
+		const fp = path.join(folder, 'b.png');
+		// 星标总览预览走的就是这条：build=false 立刻返回 null，缩图丢到后台读原图。
+			// 这条断言守着的就是「谁跑过星标总览谁就删不掉」那个坑。
+		assert.strictEqual(
+			await previewThumbPath(fp, path.join(root, 'cache'), 'L001'),
+			null,
+			'build=false 应立刻返回 null（第一次预览不等缩图）',
+		);
+
+		await imageHandlers(harness.h).deleteImageFile({ code: 'L001', index: 0 }, harness.h);
+
+		assert.strictEqual(fs.existsSync(fp), false, '删图应成功');
+		assert.ok(
+			!harness.logs.some((l) => l.includes('删不掉')),
+			`不该报占用，实际：${JSON.stringify(harness.logs)}`,
+		);
+	});
+});
+
+suite('sharp 句柄用完即释放（跑完立刻删源图必须成功）', () => {
+	const roots: string[] = [];
+
+	/**
+	 * 先把测的东西说清楚，免得这条 suite 被误读成「destroy 修了删不掉」：
+	 *
+	 * win32 上量过，libvips 只在**读输入**那一小段时间里占着源文件，读完就放开。
+	 * 所以下面每条「跑完立刻 unlinkSync」验的是**管线跑完之后**源文件一定删得掉
+	 * （没有残留的映射、没有等 GC 的句柄），以及 withSharpFile 没把这件事弄坏。
+	 * 真正会让删除失败的「还在读」那一段，靠的是 handlers/image.ts 里删图前那次
+	 * drainInflightThumbs —— 那条在下面单独有用例。
+	 */
+	async function makePng(w = 100, h = 80): Promise<Buffer> {
+		// create 画布不碰磁盘句柄，造测试图自己用 sharp 是安全的
+		return sharp({
+			create: { width: w, height: h, channels: 3, background: { r: 12, g: 200, b: 90 } },
+		})
+			.png()
+			.toBuffer();
+	}
+
+	function makeRoot(): string {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cherysis-handle-'));
+		roots.push(root);
+		return root;
+	}
+
+	/** 落一张真图并返回路径 */
+	async function seedImg(dir: string, name = 'src.png'): Promise<string> {
+		const fp = path.join(dir, name);
+		fs.writeFileSync(fp, await makePng());
+		return fp;
+	}
+
+	/** 跑完立刻删源图：句柄漏出去的话这里必然失败 */
+	function mustDeleteNow(fp: string, what: string): void {
+		try {
+			fs.unlinkSync(fp);
+		} catch (err: any) {
+			assert.fail(
+				`${what} 跑完之后源图还删不掉（${err.code}）——` +
+					`说明 sharp 的句柄被攥着没释放。拿磁盘路径开 sharp 必须走 withSharpFile。`,
+			);
+		}
+		assert.strictEqual(fs.existsSync(fp), false, `${what} 之后源图应真的没了`);
+	}
+
+	teardown(() => {
+		for (const root of roots.splice(0)) {
+			// 放弃清理也算通过，原因写在这里免得下次有人当 bug 查：
+			// renderStarOverviewBuffer 会把本机 .webp 缩略图再喂回 sharp（liveGrid 的
+			// srcOf），而 libvips 读 webp 会给那个文件留下进程级的映射，于是它在本次
+			// 测试跑完之前一直删不掉（同目录的 .json、新建文件都正常，不是目录级锁）。
+			// 这是缩略图缓存自己的事，跟本 suite 断言的「源图删得掉」无关。
+			// 临时目录留给系统清理，比让这条 suite 永远红着好。
+			for (let i = 0; i < 5; i++) {
+				try {
+					fs.rmSync(root, { recursive: true, force: true });
+					break;
+				} catch {
+					/* 下面再试一次，仍不行就放弃 */
+				}
+			}
+		}
+	});
+
+	test('星标总览预览缩略图：build 完之后立刻删源图', async () => {
+		const root = makeRoot();
+		const src = await seedImg(root);
+
+		const built = await previewThumbPath(src, path.join(root, 'cache'), 'L001', true);
+
+		assert.ok(built, '应当真的缩出一张（否则这条用例什么也没验）');
+		mustDeleteNow(src, 'previewThumbPath');
+	});
+
+	test('星标总览（预览 / 导出两条路）跑完立刻删源图', async () => {
+		const root = makeRoot();
+		const rows = [
+			{ code: 'L001', img: (await seedImg(root, 'a.png')) as string | null, price: 10, costPrice: 5 },
+			{ code: 'L002', img: (await seedImg(root, 'b.png')) as string | null, price: 20, costPrice: 8 },
+		];
+		const labels = { code: true, costPrice: true, salePrice: true, fontSize: 0 };
+
+		// 预览：走 imgFor 拿本机小图（小图由 previewThumbPath 现生成，正好串上那条路）
+		await renderStarOverviewBuffer(rows, 2, 1, labels, {
+			preview: true,
+			imgFor: async (_code, s) => previewThumbPath(s as string, path.join(root, 'cache'), 'X', true),
+		});
+		mustDeleteNow(rows[0].img as string, 'renderStarOverviewBuffer（预览）');
+		mustDeleteNow(rows[1].img as string, 'renderStarOverviewBuffer（预览）');
+
+		// 导出：不传 imgFor，直接吃原图
+		const root2 = makeRoot();
+		const rows2 = [
+			{ code: 'L001', img: (await seedImg(root2, 'a.png')) as string | null, price: 10, costPrice: 5 },
+		];
+		await renderStarOverviewBuffer(rows2, 1, 1, labels);
+		mustDeleteNow(rows2[0].img as string, 'renderStarOverviewBuffer（导出）');
+	});
+
+	test('直播排品九宫格跑完立刻删源图', async () => {
+		const root = makeRoot();
+		const cells = [];
+		for (let i = 0; i < 9; i++) {
+			cells.push({ code: `L00${i + 1}`, img: (await seedImg(root, `g${i}.png`)) as string | null });
+		}
+		const outDir = path.join(root, 'out');
+		fs.mkdirSync(outDir);
+
+		const out = await renderLiveGrid(cells, outDir, 1, 'num');
+
+		assert.ok(fs.existsSync(out), '九宫格应真的出图');
+		for (const c of cells) {
+			mustDeleteNow(c.img as string, 'renderLiveGrid');
+		}
+	});
+
+	test('九宫格工具箱：拼图 / 压序号 跑完立刻删源图', async () => {
+		const root = makeRoot();
+		const imgs: string[] = [];
+		for (let i = 0; i < 9; i++) {
+			imgs.push(await seedImg(root, `n${i}.png`));
+		}
+		const outDir = path.join(root, 'out');
+		fs.mkdirSync(outDir);
+
+		const grid = await handleNineGridMergeFromList(imgs, outDir);
+		assert.ok(fs.existsSync(grid));
+		for (const fp of imgs) {
+			mustDeleteNow(fp, 'handleNineGridMergeFromList');
+		}
+
+		// 压序号读的是刚拼出来那张大图
+		const labeled = await handleNineGridLabel(grid, 1, outDir);
+		assert.ok(fs.existsSync(labeled));
+		mustDeleteNow(grid, 'handleNineGridLabel');
+	});
+
+	test('原地旋转 90°：它自己就要 unlink 源文件，句柄漏出去就必失败', async () => {
+		const root = makeRoot();
+		const fp = await seedImg(root);
+
+		await rotateImageInPlace(fp);
+
+		// 100×80 转完是 80×100：既证明文件没丢，也证明它是被重写过的
+		const job = sharp(fp);
+		try {
+			const meta = await job.metadata();
+			assert.deepStrictEqual([meta.width, meta.height], [80, 100]);
+		} finally {
+			job.destroy();
+		}
+		assert.deepStrictEqual(fs.readdirSync(root), ['src.png'], '不该留下 .rotate_tmp_ 残留');
+	});
+
+	test('防回归：拿磁盘路径开 sharp 的地方都走 withSharpFile（数字是刻意写死的）', () => {
+		// out/test/ → out/ → 仓库根，再进 src/（编译产物只拷 .js，源码得回 src 找）
+		const repoSrc = path.join(__dirname, '..', '..', 'src');
+		const read = (rel: string) => fs.readFileSync(path.join(repoSrc, rel), 'utf-8');
+		const count = (rel: string, re: RegExp) => (read(rel).match(re) ?? []).length;
+
+		// 新加一处「拿磁盘路径开 sharp」时：把对应数字 +1，并确认那一处真的走了
+		// withSharpFile。写死而不是 >= ：这样漏掉时才会红。
+		const expect: Array<[string, number, string]> = [
+			['core/utils.ts', 1, 'withSharpFile 自己的声明'],
+			['tools/shopTool/images.ts', 2, '封面缩略图 + 星标预览缩略图'],
+			['tools/shopTool/liveGrid.ts', 4, '探尺寸 ×2 + 缩格 ×2'],
+			['tools/nineGridTool/index.ts', 5, '探尺寸 ×2 + 缩格 + 压序号 + 旋转'],
+		];
+		for (const [rel, n, what] of expect) {
+			assert.strictEqual(
+				count(rel, /withSharpFile\(/g),
+				n,
+				`${rel} 里 withSharpFile 的调用数应恰好是 ${n}（${what}）。` +
+					`新加/漏改了一处「拿磁盘路径开 sharp」，请改成 withSharpFile 并把数字同步过来。`,
+			);
+		}
+
+		// 剩下的裸 sharp( 只该是新画布（不碰磁盘句柄）与 Buffer 入参（也不碰）
+		assert.strictEqual(
+			count('tools/shopTool/liveGrid.ts', /sharp\(\{/g),
+			2,
+			'liveGrid.ts 里只应有 2 处裸「新建画布」调用',
+		);
+		assert.strictEqual(
+			count('tools/nineGridTool/index.ts', /sharp\(\{/g),
+			1,
+			'nineGridTool 里只应有 1 处裸「新建画布」调用',
+		);
+		assert.strictEqual(
+			count('tools/shopTool/images.ts', /sharp\(/g),
+			0,
+			'images.ts 里不该再有裸 sharp( 调用（两处缩略图都该走 withSharpFile）',
+		);
+	});
+
+	test('后台缩略图：drainInflightThumbs 真的等到了它们（删图前靠这个不撞「正在读」）', async function () {
+		this.timeout(15000);
+		const root = makeRoot();
+		const cacheDir = path.join(root, 'cache');
+		const srcs: string[] = [];
+		for (let i = 0; i < 6; i++) {
+			srcs.push(await seedImg(root, `p${i}.png`));
+		}
+
+		// build=false：立刻返回 null、把缩图丢到后台 —— 星标总览预览走的就是这条。
+		// 编号要各不相同：缓存键是 {编号}@p512，同编号会写进同一个文件、互相盖掉。
+		for (let i = 0; i < srcs.length; i++) {
+			assert.strictEqual(await previewThumbPath(srcs[i], cacheDir, `L00${i + 1}`), null);
+		}
+		// 不等的话，缓存目录此刻多半还是空的（6 个后台任务刚起）
+		await drainInflightThumbs();
+
+		const cached = fs
+			.readdirSync(path.join(cacheDir, 'shop_thumbs'))
+			.filter((f) => f.endsWith('.webp'));
+		assert.strictEqual(cached.length, srcs.length, 'drain 之后 6 张小图应全部落盘');
+		// 等完之后源图立刻删得掉：这正是删图路径依赖的性质
+		for (const src of srcs) {
+			mustDeleteNow(src, 'drainInflightThumbs 之后');
+		}
+	});
+
+	test('drain 有上限：共享盘断连那种永远不落地的活儿，拖不死删除', async function () {
+		this.timeout(15000);
+		// 造不出「永远不落地」的活儿（那是共享盘断连才有的情形），所以这条只作冒烟：
+		// API 存在、参数认得、并且自己会回来。真断连时的行为靠 maxMs 这个上限兜。
+		const t0 = Date.now();
+		await drainInflightThumbs(120);
+		assert.ok(Date.now() - t0 < 2000, 'drain 必须自己会回来');
 	});
 });

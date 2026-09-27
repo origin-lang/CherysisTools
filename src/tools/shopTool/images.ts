@@ -1,8 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
-import sharp from "sharp";
-import { readImageToBase64 } from "../../core/utils.js";
+import { readImageToBase64, withSharpFile } from "../../core/utils.js";
 
 export const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif"]);
 export const UPLOAD_FILTER: Record<string, string[]> = {
@@ -135,13 +134,13 @@ function writeCache(entry: CacheEntry, src: string, data: string): void {
 
 /** 把单张图缩成 webp base64 小图；失败时回退原图 base64 */
 export async function thumbToBase64(src: string, size = COVER_THUMB): Promise<string> {
-  let job: sharp.Sharp | undefined;
   try {
-    job = sharp(src);
-    const out = await job
-      .resize(size, size, { fit: "cover" })
-      .webp({ quality: 80 })
-      .toBuffer();
+    const out = await withSharpFile((f) =>
+      f(src)
+        .resize(size, size, { fit: "cover" })
+        .webp({ quality: 80 })
+        .toBuffer(),
+    );
     return "data:image/webp;base64," + out.toString("base64");
   } catch {
     try {
@@ -149,10 +148,6 @@ export async function thumbToBase64(src: string, size = COVER_THUMB): Promise<st
     } catch {
       return "";
     }
-  } finally {
-    // libvips 会把打开的源文件句柄挂在 job 上，等到 GC 才关。Windows/SMB 上
-    // 「刚生成过缩略图就删原图」会因此撞 EBUSY，所以这里立刻关掉，不等 GC。
-    job?.destroy();
   }
 }
 
@@ -200,10 +195,12 @@ function previewThumbName(code: string): string {
 /** 等比缩到 PREVIEW_THUMB 的 webp base64；sharp 失败时回退原图 base64（调用方据此放弃写缓存） */
 async function previewThumbToBase64(src: string): Promise<string> {
   try {
-    const out = await sharp(src)
-      .resize(PREVIEW_THUMB, PREVIEW_THUMB, { fit: "inside", withoutEnlargement: true })
-      .webp({ quality: 82 })
-      .toBuffer();
+    const out = await withSharpFile((f) =>
+      f(src)
+        .resize(PREVIEW_THUMB, PREVIEW_THUMB, { fit: "inside", withoutEnlargement: true })
+        .webp({ quality: 82 })
+        .toBuffer(),
+    );
     return "data:image/webp;base64," + out.toString("base64");
   } catch {
     try {
@@ -212,6 +209,32 @@ async function previewThumbToBase64(src: string): Promise<string> {
       return "";
     }
   }
+}
+
+/**
+ * 正在后台缩缩略图的活儿。星标总览预览（build=false 那条路）会把没命中的那几张
+ * 丢到后台慢慢缩，一次能同时飞十几个。
+ *
+ * 为什么要登记：这些活儿读的是**共享盘上的原图**，而 libvips 读输入的那一小段时间里
+ * 源文件是删不掉的（win32 上实测 EBUSY）。所以「刚跑完星标总览 → 立刻删原图」撞的
+ * 就是这些没 await 的读。删图前先把它们等完（见 drainInflightThumbs）就绕开了。
+ * 注意这跟 sharp 的 job 活多久没关系 —— 管线跑完句柄就放了，问题只在「还在读」。
+ */
+const inflightThumbs = new Set<Promise<unknown>>();
+
+/**
+ * 等后台缩略图全部做完，最多等 maxMs 毫秒。
+ * 上限是必须的：共享盘断连时那些 promise 可能永远不落地，删除不能被它拖死。
+ * 只等进入这一刻已在飞的那些（快照），不等期间新起的。
+ */
+export async function drainInflightThumbs(maxMs = 3000): Promise<void> {
+  if (inflightThumbs.size === 0) {
+    return;
+  }
+  await Promise.race([
+    Promise.allSettled([...inflightThumbs]),
+    new Promise((r) => setTimeout(r, maxMs)),
+  ]);
 }
 
 /**
@@ -248,8 +271,11 @@ export function previewThumbPath(
   if (build) {
     return make();
   }
-  // 不 await：这一次的预览不等它，下次进来看得见就命中了
-  void make().catch(() => undefined);
+  // 不 await：这一次的预览不等它，下次进来看得见就命中了。
+  // 但要登记进 inflightThumbs —— 它正在读共享盘上的原图，删图前得等它读完。
+  const job = make().catch(() => undefined);
+  inflightThumbs.add(job);
+  void job.finally(() => inflightThumbs.delete(job));
   return Promise.resolve(null);
 }
 

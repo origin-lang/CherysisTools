@@ -1,6 +1,11 @@
 import * as fs from "fs";
 import * as path from "path";
 import sharp from "sharp";
+import { withSharpFile } from "../../core/utils.js";
+
+// 本文件里凡是拿**磁盘路径**开 sharp 的地方都走 withSharpFile（结束即 destroy 句柄）。
+// 星标总览 / 九宫格会把几十张原图解码一遍，句柄不关的话「刚跑完总览就删原图」必撞 EBUSY。
+// 剩下那两处裸调用是「新建一张空白画布」，不碰磁盘句柄，不需要。
 
 // 落盘文件名的时间戳：精确到秒（YYYYMMDD-HHMMSS）。
 // 只到日的话，同一天把同一组重生成一次就直接覆盖掉上一张 —— 调排版、改格子再出一次图，
@@ -75,7 +80,7 @@ export async function renderLiveGrid(
   const firstImg = cells.find((c) => c.img);
   if (firstImg) {
     try {
-      const meta = await sharp(firstImg.img!).metadata();
+      const meta = await withSharpFile((f) => f(firstImg.img!).metadata());
       const w = meta.width || 0;
       const h = meta.height || 0;
       if (w > 40 && h > 40) {
@@ -99,7 +104,9 @@ export async function renderLiveGrid(
     const cell = cells[idx];
     let input: Buffer;
     if (cell.img) {
-      input = await sharp(cell.img).resize(tileW, tileH, { fit: "fill" }).toBuffer();
+      input = await withSharpFile((f) =>
+        f(cell.img as string).resize(tileW, tileH, { fit: "fill" }).toBuffer(),
+      );
     } else {
       input = Buffer.from(greyCellSvg(tileW, tileH), "utf-8");
     }
@@ -165,7 +172,7 @@ export async function renderStarOverviewBuffer(
   const probeSrc = firstRow ? await srcOf(firstRow.code, firstRow.img) : null;
   if (probeSrc) {
     try {
-      const meta = await sharp(probeSrc).metadata();
+      const meta = await withSharpFile((f) => f(probeSrc as string).metadata());
       const w = meta.width || 0;
       const h = meta.height || 0;
       if (w > 40 && h > 40) {
@@ -189,9 +196,9 @@ export async function renderStarOverviewBuffer(
     if (src) {
       try {
         // limitInputPixels:false 让超大源图也能 resize；失败则该格灰底占位
-        input = await sharp(src, { limitInputPixels: false })
-          .resize(tileW, tileH, { fit: "fill" })
-          .toBuffer();
+        input = await withSharpFile((f) =>
+          f(src, { limitInputPixels: false }).resize(tileW, tileH, { fit: "fill" }).toBuffer(),
+        );
       } catch {
         input = Buffer.from(greyCellSvg(tileW, tileH), "utf-8");
       }
