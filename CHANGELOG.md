@@ -6,6 +6,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- 商品管理·画册：**封面图放大约两成**（图高 `150px`→`180px`，卡片下限 `170px`→`205px`）。侧栏窄、图小，一直得点开才看得清款式。`.card-grid`/`.card` 全仓库只有 `renderGallery` 在用，⭐/「编辑」/编号徽章都是绝对定位，所以只动了这三行；卡片正文字号、字段排布、缩略图源分辨率（`COVER_THUMB=512`，2x 屏仍有余量）都没碰，缓存也不用重建。
+
 ## [0.0.16] - 2026-09-27
 
 列表右键加「批量操作」二级菜单、出图文件名精确到秒，以及活动栏换成工具箱图标。
