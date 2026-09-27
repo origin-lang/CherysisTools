@@ -227,14 +227,19 @@
         min-width: var(--code-col-min);
       }
       /* 表头漏斗：平时压暗到几乎看不见，这一列正在筛选时才点亮 + 角标计数。
-         删掉常驻那一行控件之后，用户判断「现在筛了几列」全靠这几个点亮的标记 */
+         删掉常驻那一行控件之后，用户判断「现在筛了几列」全靠这几个点亮的标记。
+         float:right 让它贴到列的右边缘对齐成一竖条，宽列上不会浮在标题旁边；
+         <th> 仍是普通表格单元格，列宽算法和 .th-label 的排序区都不受影响。
+         浮动元素不吃 vertical-align 也不撑高行盒（浮动不参与行盒高度计算），
+         所以 13px 图标那 1px 的溢出只是落进 th 的下内边距里，看不出来，
+         留 2px 上下 padding 换取更大的点击热区 */
       .data-table .th-filter {
         display: inline-flex;
         align-items: center;
-        margin-left: 4px;
-        padding: 1px;
+        float: right;
+        margin: 0 0 0 4px;
+        padding: 2px 3px;
         border-radius: 3px;
-        vertical-align: middle;
         cursor: pointer;
         opacity: 0.4;
       }
@@ -247,7 +252,7 @@
         color: var(--vscode-textLink-foreground);
       }
       .data-table .fp-badge {
-        font-size: 10px;
+        font-size: 11px;
         line-height: 1;
       }
       .data-table th:hover {

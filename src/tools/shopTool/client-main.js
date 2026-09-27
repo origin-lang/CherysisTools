@@ -30,12 +30,15 @@ function bindEvents() {
     viewMode = "list";
     $("viewListBtn").classList.add("btn-teal");
     $("viewGalleryBtn").classList.remove("btn-teal");
+    closeFilterPanel();
     renderProducts();
   };
   $("viewGalleryBtn").onclick = () => {
     viewMode = "gallery";
     $("viewGalleryBtn").classList.add("btn-teal");
     $("viewListBtn").classList.remove("btn-teal");
+    // 切画册时列表整个隐藏了，面板要是还开着就会浮在画布上
+    closeFilterPanel();
     renderProducts();
   };
   const pgr = $("productPager");
@@ -108,6 +111,9 @@ function bindEvents() {
     syncClearFilterBtn();
     renderProducts();
   };
+  // 筛选面板挂在 body 上，切了子标签它不会跟着消失，会浮到新标签上。
+  // 挂在 .sub-tab-bar 上用事件委托，5 个标签一次覆盖。
+  document.querySelector(".sub-tab-bar")?.addEventListener("click", () => closeFilterPanel());
   $("starMenuBtn").onclick = (e) => showStarMenu(e.currentTarget);
   const drawerBackdrop = $("drawerBackdrop");
   if (drawerBackdrop) {

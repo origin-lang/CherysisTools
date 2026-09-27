@@ -596,12 +596,12 @@ function exprTitle(key) {
 
 function exprPlaceholder(key) {
   if (RANGE_FILTER_FIELDS.has(key)) {
-    return "范围⏎";
+    return "范围";
   }
   if (key === "code") {
-    return "编号/范围⏎";
+    return "编号/范围";
   }
-  return "含关键词⏎";
+  return "含关键词";
 }
 
 // 当前这一列选了哪些值（enum）/ 写了什么表达式（其余）。
@@ -614,8 +614,10 @@ function filterCurrent(key) {
   return typeof raw === "string" ? raw : "";
 }
 
+// 13px 比表头正文（13px）小一号的观感最舒服：再大就跟标题抢眼了，再小就难点。
+// viewBox 固定 12，改的是渲染尺寸，path 坐标不动。
 const FUNNEL_SVG =
-  '<svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M1.6 2h8.8L7 6.3v3.1L5 8.4V6.3z" fill="currentColor"/></svg>';
+  '<svg viewBox="0 0 12 12" width="13" height="13" aria-hidden="true"><path d="M1.6 2h8.8L7 6.3v3.1L5 8.4V6.3z" fill="currentColor"/></svg>';
 
 function headFilterBtn(key) {
   if (!filterKind(key)) {
@@ -989,6 +991,11 @@ function openFilterPanel(key, anchor) {
     applyFilterValue(key, collect());
   };
   document.body.appendChild(panel);
+  // 必须在这里把面板记进 filterPanel：closeFilterPanel / onPanelOutside / onPanelEsc
+  // 全靠它定位面板，漏了这行的话取消、点外面、Esc、确定全都变成空转，
+  // 而且每点一次漏斗就往 body 上多挂一个再也删不掉的 .fp-panel。
+  // 赋在 placeFilterPanel 之前，万一定位那步抛错，面板也还能被关掉。
+  filterPanel = panel;
   placeFilterPanel(panel, anchor);
   // 光标要在面板真正进了 DOM 之后给，在此之前 focus() 是空操作
   if (focusEl) {
