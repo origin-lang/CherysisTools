@@ -18,6 +18,14 @@ import { settingsHandlers } from "./handlers/settings.js";
 // 自动备份：每日首次启动自动留档（shop_auto_*），破坏性操作前追加留档（shop_pre_*）；两类各自独立配额剪除，只保留最新 N 份，不无限累积。
 const AUTO_BACKUP_KEEP = 14;
 const PRE_BACKUP_KEEP = 20;
+// 一次留档最多等这么久。健康时是毫秒级，但共享盘断连时 mkdirSync/backup 会一直挂到
+// SMB 超时（几十秒），不能让它把删除、导入甚至面板启动整段卡死。到点就放弃本次留档。
+export const BACKUP_TIMEOUT_MS = 5000;
+// 留档先写 .tmp、成功才改名。放弃/断连留下的半截文件因此永远顶着 .tmp 后缀，
+// 既不会被 pruneBackups 的 .db 配额算进去、也不会被 importDB 的选文件框误选成一份「备份」，
+// pruneStaleBackupTmps 再按天回收。
+const BACKUP_TMP_SUFFIX = ".tmp";
+const BACKUP_TMP_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 let lastAutoBackupCheckDate = "";
 // 旧缩略图清理的日期戳：扫目录按天一次，别每条 webview 消息都重扫
 let lastThumbPruneDate = "";
@@ -32,11 +40,51 @@ async function backupToDir(storageDir: string, prefix: string): Promise<string |
     return null;
   }
   const file = path.join(backupDir(storageDir), `${prefix}_${fileStamp()}.db`);
+  const tmp = `${file}${BACKUP_TMP_SUFFIX}`;
   try {
-    await getDB().backupDB(file);
-    return file;
+    await getDB().backupDB(tmp);
   } catch {
+    removeQuietly(tmp);
     return null;
+  }
+  // 改名失败 = 这份留档不可信，宁可没有也别留个半截 .db 冒充备份
+  try {
+    fs.renameSync(tmp, file);
+  } catch {
+    removeQuietly(tmp);
+    return null;
+  }
+  return file;
+}
+
+function removeQuietly(fp: string): void {
+  try {
+    fs.unlinkSync(fp);
+  } catch {
+    // SQLite 正开着这个文件时 Windows 会 EBUSY，清不掉是正常的，交给 pruneStaleBackupTmps 按天回收
+  }
+}
+
+// 回收残留的 .tmp：超时/断连放弃的留档当场可能删不掉（见 removeQuietly），这里按天兜底扫一次。
+function pruneStaleBackupTmps(storageDir: string): void {
+  try {
+    const dir = backupDir(storageDir);
+    const now = Date.now();
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith(BACKUP_TMP_SUFFIX)) {
+        continue;
+      }
+      const p = path.join(dir, f);
+      try {
+        if (now - fs.statSync(p).mtimeMs > BACKUP_TMP_MAX_AGE_MS) {
+          removeQuietly(p);
+        }
+      } catch {
+        /* 单个 stat 失败就跳过 */
+      }
+    }
+  } catch {
+    /* 目录不存在则无事可做 */
   }
 }
 
@@ -87,59 +135,109 @@ function backupTargetDirs(storageDir: string, defaultStorageDir: string): string
   return Array.from(set);
 }
 
+const BACKUP_TIMED_OUT = true;
+const BACKUP_FINISHED = false;
+
+/**
+ * 给一段留档工作套上时间上限（见 BACKUP_TIMEOUT_MS）。
+ * 输掉的那一支不会被取消（SQLite 没有安全的中止点），但它必须 catch 干净：
+ * 否则它稍后 reject 会变成 unhandledRejection，把整个扩展宿主掀掉。
+ * 返回 false = 在时限内做完（不论成败）；true = 超时放弃。
+ * 超时的语义是「这次没留成档」，不是「操作失败」——调用方记完日志要照常往下走。
+ * maxMs 仅供测试注入，生产走 BACKUP_TIMEOUT_MS。
+ */
+export async function withBackupTimeout(
+  work: () => Promise<void>,
+  maxMs: number = BACKUP_TIMEOUT_MS,
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const run = (async () => {
+    try {
+      await work();
+    } catch {
+      /* 具体失败原因由 work 内部自己记日志，这里只保证不外泄 */
+    }
+  })();
+  const outcome = await Promise.race([
+    run.then(() => BACKUP_FINISHED),
+    new Promise<boolean>((r) => {
+      timer = setTimeout(() => r(BACKUP_TIMED_OUT), maxMs);
+    }),
+  ]);
+  if (timer) {
+    clearTimeout(timer);
+  }
+	return outcome === BACKUP_TIMED_OUT;
+}
+
 async function maybeAutoBackup(storageDir: string, defaultStorageDir: string, log: (s: string) => void): Promise<void> {
   const now = new Date();
   const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
   if (lastAutoBackupCheckDate === stamp) {
     return;
   }
+  // 先打戳再干活：超时/失败都不重试，免得共享盘断连时每次开面板都去捶它
   lastAutoBackupCheckDate = stamp;
-  try {
+  const timedOut = await withBackupTimeout(async () => {
     const okFiles: string[] = [];
     const failDirs: string[] = [];
     let skipped = 0;
-    for (const dir of backupTargetDirs(storageDir, defaultStorageDir)) {
-      if (hasAutoBackupToday(dir, stamp)) {
-        skipped++;
-        continue;
+    try {
+      for (const dir of backupTargetDirs(storageDir, defaultStorageDir)) {
+        if (hasAutoBackupToday(dir, stamp)) {
+          skipped++;
+          continue;
+        }
+        const file = await backupToDir(dir, "shop_auto");
+        if (file) {
+          okFiles.push(file);
+          pruneBackups(dir, "shop_auto_", AUTO_BACKUP_KEEP);
+          // 残留 .tmp 跟着每日备份一起收，不在每条消息/每次操作前多扫一遍目录
+          pruneStaleBackupTmps(dir);
+        } else {
+          failDirs.push(dir);
+        }
       }
-      const file = await backupToDir(dir, "shop_auto");
-      if (file) {
-        okFiles.push(file);
-        pruneBackups(dir, "shop_auto_", AUTO_BACKUP_KEEP);
-      } else {
-        failDirs.push(dir);
-      }
-    }
-    if (okFiles.length === 0) {
-      if (skipped > 0) {
+      if (okFiles.length === 0) {
+        if (skipped > 0) {
+          return;
+        }
+        log("⚠️每日自动备份失败");
         return;
       }
-      log("⚠️每日自动备份失败");
-      return;
+      if (failDirs.length === 0) {
+        log(`✅每日自动备份完成（${okFiles.length} 份）${okFiles.join(" | ")}`);
+      } else {
+        log(`⚠️每日自动备份部分成功（${failDirs.length} 个目录失败）${okFiles.join(" | ")}`);
+      }
+    } catch (err: any) {
+      log(`⚠️每日自动备份失败：${err.message}`);
     }
-    if (failDirs.length === 0) {
-      log(`✅每日自动备份完成（${okFiles.length} 份）${okFiles.join(" | ")}`);
-    } else {
-      log(`⚠️每日自动备份部分成功（${failDirs.length} 个目录失败）${okFiles.join(" | ")}`);
-    }
-  } catch (err: any) {
-    log(`⚠️每日自动备份失败：${err.message}`);
+  });
+  if (timedOut) {
+    log(`⚠️每日自动备份超过 ${BACKUP_TIMEOUT_MS / 1000} 秒（共享盘可能断连），已跳过`);
   }
 }
 
 async function preOpBackup(storageDir: string, defaultStorageDir: string, log: (s: string) => void): Promise<void> {
   const okFiles: string[] = [];
-  try {
-    for (const dir of backupTargetDirs(storageDir, defaultStorageDir)) {
-      const file = await backupToDir(dir, "shop_pre");
-      if (file) {
-        okFiles.push(file);
-        pruneBackups(dir, "shop_pre_", PRE_BACKUP_KEEP);
+  const timedOut = await withBackupTimeout(async () => {
+    try {
+      for (const dir of backupTargetDirs(storageDir, defaultStorageDir)) {
+        const file = await backupToDir(dir, "shop_pre");
+        if (file) {
+          okFiles.push(file);
+          pruneBackups(dir, "shop_pre_", PRE_BACKUP_KEEP);
+        }
       }
+    } catch (err: any) {
+      log(`⚠️操作前自动留档失败：${err.message}`);
+      return;
     }
-  } catch (err: any) {
-    log(`⚠️操作前自动留档失败：${err.message}`);
+  });
+  if (timedOut) {
+    // 关键：留档超时不是操作失败。要撤销就按提示走，跨会话的兜底另有每日自动备份。
+    log(`⚠️操作前自动留档超过 ${BACKUP_TIMEOUT_MS / 1000} 秒（共享盘可能断连），已跳过；本次操作仍可撤销`);
     return;
   }
   if (okFiles.length > 0) {

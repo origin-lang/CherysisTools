@@ -2236,8 +2236,12 @@ function populateFilters() {
 }
 
 function openNewProduct() {
-  const grades = state.rules.map((r) => r.grade);
-  const selGrades = grades.length ? grades.join(",") : "1";
+  // 规则表空的时候不要凭空造一个「等级1」出来：那只是下拉里看着有，
+  // 一点保存后端又 ensureRule 出一条 cost*1.5 的规则，等于凭空多了一档。
+  // 没有规则就只留「自定义」一个选项。
+  const gradeOptions = state.rules
+    .map((r) => `<option value="${r.grade}">${esc(gradeLabel(r.grade))}</option>`)
+    .join("");
   const mask = showModal(`
         <h3>＋ 新建商品</h3>
         <div class="form-grid">
@@ -2245,12 +2249,9 @@ function openNewProduct() {
           <label>名称</label><input id="npName" maxlength="100" placeholder="如：铜合金锆石手链 四叶花" />
           <label>品类</label><input id="npCategory" list="shopCatList" maxlength="50" placeholder="手链 / 项链 / 耳环 / 戒指 / 手镯…可自定义" />
           <label>系列</label><input id="npSeries" maxlength="50" placeholder="A类 / B类 / C类…（平台链接系列，可空）" />
-          <label>等级</label><select id="npGrade"><option value="0">自定义（售价手动定）</option>${selGrades
-            .split(",")
-            .map((g) => `<option value="${g}">${gradeLabel(g)}</option>`)
-            .join("")}</select>
+          <label>等级</label><select id="npGrade"><option value="0">自定义（售价手动定）</option>${gradeOptions}</select>
           <label>进价 ¥</label><input id="npCost" type="number" min="0" step="0.01" value="0" />
-          <label>售价 ¥（留空=按等级自动算）</label><input id="npSale" type="number" min="0" step="0.01" />
+          <label>售价 ¥</label><input id="npSale" type="number" min="0" step="0.01" placeholder="可留空，之后再填" />
           <label></label><span class="computed" id="npPreview">售价将自动计算</span>
           <label>期初库存</label><input id="npStock" type="number" min="0" step="1" value="0" />
           <label>采购链接</label><input id="npLink" maxlength="500" placeholder="下次进货去这里" />
@@ -2269,7 +2270,7 @@ function openNewProduct() {
       manual > 0
         ? `手动售价 ¥${money(manual)}`
         : grade === 0
-          ? `自定义售价：请填「售价」`
+          ? `自定义：售价先留空，之后在列表里补填`
           : `将按规则自动算：进价 ¥${money(cost)} → ¥${money(calcPrice(cost, rule))}`;
   };
   $("npGrade").onchange = upd;
@@ -2341,10 +2342,8 @@ function openNewProduct() {
       return;
     }
     const npGrade = Number($("npGrade").value);
-    if (npGrade === 0 && !(Number($("npSale").value || 0) > 0)) {
-      toast("自定义等级需要填写售价");
-      return;
-    }
+    // 售价允许留空：自定义等级下留空就是「还没定价」，落库 sale_price=0、price_manual=1，
+    // 之后在列表里补填即可。以前这里硬拦「自定义等级需要填写售价」。
     post({
       type: "addProduct",
       code: codeRaw,

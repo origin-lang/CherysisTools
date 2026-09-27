@@ -9,7 +9,7 @@ import { imageHandlers } from '../tools/shopTool/handlers/image.js';
 import { settingsHandlers } from '../tools/shopTool/handlers/settings.js';
 import { HandlerCtx } from '../tools/shopTool/handlers/types.js';
 import { ToolContext } from '../core/toolContext.js';
-import { LOCAL_PREF_KEYS } from '../tools/shopTool/index.js';
+import { LOCAL_PREF_KEYS, withBackupTimeout } from '../tools/shopTool/index.js';
 import { previewThumbPath, drainInflightThumbs } from '../tools/shopTool/images.js';
 import { renderStarOverviewBuffer, renderLiveGrid } from '../tools/shopTool/liveGrid.js';
 import {
@@ -17,6 +17,8 @@ import {
 	handleNineGridMergeFromList,
 	rotateImageInPlace,
 } from '../tools/nineGridTool/index.js';
+import { productHandlers } from '../tools/shopTool/handlers/product.js';
+import { closeDB, getDB, initDB } from '../tools/shopTool/db.js';
 
 suite('Extension Test Suite', () => {
 	vscode.window.showInformationMessage('Start all tests.');
@@ -672,6 +674,86 @@ suite('商品图片删除（占用重试 / 不做无谓备份）', () => {
 				`${f} 改库，必须保留 h.preOpBackup()`,
 			);
 		}
+
+		// 导入是唯一的例外，且是**刻意**的例外：它下面的 h.snapshot() 抓的是同一份「导入前」
+		// 状态、已经进了撤销栈，留档只是把同一份数据再整库拷一遍共享盘 + 本机。
+		// 导入是 preOpBackup 唯一的日常高频调用点，不砍它就等于每次导入都得等两次整库拷贝。
+		// 这条断言的作用是把这个决定钉住，别让以后有人顺手加回来。
+		const productSrc = read('product.ts');
+		// 源码是 CRLF，行尾不能写死 \n，否则这条断言会因为换行风格而假失败
+		const importBody = /async commitImportProducts\(msg\) \{([\s\S]*?)\r?\n {4}\},\r?\n/.exec(
+			productSrc,
+		);
+		assert.ok(importBody, '应能定位到 commitImportProducts 函数体');
+		assert.ok(
+			importBody![1].includes('preOpBackup'),
+			'导入处应留注释说明为什么不留档，否则后人看不懂为什么唯独它特殊',
+		);
+		// 只匹配真实调用，注释里提到不算（同上面对 image.ts 的处理）
+		assert.ok(
+			!/h\.preOpBackup\(/.test(importBody![1]),
+			'commitImportProducts 不该再 h.preOpBackup()（撤销栈 + 每日自动备份已兜底）',
+		);
+		assert.ok(
+			/h\.snapshot\(\)/.test(importBody![1]),
+			'commitImportProducts 必须仍然抓 h.snapshot()，否则撤销就没了',
+		);
+	});
+
+	test('留档不能拖死操作：卡死的备份到点就放弃，且不抛错', async () => {
+		// 共享盘断连时 backupDB 可能永远不 resolve（要等 SMB 超时）。
+		// 到点必须返回「超时放弃」，而不是让调用方的删除/导入整段卡住、或抛出未捕获异常。
+		const started = Date.now();
+		let released = false;
+		const timedOut = await withBackupTimeout(
+			() => new Promise<void>(() => {}), // 永不落地
+			120,
+		);
+		assert.strictEqual(timedOut, true, '卡死的留档应报超时');
+		assert.ok(Date.now() - started < 3000, '应在时限内返回，而不是等满 SMB 超时');
+		assert.strictEqual(released, false);
+
+		// 正常完成的留档：不算超时
+		let ran = false;
+		const ok = await withBackupTimeout(async () => {
+			ran = true;
+		}, 1000);
+		assert.strictEqual(ok, false, '正常完成不该算超时');
+		assert.strictEqual(ran, true);
+
+		// work 内部抛错：必须被吞掉（否则变成 unhandledRejection 掀掉扩展宿主），
+		// 但仍按「时限内跑完」返回，失败由 work 自己记日志。
+		const swallowed = await withBackupTimeout(async () => {
+			throw new Error('盘写满了');
+		}, 1000);
+		assert.strictEqual(swallowed, false, 'work 抛错不等于超时');
+	});
+
+	test('留档必须先写 .tmp 再改名：半截文件不能顶着 .db 冒充备份', () => {
+		const src = fs.readFileSync(
+			path.join(__dirname, '..', '..', 'src', 'tools', 'shopTool', 'index.ts'),
+			'utf-8',
+		);
+		// 超时/断连放弃的留档当场可能删不掉（Windows 上 SQLite 开着文件时 unlink 会 EBUSY）。
+		// 先写 .tmp、成功才改名，半截文件就永远不会被 .db 配额算进去、
+		// 也不会被 importDB 的选文件框误选成一份「备份」。
+		assert.ok(
+			/backupDB\(tmp\)[\s\S]*?renameSync\(tmp, file\)/.test(src),
+			'backupToDir 应先 backupDB(tmp)、再 renameSync(tmp, file)',
+		);
+		assert.ok(
+			/const tmp = `\$\{file\}\$\{BACKUP_TMP_SUFFIX\}`/.test(src),
+			'tmp 名应基于正式文件名加 .tmp 后缀',
+		);
+		// 超时上限必须真的在 preOpBackup / maybeAutoBackup 两条路径上都套上了：
+		// 后者在面板启动路径上（index.ts 里是 await 的），断连时会把整个面板初始化卡住。
+		assert.ok(
+			/pruneStaleBackupTmps/.test(src),
+			'应有残留 .tmp 的按天回收',
+		);
+		const guardCalls = (src.match(/withBackupTimeout\(/g) || []).length;
+		// 1 次定义 + preOpBackup 1 次 + maybeAutoBackup 1 次
+		assert.strictEqual(guardCalls, 3, 'preOpBackup 与 maybeAutoBackup 都应套上超时上限');
 	});
 
 	test('删不掉时日志要能自证：改名探针 + 三类占用者 + 两条可粘命令', async function () {
@@ -954,5 +1036,138 @@ suite('sharp 句柄用完即释放（跑完立刻删源图必须成功）', () =
 		const t0 = Date.now();
 		await drainInflightThumbs(120);
 		assert.ok(Date.now() - t0 < 2000, 'drain 必须自己会回来');
+	});
+});
+
+suite('导入：相同字段不再重写', () => {
+	const roots: string[] = [];
+
+	teardown(function () {
+		closeDB();
+		for (const root of roots.splice(0)) {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	function makeRoot(): string {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cherysis-imp-'));
+		roots.push(root);
+		return root;
+	}
+
+	/** 真库（initDB 真的落一个 SQLite 文件），再把两个写方法包一层数调用次数 */
+	function createImportHarness(storageDir: string) {
+		assert.strictEqual(initDB(storageDir), true, 'initDB 应当成功打开新库');
+		const db = getDB();
+		const posts: any[] = [];
+		const logs: string[] = [];
+		const h = {
+			db,
+			setDB: () => {},
+			log: (s: string) => { logs.push(s); },
+			post: (m: any) => { posts.push(m); },
+			getSetting: () => '',
+			setSetting: async () => {},
+			readOnly: () => false,
+			localPrefKey: () => false,
+			postLocalPrefs: () => {},
+			imageDir: () => '',
+			coverCache: new Map(),
+			invalidateCover: () => {},
+			removeImageFolder: () => false,
+			renameImageFolder: () => 'noop',
+			loadAll: () => {},
+			postProductsDelta: () => {},
+			refreshSales: () => {},
+			postStockIns: () => {},
+			postLiveState: () => {},
+			preOpBackup: async () => {},
+			snapshot: () => ({ tables: {} }) as any,
+			pushUndo: () => {},
+			resetUndo: () => {},
+		} as unknown as HandlerCtx;
+
+		const writes: Array<{ field: string; value: unknown }> = [];
+		const adds: unknown[] = [];
+		const realUpdate = db.updateProductField.bind(db);
+		const realAdd = db.addProduct.bind(db);
+		(db as any).updateProductField = (id: number, field: string, value: unknown) => {
+			writes.push({ field, value });
+			return realUpdate(id, field, value);
+		};
+		(db as any).addProduct = (row: unknown) => {
+			adds.push(row);
+			return realAdd(row as any);
+		};
+		return { db, h, posts, logs, writes, adds, handlers: productHandlers(h) };
+	}
+
+	// 导入列序：code, name, category, series, grade, cost_price, sale_price, status, purchase_link
+	const HEAD = '编号\t名称\t品类\t系列\t等级\t进价\t售价\t状态\t采购链接';
+	const A = 'L001\t手链A\t水晶\t银饰\t1\t20\t\t\t';
+	const B = 'L002\t手链B\t木头\t木头\t2\t30\t\t\t';
+
+	async function run(harness: any, text: string, mode: string): Promise<{ preview: any; done: any }> {
+		harness.posts.length = 0;
+		await harness.handlers.previewImportProducts({ text, mode }, harness.h);
+		const preview = harness.posts.find((m: any) => m.type === 'importPreview');
+		assert.ok(preview, '应当发出 importPreview');
+		harness.posts.length = 0;
+		await harness.handlers.commitImportProducts({ token: preview.token }, harness.h);
+		const done = harness.posts.find((m: any) => m.type === 'productsImported');
+		assert.ok(done, '应当发出 productsImported');
+		return { preview, done };
+	}
+
+	test('同一份文件导两次：第二次字段写入 0 次，全算跳过', async function () {
+		const harness = createImportHarness(makeRoot());
+		const text = [HEAD, A, B].join('\n');
+
+		const first = await run(harness, text, 'both');
+		assert.strictEqual(first.done.created, 2, '首次应当新增 2 条');
+		assert.strictEqual(harness.adds.length, 2);
+
+		// 关键：第二次一个字都不该再写进库
+		harness.writes.length = 0;
+		const second = await run(harness, text, 'both');
+		assert.strictEqual(
+			harness.writes.length,
+			0,
+			`重复导入不该有字段写入，实际写了：${JSON.stringify(harness.writes)}`,
+		);
+		assert.strictEqual(second.preview.updated, 0, '预览就应当显示更新 0');
+		assert.strictEqual(second.done.updated, 0);
+		assert.strictEqual(second.done.skipped, 2, '两行都应计入跳过');
+		assert.ok(
+			harness.logs.some((l: string) => l.includes('新增 0，更新 0，跳过 2')),
+			`日志应当报 0 写 2 跳过：${JSON.stringify(harness.logs)}`,
+		);
+	});
+
+	test('只改一个字段：只写那一个字段', async function () {
+		const harness = createImportHarness(makeRoot());
+		await run(harness, [HEAD, A, B].join('\n'), 'both');
+
+		// L001 名称改成别的，其余原样
+		harness.writes.length = 0;
+		const changed = 'L001\t手链A改\t水晶\t银饰\t1\t20\t\t\t';
+		const r = await run(harness, [HEAD, changed, B].join('\n'), 'both');
+		assert.strictEqual(r.done.updated, 1, '只有 L001 真有变化');
+		assert.deepStrictEqual(harness.writes, [{ field: 'name', value: '手链A改' }]);
+		assert.strictEqual(harness.db.getProductByCode('L001')!.name, '手链A改');
+		assert.strictEqual(harness.db.getProductByCode('L002')!.name, '手链B', 'L002 不该被动');
+	});
+
+	test('无变化的行仍进预览表标（无变化），不会被看着像丢行', async function () {
+		const harness = createImportHarness(makeRoot());
+		await run(harness, [HEAD, A, B].join('\n'), 'both');
+		harness.posts.length = 0;
+		await harness.handlers.previewImportProducts({ text: [HEAD, A, B].join('\n'), mode: 'both' }, harness.h);
+		const preview = harness.posts.find((m: any) => m.type === 'importPreview');
+		assert.strictEqual(preview.skipped, 2);
+		assert.strictEqual(preview.rows.length, 2, '两行都应当列出来，不是只报个数');
+		for (const r of preview.rows) {
+			assert.strictEqual(r.detail, '（无变化）', `应当标无变化：${JSON.stringify(r)}`);
+		}
 	});
 });

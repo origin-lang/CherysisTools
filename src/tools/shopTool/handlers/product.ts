@@ -34,6 +34,34 @@ const IMPORT_DEFAULT_MISSING_RULE = (grade: number): SaleRule => ({
   tail_mode: "p88",
   tail_value: "",
 });
+// 等级列认三种写法，导出→导入要能原样回来：
+//   "自定义" / "手动"        → 0
+//   "一级" / "二级" / 自定义等级名 → 该等级（按 label 反查，查不到再按 "等级N" 兜底）
+//   "2" / "02"               → 2
+// 认不出来的返回 null，交给调用方决定是「保持原值」还是「回退 0」。
+const parseGradeCell = (raw: string, rules: SaleRule[]): number | null => {
+  const s = String(raw ?? "").trim();
+  if (!s) {
+    return null;
+  }
+  if (s === "自定义" || s === "手动" || s === "0") {
+    return 0;
+  }
+  if (/^\d+$/.test(s)) {
+    const n = Number(s);
+    return n >= 0 && n <= 99 ? n : null;
+  }
+  const byLabel = rules.find((r) => r.label && r.label === s);
+  if (byLabel) {
+    return byLabel.grade;
+  }
+  const m = s.match(/^等级\s*(\d{1,2})$/);
+  if (m) {
+    const n = Number(m[1]);
+    return n >= 1 && n <= 99 ? n : null;
+  }
+  return null;
+};
 type ImportWritableField =
   | "name"
   | "category"
@@ -177,10 +205,10 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
             });
           }
         }
-        const gradeRaw = has("grade") ? real(getv("grade")) : null;
+        const gradeRaw = has("grade") ? parseGradeCell(getv("grade"), rules) : null;
         const costRaw = has("cost_price") ? real(getv("cost_price")) : null;
         const saleRaw = has("sale_price") ? real(getv("sale_price")) : null;
-        const gradeOk = gradeRaw !== null && gradeRaw >= 0 && gradeRaw <= 99;
+        const gradeOk = gradeRaw !== null;
         const costOk = costRaw !== null && costRaw >= 0;
         const gradeChange = gradeOk && gradeRaw !== exist.grade;
         const costChange = costOk && round2(costRaw as number) !== exist.cost_price;
@@ -188,6 +216,12 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         const effCost = costOk ? round2(costRaw as number) : exist.cost_price;
         if (gradeChange) {
           writes.push({ field: "grade", value: gradeRaw as number });
+          // 切成 0（自定义）必须同时置 price_manual=1，跟 updateProductField 的
+          // grade 分支保持一致。否则 grade=0 + price_manual=0 会被当成「跟随规则」，
+          // 而 0 号等级根本没有规则 → 售价回落成进价，0 毛利。
+          if (gradeRaw === 0) {
+            writes.push({ field: "price_manual", value: 1 });
+          }
         }
         if (costChange) {
           writes.push({ field: "cost_price", value: round2(costRaw as number) });
@@ -218,24 +252,36 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
           skipped++;
           continue;
         }
-        // 展示只列真实变化，避免同值重写刷屏
+        // 只保留真正会改动的字段：值相同就跳过。每条写入在共享盘上就是一次
+        // 独立 fsync（db.updateProductField 不包事务），重导同一份文件原本要
+        // 上千次写，现在 0 次。前面已比较过的字段过这层是幂等的。
+        const realWrites = writes.filter((w) => {
+          const oldVal = exist[w.field];
+          return typeof oldVal === "number" && typeof w.value === "number"
+            ? oldVal !== w.value
+            : String(oldVal ?? "") !== String(w.value ?? "");
+        });
+        // 描述只列真实变化；price_manual 是标记位，不占描述
         const diffs: string[] = [];
-        for (const w of writes) {
+        for (const w of realWrites) {
           if (w.field === "price_manual") {
             continue;
           }
-          const oldVal = String((exist as unknown as Record<string, unknown>)[w.field] ?? "");
-          const newVal = String(w.value);
-          if (oldVal !== newVal) {
-            diffs.push(`${PRODUCT_FIELD_LABELS[w.field] ?? w.field}: ${oldVal || "（空）"}→${newVal || "（空）"}`);
-          }
+          const oldVal = String(exist[w.field] ?? "");
+          diffs.push(`${PRODUCT_FIELD_LABELS[w.field] ?? w.field}: ${oldVal || "（空）"}→${String(w.value) || "（空）"}`);
         }
-        updateRows.push({ code, writes });
+        if (realWrites.length === 0) {
+          // 无变化也要列进预览：每行粘贴的内容都得有交代，不能看着像被丢了
+          skipped++;
+          displayRows.push({ kind: "update", code, name: exist.name, detail: "（无变化）" });
+          continue;
+        }
+        updateRows.push({ code, writes: realWrites });
         displayRows.push({
           kind: "update",
           code,
           name: exist.name,
-          detail: diffs.length ? diffs.join("；") : "（无实际变化，仅重写）",
+          detail: diffs.length ? diffs.join("；") : "仅修正售价标记",
         });
         continue;
       }
@@ -257,8 +303,9 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       const name = normText("name", get("name")).value || code;
       const category = normText("category", get("category")).value;
       const series = normText("series", get("series")).value;
-      const gradeRaw = Math.floor(Number(get("grade") || 1));
-      const grade = Number.isFinite(gradeRaw) && gradeRaw >= 0 && gradeRaw <= 99 ? gradeRaw : 1;
+      // 等级列缺失或认不出来 → 回退 0（自定义），不是 1
+      const gradeParsed = parseGradeCell(get("grade"), rules);
+      const grade = gradeParsed === null ? 0 : gradeParsed;
       const costRaw = Number(String(get("cost_price") ?? "").trim().replace(/^[¥￥]\s*/, "") || 0);
       const cost = Number.isFinite(costRaw) && costRaw >= 0 ? round2(costRaw) : 0;
       const saleRaw = Number(String(get("sale_price") ?? "").trim().replace(/^[¥￥]\s*/, "") || 0);
@@ -335,7 +382,8 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         log(`❌${sale.msg}`);
         return;
       }
-      const grade = normGrade(msg.grade ?? 1);
+      // 缺省 0（自定义）：售价没填就先留空，等级规则表默认也是空的
+      const grade = normGrade(msg.grade);
       if (!grade.ok) {
         log(`❌${grade.msg}`);
         return;
@@ -559,6 +607,24 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
           log(`❌等级 ${r.grade} 的公式非法：${r.expr}`);
           return;
         }
+      }
+      // 删规则前先看还有谁跟着走。少了规则 → calcPrice 拿 undefined → 售价回落成
+      // 进价，0 毛利，而且只在日志里留一句「已重算」，事后根本看不出来。
+      // 这里直接拦下来，把受影响的编号报出去，让人先把商品改成自定义或换个等级。
+      const kept = new Set(rules.map((r) => Number(r.grade)));
+      const orphans = db
+        .getProducts()
+        .filter((p) => p.price_manual !== 1 && p.grade > 0 && !kept.has(p.grade));
+      if (orphans.length > 0) {
+        const detail = orphans
+          .slice(0, 12)
+          .map((p) => p.code)
+          .join("、");
+        const more = orphans.length > 12 ? ` 等 ${orphans.length} 个` : "";
+        const grades = Array.from(new Set(orphans.map((p) => p.grade))).join("、");
+        log(`❌等级 ${grades} 的规则被删了，但还有 ${orphans.length} 个商品跟着它算售价：${detail}${more}`);
+        log("   请先把这些商品改成「自定义」或改到其它等级，再保存规则");
+        return;
       }
       const snap = h.snapshot();
       db.replaceRules(rules);
@@ -856,7 +922,10 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       }
       const plan = pendingImport;
       pendingImport = null;
-      await h.preOpBackup();
+      // 刻意不 preOpBackup：下面 h.snapshot() 抓的是同一份「导入前」状态，已经进了撤销栈
+      // （上限 20 条），留档并不会多保住任何信息，只是把同一份数据再整库拷一遍到共享盘和本机。
+      // 导入是 preOpBackup 唯一的日常高频调用点，删档/恢复这类真·破坏性操作才留。
+      // 跨会话的兜底靠每日自动备份（shop_auto_*）和设置里的手动「备份数据库」。
       const snap = h.snapshot();
       let created = 0;
       let updated = 0;

@@ -86,11 +86,10 @@ export interface StockInRow {
   name?: string;
 }
 
-export const DEFAULT_SEED_RULES: SaleRule[] = [
-  { grade: 1, label: "一级", expr: "cost+10", tail_mode: "raw", tail_value: "" },
-  { grade: 2, label: "二级", expr: "cost*1.5", tail_mode: "p88", tail_value: "" },
-  { grade: 3, label: "三级", expr: "cost*2", tail_mode: "p88", tail_value: "" },
-];
+// 刻意播种为空：等级规则不是每家店都按「一级/二级/三级」分的，硬塞三条示例
+// 反而会让新人以为自己就该这么用。默认走「自定义」——售价自己填，或先留空。
+// 需要示例规则的人在「设置 → 售价规则」点「＋」自己加。
+export const DEFAULT_SEED_RULES: SaleRule[] = [];
 
 export interface ShopDB {
   getProducts(): Product[];
@@ -273,7 +272,7 @@ export function initDB(storageDir: string): boolean {
       name TEXT NOT NULL,
       category TEXT NOT NULL DEFAULT '',
       series TEXT NOT NULL DEFAULT '',
-      grade INTEGER NOT NULL DEFAULT 1,
+      grade INTEGER NOT NULL DEFAULT 0,
       cost_price REAL NOT NULL DEFAULT 0,
       sale_price REAL NOT NULL DEFAULT 0,
       price_manual INTEGER NOT NULL DEFAULT 0,

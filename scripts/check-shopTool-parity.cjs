@@ -76,6 +76,31 @@ function extractArrowBody(file, varName, label) {
   return null;
 }
 
+// 抽 `const name = (a, b): T => { ... }` 的函数体。TS 源码里的辅助函数常写成这种
+// 形式（extractFnBody 只认 `function name(...)` 声明，抽不到），签名里的类型标注
+// 在 `=>` 之前，函数体内部是纯 JS，能直接 new Function 跑。
+function extractConstArrowBody(file, name, label) {
+  const src = fs.readFileSync(file, "utf8");
+  const startRe = new RegExp(`const ${name}\\s*=\\s*\\([^)]*\\)[^=]*=>\\s*\\{`);
+  const start = src.match(startRe);
+  if (!start || start.index === undefined) {
+    fails.push(`${label}: 找不到 ${name} 箭头函数`);
+    return null;
+  }
+  const open = start.index + start[0].length - 1;
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === "{") depth++;
+    else if (ch === "}") depth--;
+    if (depth === 0) {
+      return src.slice(open + 1, i);
+    }
+  }
+  fails.push(`${label}: ${name} 箭头函数括号未闭合`);
+  return null;
+}
+
 function main() {
   const tsSpecs = extractArray(
     tsFile,
@@ -244,6 +269,66 @@ function main() {
             fails.push(`字段校验漂移 ${field}(${JSON.stringify(raw)}): 后端 ${av} vs 前端 ${bv}`);
           }
         }
+      }
+      // 缺省等级必须是 0（自定义），两边都得是 0
+      for (const raw of [undefined, null, ""]) {
+        const back = backendFields.normGrade(raw);
+        const front2 = front("grade", raw);
+        if (back.ok !== front2.ok || back.value !== front2.value) {
+          fails.push(
+            `等级缺省值漂移(${JSON.stringify(raw) ?? "undefined"}): 后端 ${JSON.stringify(back.value)} vs 前端 ${JSON.stringify(front2.value)}`,
+          );
+        }
+      }
+    }
+  }
+
+  // —— 导入等级单元格解析：parseGradeCell 直接从 product.ts 抽真实函数体跑 ——
+  {
+    const body = extractConstArrowBody(
+      path.join(root, "src", "tools", "shopTool", "handlers", "product.ts"),
+      "parseGradeCell",
+      "handlers/product.ts",
+    );
+    if (body !== null) {
+      const parse = new Function("return function parseGradeCell(raw, rules) {\n" + body + "\n}")();
+      const rules = [
+        { grade: 1, label: "一级" },
+        { grade: 2, label: "二级" },
+        { grade: 7, label: "特级" },
+        { grade: 8, label: "" },
+      ];
+      // 导出写的是等级名，导入必须原样认回来；空/认不出 → null（调用方回退 0）
+      const cases = [
+        ["自定义", 0],
+        ["手动", 0],
+        ["0", 0],
+        ["一级", 1],
+        ["二级", 2],
+        ["特级", 7],
+        ["等级3", 3],
+        ["等级 12", 12],
+        ["1", 1],
+        ["02", 2],
+        [" 7 ", 7],
+        ["99", 99],
+        ["", null],
+        ["   ", null],
+        ["一级 ", 1],
+        ["100", null],
+        ["abc", null],
+        ["等级", null],
+        ["等级0", null],
+      ];
+      for (const [raw, want] of cases) {
+        const got = parse(raw, rules);
+        if (got !== want) {
+          fails.push(`等级单元格解析 ${JSON.stringify(raw)}: 期望 ${want} 实得 ${got}`);
+        }
+      }
+      // 认不出的等级名不能瞎猜成某个等级，否则会静默改错别人的等级
+      if (parse("不存在", rules) !== null) {
+        fails.push("等级单元格解析：未知等级名应返回 null");
       }
     }
   }

@@ -96,7 +96,9 @@ export function normMoney(
 }
 
 export function normGrade(raw: unknown): { ok: boolean; msg: string; value: number } {
-  const n = Number(raw ?? 1);
+  // 缺省是 0（自定义），不是 1：等级规则表默认是空的，
+  // 没有「1」这个等级，缺省还往 1 上靠会凭空造出一条规则。
+  const n = raw === undefined || raw === null || raw === "" ? 0 : Number(raw);
   if (n === 0) {
     return { ok: true, msg: "", value: 0 };
   }

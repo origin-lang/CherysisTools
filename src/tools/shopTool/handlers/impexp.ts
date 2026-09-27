@@ -85,7 +85,12 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
         const valOf = (p: Product, key: string): any => {
           switch (key) {
             case "grade":
-              return gradeLabel.get(String(p.grade)) || `等级${p.grade}`;
+              // 自定义（0 号等级 / price_manual=1）导出成「自定义」，
+              // 导入侧 parseGradeCell 认这个词，往返才对得上。
+              // 不要退化成「等级0」：没有这条规则，看着像等级名其实不是。
+              return p.price_manual === 1 || p.grade === 0
+                ? "自定义"
+                : gradeLabel.get(String(p.grade)) || `等级${p.grade}`;
             case "status":
               return p.status === 1 ? "已下架" : "在售";
             case "netTotal":

@@ -180,7 +180,8 @@ window.toolClients = window.toolClients || {};
         return { ok: true, value: raw };
       }
       if (spec.kind === "grade") {
-        const n = Number(raw);
+        // 缺省 0（自定义），与后端 normGrade 同步；别再往 1 上靠
+        const n = raw === undefined || raw === null || raw === "" ? 0 : Number(raw);
         if (n === 0) {
           return { ok: true, value: 0 };
         }
