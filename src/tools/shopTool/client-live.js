@@ -182,14 +182,17 @@
               ${meta}
             </div>`;
           }
+          // 组头只留两个按钮：绿底的「生成这组」是每组唯一的主操作（排完一组点一次），
+          // 必须一直在外面；导入本组/清空本组/删组三个低频或破坏性的收进 ⋯ 下拉。
+          // 之前四个肩并肩排着，凑一起约 430px，侧栏那点宽度（组卡片约 338px）根本
+          // 放不下，是靠 .g-head 的 flex-wrap 换行才没挤爆；而「删组」紧挨着唯一那个
+          // 绿底按钮，误点成本太高。
           return `<div class="live-group">
             <div class="g-head">
               <b>第 ${g} 组</b>
               <span class="muted">${startNum}号~${startNum + 8}号 · ${filled}/9</span>
-              <button class="mini-btn" data-ls-act="import" data-g="${g}" title="粘贴编号清单导入本组（先清空本组，最多 9 个）">导入本组</button>
-              <button class="mini-btn" data-ls-act="clearg" data-g="${g}" title="清空这一组的所有格子">清空本组</button>
               <button class="mini-btn g-gen" data-ls-act="gen" data-g="${g}" title="只生成这一组的九宫格">🖼 生成这组</button>
-              <button class="mini-btn btn-danger g-del" data-ls-act="delgroup" data-g="${g}">删组</button>
+              <button class="mini-btn g-more" data-ls-act="gmore" data-g="${g}" title="更多：导入本组 / 清空本组 / 删组">⋯</button>
             </div>
             <div class="live-grid">${cells}</div>
           </div>`;
@@ -580,6 +583,47 @@
       renderLi();
     }
 
+    // 组头「⋯」下拉：导入本组 / 清空本组 / 删组。复用图片右键菜单那个通用组件
+    // （client-core.js 的 showImageCtxMenu），自带点外面关 / Esc / 贴右缘翻转。
+    // 菜单项一律用短名（4 个字内）：菜单宽由 min-width:160px 兜着，而组件贴右缘
+    // 时按 180px 估算位置，标签一长右边就会被裁掉。
+    function showGroupMenu(btn) {
+      const g = Number(btn.dataset.g);
+      const rect = btn.getBoundingClientRect();
+      showImageCtxMenu(rect.left, rect.bottom, [
+        { label: "导入本组", run: () => openImportLiveGroup(g) },
+        { label: "清空本组", run: () => confirmClearGroup(g) },
+        { sep: true },
+        { label: "删组", run: () => confirmDeleteGroup(g), danger: true },
+      ]);
+    }
+
+    function confirmClearGroup(groupNo) {
+      confirmBox(`确认清空第 ${groupNo} 组的全部格子？`).then((ok) => {
+        if (ok) {
+          clearLiveGroup(groupNo);
+        }
+      });
+    }
+
+    function confirmDeleteGroup(groupNo) {
+      const n = state.livePlan.filter(
+        (r) => r.group_no === groupNo && r.code,
+      ).length;
+      // 删组会把这一组的排品从共享库里抹掉、别人那边也会消失，属于不可逆操作
+      confirmBox(
+        n > 0
+          ? `确认删除第 ${groupNo} 组？（该组的 ${n} 个排品格子会被清空，商品本身不受影响）`
+          : `确认删除第 ${groupNo} 组？`,
+      ).then((ok) => {
+        if (ok) {
+          removeLiveGroup(groupNo);
+          renderLiveGrid();
+          toast(`已删除第 ${groupNo} 组`);
+        }
+      });
+    }
+
     function bindLiveEvents() {
       const add = $("liveAddGroupBtn");
       if (add) {
@@ -664,44 +708,16 @@
       const area = $("liveGridArea");
       if (area) {
         area.addEventListener("click", (e) => {
-          const impBtn = e.target.closest("[data-ls-act='import']");
-          if (impBtn) {
-            openImportLiveGroup(Number(impBtn.dataset.g));
-            return;
-          }
           const genBtn = e.target.closest("[data-ls-act='gen']");
           if (genBtn) {
             generateGroup(Number(genBtn.dataset.g));
             return;
           }
-          const btn = e.target.closest("[data-ls-act='delgroup']");
-          if (btn) {
-            const g = Number(btn.dataset.g);
-            const n = state.livePlan.filter(
-              (r) => r.group_no === g && r.code,
-            ).length;
-            // 删组会把这一组的排品从共享库里抹掉、别人那边也会消失，属于不可逆操作
-            confirmBox(
-              n > 0
-                ? `确认删除第 ${g} 组？（该组的 ${n} 个排品格子会被清空，商品本身不受影响）`
-                : `确认删除第 ${g} 组？`,
-            ).then((ok) => {
-              if (ok) {
-                removeLiveGroup(g);
-                renderLiveGrid();
-                toast(`已删除第 ${g} 组`);
-              }
-            });
-            return;
-          }
-          const clrG = e.target.closest("[data-ls-act='clearg']");
-          if (clrG) {
-            const g = Number(clrG.dataset.g);
-            confirmBox(`确认清空第 ${g} 组的全部格子？`).then((ok) => {
-              if (ok) {
-                clearLiveGroup(g);
-              }
-            });
+          // 菜单本体挂在 document.body 上、不在 #liveGridArea 里，所以点菜单项
+          // 不会再冒回来触发这条委托，三个动作只有 showGroupMenu 里那一份实现。
+          const moreBtn = e.target.closest("[data-ls-act='gmore']");
+          if (moreBtn) {
+            showGroupMenu(moreBtn);
           }
         });
       }
