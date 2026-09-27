@@ -145,6 +145,8 @@ window.toolClients = window.toolClients || {};
     // 200 的时候光打开面板第一秒就要发 200 条消息、浏览器解码 200 张图。
     var pageSize = 50;
     var lastFilterSig = "";
+    // 表头（含筛选行）的重建判据。表头和表体分开重画，见 client-product.js 的 headSig
+    var lastHeadSig = "";
     var selSales = new Set();
     var sortKey = "code";
     var sortDir = 1;

@@ -444,6 +444,24 @@ function filterSig(list) {
   });
 }
 
+// 表头（含筛选行）的重建判据，照 filterSig 的写法。
+// 刻意**不含** filters 和 state.products 的版本号：这两样一变就重画表头，
+// 等于把用户正在敲的那个输入框连同焦点一起换掉，「回车后光标停在原位」就没了。
+// 筛选值改由 syncFilterValues() 就地回写（不碰正在编辑的那个框），
+// 品类/等级两个下拉的选项则直接把选项清单纳入签名 —— 只在这两个清单真变了时才重画。
+// 列都隐藏时不算这两项，省掉两次全表扫描。
+function headSig() {
+  return JSON.stringify({
+    vis: [...visList],
+    img: showImageList,
+    ops: showOpsList,
+    sortKey,
+    sortDir,
+    cat: visList.has("category") ? distinctOptions("category") : null,
+    grade: visList.has("grade") ? distinctOptions("grade", displayGrade) : null,
+  });
+}
+
 function paginate(list) {
   const total = list.length;
   const pages = Math.max(1, Math.ceil(total / pageSize));
@@ -554,30 +572,44 @@ function filterControl(key) {
     case "stockTotal": {
       const label =
         key === "cost_price" ? "进价" : key === "sale_price" ? "售价" : "库存";
-      return `<input class="filter-cell" type="text" data-col-f="${key}" data-fr="range" title="筛选${label}：输入 10~30 表示 10 到 30，也可直接输 10 或 >10 / <30" placeholder="范围" value="${esc(String(filters["f_" + key] || ""))}" />`;
+      return `<input class="filter-cell" type="text" data-col-f="${key}" data-fr="range" title="筛选${label}：输入 10~30 表示 10 到 30，也可直接输 10 或 >10 / <30" placeholder="范围⏎" value="${esc(String(filters["f_" + key] || ""))}" />`;
     }
     case "code": {
       const cq = codeQueryMemo(cur);
       const title = cq.bad ? `写法有问题：${cq.msg}` : CODE_HINT;
-      return `<input class="filter-cell${cq.bad ? " err" : ""}" data-col-f="code" title="${esc(title)}" placeholder="编号/范围" value="${esc(String(cur))}" />`;
+      return `<input class="filter-cell${cq.bad ? " err" : ""}" data-col-f="code" title="${esc(title)}" placeholder="编号/范围⏎" value="${esc(String(cur))}" />`;
     }
     default:
-      return `<input class="filter-cell" data-col-f="${key}" title="筛选${key}" placeholder="筛选" value="${esc(String(cur))}" />`;
+      return `<input class="filter-cell" data-col-f="${key}" title="筛选${key}" placeholder="筛选⏎" value="${esc(String(cur))}" />`;
   }
 }
 
-function renderList(list) {
+// 表头与表体共用的列布局：可见列 + 图片列插在哪（状态前一格 → 采购链接前一格 → 都不可见就落最末）
+function listColumns() {
   const vis = PRODUCT_FIELDS.filter((f) => visList.has(f.key));
-  const showImg = showImageList;
   const plIdx = vis.findIndex((f) => f.key === "purchase_link");
   const stIdx = vis.findIndex((f) => f.key === "status");
-  const imgAt = showImg
+  const imgAt = showImageList
     ? stIdx >= 0
       ? stIdx
       : plIdx >= 0
         ? plIdx
         : vis.length
     : -1;
+  return { vis, imgAt };
+}
+
+function renderListHead() {
+  const thead = document.querySelector("#productListView table.data-table thead");
+  if (!thead) {
+    return;
+  }
+  const sig = headSig();
+  if (sig === lastHeadSig) {
+    return;
+  }
+  lastHeadSig = sig;
+  const { vis, imgAt } = listColumns();
   const headCols = [];
   const filterCells = [];
   for (let i = 0; i < vis.length; i++) {
@@ -599,6 +631,18 @@ function renderList(list) {
     headCols.push(`<th><span class="th-label">操作</span></th>`);
     filterCells.push(`<td></td>`);
   }
+  thead.innerHTML = `<tr>
+       <th style="width:30px"><input type="checkbox" id="selectAllProducts" title="全选 / 取消全选" /></th>
+       ${headCols.join("")}
+     </tr><tr class="filter-row">
+       <td></td>
+       ${filterCells.join("")}
+     </tr>`;
+  bindColFilters();
+}
+
+function renderListBody(list) {
+  const { vis, imgAt } = listColumns();
   const body = list
     .map((p) => {
       const net = p.soldTotal - p.refundTotal;
@@ -694,32 +738,40 @@ function renderList(list) {
     })
     .join("");
   const selectedCount = state.selectedProducts.size;
-  const allSelected =
-    list.length > 0 && list.every((p) => state.selectedProducts.has(p.id));
-  $("productListView").innerHTML =
-    list.length === 0 && !hasFilter()
-      ? `<p class="muted">（无商品，点「＋ 新建商品」添加；也支持「导入商品」批量粘贴）</p>`
-      : `${
-          selectedCount > 0
-            ? (() => {
-                return `<div class="batch-ops" id="batchOpsBar">
-<span>已选 <b data-sel-count>${selectedCount}</b> 个商品</span>
-<button class="mini-btn" id="batchCopy" title="把选中的商品按当前可见列复制到剪贴板（带表头）">📋 复制选中</button>
-<button class="mini-btn batch-menu-btn" id="batchMenuBtn">批量操作 ▾</button>
-<button class="mini-btn" id="batchClear" title="取消全部选择">✕ 取消</button>
-</div>`;
-              })()
-            : ""
-        }
-             <div class="table-wrap"><table class="data-table"><thead><tr>
-               <th style="width:30px"><input type="checkbox" id="selectAllProducts" ${list.length === 0 ? "disabled" : ""} ${allSelected ? "checked" : ""} title="全选 / 取消全选" /></th>
-               ${headCols.join("")}
-             </tr><tr class="filter-row">
-               <td></td>
-               ${filterCells.join("")}
-             </tr></thead><tbody>${body}</tbody></table></div>`;
+  const tbody = document.querySelector("#productListView table.data-table tbody");
+  if (tbody) {
+    tbody.innerHTML = body;
+  }
+  // 全选框的 disabled/checked 跟着**表体**走（有多少行、有没有全选），
+  // 不跟着表头走 —— 表头已经不是每次都重画了，这两个状态得单独同步
+  const selAll = $("selectAllProducts");
+  if (selAll) {
+    selAll.disabled = list.length === 0;
+    selAll.checked =
+      list.length > 0 && list.every((p) => state.selectedProducts.has(p.id));
+  }
+  syncBatchBar(selectedCount);
+}
+
+function renderList(list) {
+  const view = $("productListView");
+  if (list.length === 0 && !hasFilter()) {
+    // 空态整块替换掉表格，签名必须作废，否则下面重建骨架时会跳过表头
+    view.innerHTML = `<p class="muted">（无商品，点「＋ 新建商品」添加；也支持「导入商品」批量粘贴）</p>`;
+    lastHeadSig = "";
+    return;
+  }
+  if (!view.querySelector("table.data-table")) {
+    view.insertAdjacentHTML(
+      "beforeend",
+      `<div class="table-wrap"><table class="data-table"><thead></thead><tbody></tbody></table></div>`,
+    );
+    lastHeadSig = "";
+  }
+  renderListHead();
+  renderListBody(list);
   bindBatchOps();
-  bindColFilters();
+  syncFilterValues();
   syncListCellState();
 }
 
@@ -754,33 +806,78 @@ function bindColFilters() {
         delete filters["f_" + fieldKey];
       }
       syncClearFilterBtn();
-      if (el.tagName === "SELECT") {
-        renderProducts();
-        return;
-      }
-      const pos =
-        typeof el.selectionStart === "number"
-          ? el.selectionStart
-          : el.value.length;
       renderProducts();
-      const nf = document.querySelector(
-        `[data-col-f="${key}"]${fr ? `[data-fr="${fr}"]` : ""}`,
-      );
-      if (nf) {
-        nf.focus();
-        try {
-          nf.setSelectionRange(pos, pos);
-        } catch {
-          /* 忽略 */
-        }
-      }
     };
     if (el.tagName === "SELECT") {
       el.onchange = apply;
     } else {
-      el.oninput = debounce(apply, 150);
+      // 文本框：回车或失焦才生效。之前是 oninput + debounce，每敲一下就整表重画，
+      // 画完还得把焦点和光标抢回来（老代码里那段 selectionStart 恢复）——
+      // 改成「回车 / 失焦」两个明确的提交点后，apply 不再打断输入，焦点天然保住。
+      el.onkeydown = (ev) => {
+        if (ev.key === "Enter") {
+          ev.preventDefault(); // 别让回车冒泡去触发外层表单/默认行为
+          apply();
+        }
+      };
+      el.onchange = apply; // 失焦且值变了才触发，值没变不重画
     }
   });
+}
+
+// 表头不随 filters 重建（见 headSig），所以 filters 改了以后要把值回写到现有的框里。
+// 正在编辑的那个框跳过：它刚被用户改过，回写等于拿旧值覆盖新输入。
+function syncFilterValues() {
+  const active = document.activeElement;
+  document.querySelectorAll("[data-col-f]").forEach((el) => {
+    if (el === active) {
+      return;
+    }
+    const key = el.dataset.colF;
+    const fr = el.dataset.fr;
+    const fieldKey = fr === "range" ? key : fr ? key + "_" + fr : key;
+    const want = String(filters["f_" + fieldKey] || "");
+    if (el.value !== want) {
+      el.value = want;
+    }
+    if (key === "code") {
+      const cq = codeQueryMemo(want);
+      el.classList.toggle("err", !!cq.bad);
+      el.title = cq.bad ? `写法有问题：${cq.msg}` : CODE_HINT;
+    }
+  });
+}
+
+// 批量栏在表格**外面**（#productListView 的直接子节点），跟表头表体两段重画无关，
+// 单独按勾选数增删。以前它是被 renderList 整块 innerHTML 顺带写出来的。
+function syncBatchBar(selectedCount) {
+  const view = $("productListView");
+  if (!view) {
+    return;
+  }
+  const bar = $("batchOpsBar");
+  if (selectedCount <= 0) {
+    if (bar) {
+      bar.remove();
+    }
+    return;
+  }
+  const countEl = bar ? bar.querySelector("[data-sel-count]") : null;
+  if (countEl) {
+    countEl.textContent = String(selectedCount);
+    return;
+  }
+  const wrap = view.querySelector(".table-wrap");
+  if (!wrap) {
+    return;
+  }
+  wrap.insertAdjacentHTML("beforebegin", `<div class="batch-ops" id="batchOpsBar">
+<span>已选 <b data-sel-count>${selectedCount}</b> 个商品</span>
+<button class="mini-btn" id="batchCopy" title="把选中的商品按当前可见列复制到剪贴板（带表头）">📋 复制选中</button>
+<button class="mini-btn batch-menu-btn" id="batchMenuBtn">批量操作 ▾</button>
+<button class="mini-btn" id="batchClear" title="取消全部选择">✕ 取消</button>
+</div>`);
+  bindBatchBar();
 }
 
 function hasFilter() {
@@ -800,22 +897,7 @@ function updateSelectionUI() {
     const cbs = document.querySelectorAll(".product-checkbox");
     selAll.checked = cbs.length > 0 && Array.from(cbs).every((c) => c.checked);
   }
-  const count = state.selectedProducts.size;
-  const bar = $("batchOpsBar");
-  if (count === 0) {
-    if (bar) {
-      bar.remove();
-    }
-    return;
-  }
-  if (!bar) {
-    renderProducts();
-    return;
-  }
-  const countEl = bar.querySelector("[data-sel-count]");
-  if (countEl) {
-    countEl.textContent = String(count);
-  }
+  syncBatchBar(state.selectedProducts.size);
 }
 
 // 批量操作清单：工具栏「批量操作 ▾」下拉与列表右键「批量操作」子菜单共用这一份，
@@ -882,6 +964,13 @@ function bindBatchOps() {
     };
   });
 
+  bindBatchBar();
+}
+
+// 批量栏那三个按钮。单独拆出来是因为 syncBatchBar() 在勾选数从 0 变正时
+// 会就地长出这根栏（不必整表重画），那时候还没跑过 bindBatchOps，
+// 按钮得在这里自己绑一次，不然会出现「栏在、按钮点不动」。
+function bindBatchBar() {
   const batchCopy = $("batchCopy");
   if (batchCopy) {
     batchCopy.onclick = copySelectedProducts;
