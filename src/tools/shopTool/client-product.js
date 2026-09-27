@@ -30,14 +30,20 @@ var appClipboard = null; // { value } 内部单元格剪贴板内容 | null
 var pendingImportToken = ""; // 商品导入「解析预览→确认提交」的令牌
 var ipMask = null; // 当前商品导入弹窗遮罩（提交成功/取消后复位）
 
+// series 从这里挪走了：它现在是「离散值多选」的一员（ENUM_FILTER_FIELDS）。
+// 留着的话会被当作子串再筛一遍，而多选存的是数组，String(数组) 是 "A,B" 这种串，
+// 拿去 includes 永远匹配不上，筛选会直接变成空表。下面的循环里也补了一道防护。
 const TEXT_FILTER_FIELDS = new Set([
   "name",
-  "series",
   "soldTotal",
   "netTotal",
   "remark",
 ]);
 const RANGE_FILTER_FIELDS = new Set(["cost_price", "sale_price", "stockTotal"]);
+// 离散值列：取值有限可枚举，适合「勾哪几个看哪几个」。像进价这种连续数值、
+// 名称备注这种自由文本，硬做成勾选列表只会得到一个滚不到头的清单，
+// 所以那几列继续沿用原来的表达式写法（范围 / 子串 / 编号语法）。
+const ENUM_FILTER_FIELDS = new Set(["category", "series", "grade"]);
 // 编号列筛选语法：含 ~ 走「前缀+数字区间」，否则沿用子串匹配。
 const CODE_HINT =
   "筛选编号：支持 A1~A33 / a1~a33 / 1~33（两端无字母按 A 段）/ 多段 A1~A33,L1~L22；" +
@@ -282,9 +288,9 @@ function filteredProducts() {
       return true;
     })
     .filter((p) => {
-      for (const key of ["category", "series", "grade"]) {
-        const v = filters["f_" + key];
-        if (v && cellValue(p, key) !== v) {
+      for (const key of ENUM_FILTER_FIELDS) {
+        const picked = filterCurrent(key);
+        if (picked.length && !picked.includes(cellValue(p, key))) {
           return false;
         }
       }
@@ -293,10 +299,13 @@ function filteredProducts() {
     .filter((p) => matchCodeQuery(p.code, cq))
     .filter((p) => {
       for (const key of TEXT_FILTER_FIELDS) {
+        if (ENUM_FILTER_FIELDS.has(key)) {
+          continue; // 走多选那条通道，别再按子串过一遍
+        }
         const v = filters["f_" + key];
         if (
           v &&
-          !cellValue(p, key).toLowerCase().includes(String(v).toLowerCase())
+          !String(cellValue(p, key)).toLowerCase().includes(String(v).toLowerCase())
         ) {
           return false;
         }
@@ -444,12 +453,11 @@ function filterSig(list) {
   });
 }
 
-// 表头（含筛选行）的重建判据，照 filterSig 的写法。
+// 表头的重建判据，照 filterSig 的写法。
 // 刻意**不含** filters 和 state.products 的版本号：这两样一变就重画表头，
-// 等于把用户正在敲的那个输入框连同焦点一起换掉，「回车后光标停在原位」就没了。
-// 筛选值改由 syncFilterValues() 就地回写（不碰正在编辑的那个框），
-// 品类/等级两个下拉的选项则直接把选项清单纳入签名 —— 只在这两个清单真变了时才重画。
-// 列都隐藏时不算这两项，省掉两次全表扫描。
+// 现在表头上没有输入框了，这一条是为了保住横向滚动位置和已绑定的事件，
+// 筛选状态改由 refreshHeadFilterMarks() 描回漏斗上，不需要动 DOM。
+// 品类/系列的选项清单也不再进签名：它们在打开面板那一刻才算，实时且不必为此重画表头。
 function headSig() {
   return JSON.stringify({
     vis: [...visList],
@@ -457,8 +465,6 @@ function headSig() {
     ops: showOpsList,
     sortKey,
     sortDir,
-    cat: visList.has("category") ? distinctOptions("category") : null,
-    grade: visList.has("grade") ? distinctOptions("grade", displayGrade) : null,
   });
 }
 
@@ -529,19 +535,6 @@ function renderProducts() {
   ensureCovers(pd.page);
 }
 
-function distinctOptions(key, display) {
-  const seen = new Set();
-  const opts = [];
-  for (const p of state.products) {
-    const v = display ? display(p) : p[key];
-    if (v && !seen.has(v)) {
-      seen.add(v);
-      opts.push(v);
-    }
-  }
-  return opts.sort((a, b) => String(a).localeCompare(String(b), "zh-Hans-CN"));
-}
-
 const NO_FILTER_FIELDS = new Set([
   "soldTotal",
   "netTotal",
@@ -549,39 +542,86 @@ const NO_FILTER_FIELDS = new Set([
   "purchase_link",
 ]);
 
-function filterControl(key) {
+// —— 表头筛选：点表头上的漏斗弹面板 ——
+// 选项后面的数字按「整份商品里这个值共有多少条」算，不叠加别的列的筛选。
+// 这是 Excel 的口径，好处是数字稳定：你在别的列改筛选时，这里的数不会跟着一起跳。
+function enumOptions(key) {
+  const tally = new Map();
+  for (const p of state.products) {
+    const v = cellValue(p, key);
+    if (!v) {
+      continue;
+    }
+    tally.set(v, (tally.get(v) || 0) + 1);
+  }
+  return [...tally.entries()]
+    .map(([v, n]) => ({ v, n }))
+    .sort((a, b) => String(a.v).localeCompare(String(b.v), "zh-Hans-CN"));
+}
+
+// 这一列用什么方式筛。返回空串 = 不提供入口（沿用 NO_FILTER_FIELDS 的老规矩）。
+function filterKind(key) {
+  if (ENUM_FILTER_FIELDS.has(key)) {
+    return "enum";
+  }
+  if (RANGE_FILTER_FIELDS.has(key)) {
+    return "range";
+  }
+  if (key === "code") {
+    return "code";
+  }
   if (NO_FILTER_FIELDS.has(key)) {
     return "";
   }
-  const cur = filters["f_" + key] || "";
-  const opts = (items) =>
-    items
-      .map(
-        (v) =>
-          `<option value="${esc(String(v))}" ${cur === v ? "selected" : ""}>${esc(String(v))}</option>`,
-      )
-      .join("");
-  switch (key) {
-    case "category":
-    case "grade":
-      return `<select class="filter-cell" data-col-f="${key}" title="筛选${key === "grade" ? "等级" : "品类"}"><option value="">全部</option>${opts(
-        distinctOptions(key, key === "grade" ? displayGrade : undefined),
-      )}</select>`;
-    case "cost_price":
-    case "sale_price":
-    case "stockTotal": {
-      const label =
-        key === "cost_price" ? "进价" : key === "sale_price" ? "售价" : "库存";
-      return `<input class="filter-cell" type="text" data-col-f="${key}" data-fr="range" title="筛选${label}：输入 10~30 表示 10 到 30，也可直接输 10 或 >10 / <30" placeholder="范围⏎" value="${esc(String(filters["f_" + key] || ""))}" />`;
-    }
-    case "code": {
-      const cq = codeQueryMemo(cur);
-      const title = cq.bad ? `写法有问题：${cq.msg}` : CODE_HINT;
-      return `<input class="filter-cell${cq.bad ? " err" : ""}" data-col-f="code" title="${esc(title)}" placeholder="编号/范围⏎" value="${esc(String(cur))}" />`;
-    }
-    default:
-      return `<input class="filter-cell" data-col-f="${key}" title="筛选${key}" placeholder="筛选⏎" value="${esc(String(cur))}" />`;
+  return "text";
+}
+
+const EXPR_LABEL = {
+  cost_price: "进价",
+  sale_price: "售价",
+  stockTotal: "库存",
+  name: "名称",
+  remark: "备注",
+};
+
+function exprTitle(key) {
+  if (RANGE_FILTER_FIELDS.has(key)) {
+    return `筛选${EXPR_LABEL[key]}：输入 10~30 表示 10 到 30，也可直接输 10 或 >10 / <30`;
   }
+  if (key === "code") {
+    return CODE_HINT;
+  }
+  return `筛选${EXPR_LABEL[key]}：输入包含的文字，回车或点「确定」生效`;
+}
+
+function exprPlaceholder(key) {
+  if (RANGE_FILTER_FIELDS.has(key)) {
+    return "范围⏎";
+  }
+  if (key === "code") {
+    return "编号/范围⏎";
+  }
+  return "含关键词⏎";
+}
+
+// 当前这一列选了哪些值（enum）/ 写了什么表达式（其余）。
+// 写成数组还是字符串由 filterKind 决定，读的地方统一走这里，避免两种格式混用时对不上。
+function filterCurrent(key) {
+  const raw = filters["f_" + key];
+  if (filterKind(key) === "enum") {
+    return Array.isArray(raw) ? [...raw] : raw ? [raw] : [];
+  }
+  return typeof raw === "string" ? raw : "";
+}
+
+const FUNNEL_SVG =
+  '<svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M1.6 2h8.8L7 6.3v3.1L5 8.4V6.3z" fill="currentColor"/></svg>';
+
+function headFilterBtn(key) {
+  if (!filterKind(key)) {
+    return "";
+  }
+  return `<span class="th-filter" data-th-filter="${key}" title="筛选：点这里选这一列要看的值">${FUNNEL_SVG}<span class="fp-badge" style="display:none"></span></span>`;
 }
 
 // 表头与表体共用的列布局：可见列 + 图片列插在哪（状态前一格 → 采购链接前一格 → 都不可见就落最末）
@@ -611,34 +651,26 @@ function renderListHead() {
   lastHeadSig = sig;
   const { vis, imgAt } = listColumns();
   const headCols = [];
-  const filterCells = [];
   for (let i = 0; i < vis.length; i++) {
     if (i === imgAt) {
       headCols.push(`<th><span class="th-label">图片</span></th>`);
-      filterCells.push(`<td></td>`);
     }
     const f = vis[i];
     headCols.push(
-      `<th><span class="th-label" data-sort="${f.key}">${f.label}${sortKey === f.key ? (sortDir === 1 ? " ▲" : " ▼") : ""}</span></th>`,
+      `<th><span class="th-label" data-sort="${f.key}">${f.label}${sortKey === f.key ? (sortDir === 1 ? " ▲" : " ▼") : ""}</span>${headFilterBtn(f.key)}</th>`,
     );
-    filterCells.push(`<td>${filterControl(f.key)}</td>`);
   }
   if (imgAt >= vis.length) {
     headCols.push(`<th><span class="th-label">图片</span></th>`);
-    filterCells.push(`<td></td>`);
   }
   if (showOpsList) {
     headCols.push(`<th><span class="th-label">操作</span></th>`);
-    filterCells.push(`<td></td>`);
   }
   thead.innerHTML = `<tr>
        <th style="width:30px"><input type="checkbox" id="selectAllProducts" title="全选 / 取消全选" /></th>
        ${headCols.join("")}
-     </tr><tr class="filter-row">
-       <td></td>
-       ${filterCells.join("")}
      </tr>`;
-  bindColFilters();
+  refreshHeadFilterMarks();
 }
 
 function renderListBody(list) {
@@ -771,7 +803,7 @@ function renderList(list) {
   renderListHead();
   renderListBody(list);
   bindBatchOps();
-  syncFilterValues();
+  refreshHeadFilterMarks();
   syncListCellState();
 }
 
@@ -793,58 +825,204 @@ function splitRangeValue(raw) {
   return [parts[0] || "", parts[1] || ""];
 }
 
-function bindColFilters() {
-  document.querySelectorAll("[data-col-f]").forEach((el) => {
-    const key = el.dataset.colF;
-    const fr = el.dataset.fr;
-    const apply = () => {
-      const v = el.value;
-      const fieldKey = fr === "range" ? key : fr ? key + "_" + fr : key;
-      if (String(v).trim()) {
-        filters["f_" + fieldKey] = v;
-      } else {
-        delete filters["f_" + fieldKey];
-      }
-      syncClearFilterBtn();
-      renderProducts();
-    };
-    if (el.tagName === "SELECT") {
-      el.onchange = apply;
-    } else {
-      // 文本框：回车或失焦才生效。之前是 oninput + debounce，每敲一下就整表重画，
-      // 画完还得把焦点和光标抢回来（老代码里那段 selectionStart 恢复）——
-      // 改成「回车 / 失焦」两个明确的提交点后，apply 不再打断输入，焦点天然保住。
-      el.onkeydown = (ev) => {
-        if (ev.key === "Enter") {
-          ev.preventDefault(); // 别让回车冒泡去触发外层表单/默认行为
-          apply();
-        }
-      };
-      el.onchange = apply; // 失焦且值变了才触发，值没变不重画
-    }
-  });
+// —— 悬浮筛选面板 ——
+// 面板挂在 body 上而不是表头里面：表头是 sticky 的、外层还有滚动容器，
+// 塞在里面会被裁掉、或者跟着横向滚动跑偏。
+let filterPanel = null;
+
+function closeFilterPanel() {
+  if (!filterPanel) {
+    return;
+  }
+  filterPanel.remove();
+  filterPanel = null;
+  document.removeEventListener("mousedown", onPanelOutside, true);
+  document.removeEventListener("keydown", onPanelEsc, true);
 }
 
-// 表头不随 filters 重建（见 headSig），所以 filters 改了以后要把值回写到现有的框里。
-// 正在编辑的那个框跳过：它刚被用户改过，回写等于拿旧值覆盖新输入。
-function syncFilterValues() {
-  const active = document.activeElement;
-  document.querySelectorAll("[data-col-f]").forEach((el) => {
-    if (el === active) {
-      return;
+function onPanelOutside(e) {
+  if (filterPanel && !filterPanel.contains(e.target)) {
+    closeFilterPanel();
+  }
+}
+
+function onPanelEsc(e) {
+  if (e.key === "Escape") {
+    closeFilterPanel();
+  }
+}
+
+function placeFilterPanel(panel, anchor) {
+  const r = anchor.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth;
+  const vh = document.documentElement.clientHeight;
+  let left = r.left;
+  if (left + panel.offsetWidth > vw - 8) {
+    left = Math.max(8, vw - panel.offsetWidth - 8);
+  }
+  let top = r.bottom + 4;
+  // 下面放不下就往上翻；上头也放不下就贴着底边，总之别出屏
+  if (top + panel.offsetHeight > vh - 8) {
+    const up = r.top - panel.offsetHeight - 4;
+    if (up > 8) {
+      top = up;
     }
-    const key = el.dataset.colF;
-    const fr = el.dataset.fr;
-    const fieldKey = fr === "range" ? key : fr ? key + "_" + fr : key;
-    const want = String(filters["f_" + fieldKey] || "");
-    if (el.value !== want) {
-      el.value = want;
+  }
+  panel.style.left = Math.max(8, left) + "px";
+  panel.style.top = Math.max(8, top) + "px";
+}
+
+function applyFilterValue(key, value) {
+  if (Array.isArray(value)) {
+    if (value.length) {
+      filters["f_" + key] = value;
+    } else {
+      delete filters["f_" + key];
     }
-    if (key === "code") {
-      const cq = codeQueryMemo(want);
-      el.classList.toggle("err", !!cq.bad);
-      el.title = cq.bad ? `写法有问题：${cq.msg}` : CODE_HINT;
+  } else if (String(value ?? "").trim()) {
+    filters["f_" + key] = String(value);
+  } else {
+    delete filters["f_" + key];
+  }
+  closeFilterPanel();
+  syncClearFilterBtn();
+  renderProducts();
+}
+
+function openFilterPanel(key, anchor) {
+  const kind = filterKind(key);
+  if (!kind) {
+    return;
+  }
+  closeFilterPanel();
+  const panel = document.createElement("div");
+  panel.className = "fp-panel";
+  panel.dataset.fp = key;
+  let collect;
+  let focusEl = null;
+  if (kind === "enum") {
+    const opts = enumOptions(key);
+    const picked = new Set(filterCurrent(key));
+    panel.innerHTML =
+      `<div class="fp-head"><input class="fp-search" type="text" placeholder="搜索选项…" title="只筛选项名单，已经勾上的不会因为搜索看不见而丢" /></div>` +
+      `<div class="fp-list">` +
+      `<label class="fp-item fp-all"><input type="checkbox" data-fp-all="1" /><span class="fp-name">全选</span><span class="fp-n">(${opts.length})</span></label>` +
+      opts
+        .map(
+          (o) =>
+            `<label class="fp-item" data-v="${esc(o.v)}"><input type="checkbox" value="${esc(o.v)}" ${picked.has(o.v) ? "checked" : ""} /><span class="fp-name" title="${esc(o.v)}">${esc(o.v)}</span><span class="fp-n">(${o.n})</span></label>`,
+        )
+        .join("") +
+      `</div><div class="fp-none">没有匹配的选项</div>` +
+      `<div class="fp-foot"><span class="fp-sel">已选 <b data-sel-now>0</b> / <span data-sel-all>${opts.length}</span></span>` +
+      `<button class="mini-btn" data-fp-act="cancel">取消</button>` +
+      `<button class="mini-btn fp-ok" data-fp-act="ok">确定</button></div>`;
+    const rows = [...panel.querySelectorAll(".fp-item:not(.fp-all)")];
+    const none = panel.querySelector(".fp-none");
+    const shown = () => rows.filter((r) => r.style.display !== "none");
+    const refresh = () => {
+      const n = rows.filter((r) => r.querySelector("input").checked).length;
+      panel.querySelector("[data-sel-now]").textContent = String(n);
+      const vis = shown();
+      const visOn = vis.filter((r) => r.querySelector("input").checked).length;
+      const all = panel.querySelector("[data-fp-all]");
+      all.checked = vis.length > 0 && visOn === vis.length;
+      all.indeterminate = visOn > 0 && visOn < vis.length;
+      none.style.display = vis.length === 0 && rows.length > 0 ? "" : "none";
+    };
+    panel.querySelector(".fp-search").oninput = (ev) => {
+      const q = ev.target.value.trim().toLowerCase();
+      for (const r of rows) {
+        r.style.display = !q || r.dataset.v.toLowerCase().includes(q) ? "" : "none";
+      }
+      refresh();
+    };
+    panel.querySelector("[data-fp-all]").onchange = (ev) => {
+      for (const r of shown()) {
+        r.querySelector("input").checked = ev.target.checked;
+      }
+      refresh();
+    };
+    for (const r of rows) {
+      r.querySelector("input").onchange = refresh;
     }
+    refresh();
+    focusEl = panel.querySelector(".fp-search");
+    collect = () => rows.filter((r) => r.querySelector("input").checked).map((r) => r.dataset.v);
+  } else {
+    const cur = filterCurrent(key);
+    panel.innerHTML =
+      `<div class="fp-expr">` +
+      `<input class="fp-input" type="text" value="${esc(cur)}" placeholder="${esc(exprPlaceholder(key))}" title="${esc(exprTitle(key))}" />` +
+      `<div class="fp-hint"></div></div>` +
+      `<div class="fp-foot"><span class="fp-sel"></span>` +
+      `<button class="mini-btn" data-fp-act="cancel">取消</button>` +
+      `<button class="mini-btn fp-ok" data-fp-act="ok">确定</button></div>`;
+    const input = panel.querySelector(".fp-input");
+    const hint = panel.querySelector(".fp-hint");
+    // 编号那套 ~ 区间语法有专门的报错文案，边输边给用户看是哪儿写岔了
+    const check = () => {
+      if (key !== "code") {
+        input.classList.remove("err");
+        return true;
+      }
+      const cq = codeQueryMemo(input.value);
+      hint.textContent = cq.bad ? `写法有问题：${cq.msg}` : "";
+      input.classList.toggle("err", !!cq.bad);
+      return !cq.bad;
+    };
+    input.oninput = check;
+    check();
+    focusEl = input;
+    collect = () => input.value.trim();
+    input.onkeydown = (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        if (check()) {
+          applyFilterValue(key, collect());
+        }
+      }
+    };
+  }
+  panel.querySelector('[data-fp-act="cancel"]').onclick = closeFilterPanel;
+  panel.querySelector('[data-fp-act="ok"]').onclick = () => {
+    applyFilterValue(key, collect());
+  };
+  document.body.appendChild(panel);
+  placeFilterPanel(panel, anchor);
+  // 光标要在面板真正进了 DOM 之后给，在此之前 focus() 是空操作
+  if (focusEl) {
+    focusEl.focus();
+    if (focusEl.select) {
+      focusEl.select();
+    }
+  }
+  document.addEventListener("mousedown", onPanelOutside, true);
+  document.addEventListener("keydown", onPanelEsc, true);
+}
+
+// 表头不随 filters 重建（见 headSig），所以筛选值变了要把状态描回那几个漏斗上：
+// 这一列筛着就点亮，并在角标上标出勾了几个值 / 写了条件。删掉常驻那一行之后，
+// 「现在到底筛了几列」全靠这几个点亮的漏斗告诉用户——不然筛选是看不见的。
+function refreshHeadFilterMarks() {
+  document.querySelectorAll(".th-filter[data-th-filter]").forEach((el) => {
+    const key = el.dataset.thFilter;
+    const cur = filterCurrent(key);
+    const n = Array.isArray(cur) ? cur.length : cur.trim() ? 1 : 0;
+    el.classList.toggle("on", n > 0);
+    const badge = el.querySelector(".fp-badge");
+    if (badge) {
+      badge.textContent = String(n);
+      badge.style.display = n > 0 ? "" : "none";
+    }
+    const tip = Array.isArray(cur)
+      ? n > 0
+        ? `已筛选：${cur.join("、")}`
+        : "筛选：点这里选这一列要看的值"
+      : cur.trim()
+        ? `已筛选：${cur}`
+        : "筛选：点这里写这一列的筛选条件";
+    el.title = tip;
   });
 }
 
@@ -881,7 +1059,10 @@ function syncBatchBar(selectedCount) {
 }
 
 function hasFilter() {
-  return Object.values(filters).some((v) => String(v).trim().length > 0);
+  // 多选列存的是数组，其余列存的是字符串，两种都要算进来
+  return Object.values(filters).some((v) =>
+    Array.isArray(v) ? v.length > 0 : String(v ?? "").trim().length > 0,
+  );
 }
 
 function syncClearFilterBtn() {
@@ -3679,6 +3860,13 @@ function onProductAct(e) {
       post({ type: "toggleLiveStar", code });
       renderProducts();
     }
+    return;
+  }
+  // 漏斗要在排序之前拦下来：它跟 .th-label 同在一个 <th> 里，
+  // 不先判断的话点漏斗会顺带把这一列的排序也翻一下。
+  const fpBtn = e.target.closest("[data-th-filter]");
+  if (fpBtn) {
+    openFilterPanel(fpBtn.dataset.thFilter, fpBtn);
     return;
   }
   const th = e.target.closest("[data-sort]");

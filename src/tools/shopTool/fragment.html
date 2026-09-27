@@ -149,7 +149,9 @@
         min-height: 0;
         max-height: none;
       }
-      #tabProducts .data-table tbody tr:not(.filter-row) td {
+      /* 原来这里要用 :not(.filter-row) 把那一行常驻筛选控件排除掉；
+         筛选改成表头漏斗之后 tbody 里再没有别的行，多余的判断留着只会误导 */
+      #tabProducts .data-table tbody tr td {
         padding-top: 0;
         padding-bottom: 0;
       }
@@ -224,34 +226,35 @@
         width: 1%;
         min-width: var(--code-col-min);
       }
-      .data-table .filter-row td {
-        position: sticky;
-        top: 26px;
-        z-index: 1;
-        background: var(--vscode-editor-background);
-        padding: 2px 4px;
+      /* 表头漏斗：平时压暗到几乎看不见，这一列正在筛选时才点亮 + 角标计数。
+         删掉常驻那一行控件之后，用户判断「现在筛了几列」全靠这几个点亮的标记 */
+      .data-table .th-filter {
+        display: inline-flex;
+        align-items: center;
+        margin-left: 4px;
+        padding: 1px;
+        border-radius: 3px;
+        vertical-align: middle;
+        cursor: pointer;
+        opacity: 0.4;
       }
-      .data-table .filter-row .filter-cell {
-        margin-top: 0;
+      .data-table .th-filter:hover {
+        opacity: 1;
+        background: var(--vscode-toolbar-hoverBackground);
+      }
+      .data-table .th-filter.on {
+        opacity: 1;
+        color: var(--vscode-textLink-foreground);
+      }
+      .data-table .fp-badge {
+        font-size: 10px;
+        line-height: 1;
       }
       .data-table th:hover {
         background: var(--vscode-list-hoverBackground);
       }
       .data-table .th-label {
         display: inline-block;
-      }
-      .data-table .filter-cell {
-        display: block;
-        width: calc(100% - 2px);
-        min-width: 44px;
-        margin-top: 3px;
-        padding: 2px 4px;
-        font-size: 11px;
-        box-sizing: border-box;
-      }
-      .data-table .filter-cell.err {
-        border-color: #e0404b;
-        background: rgba(224, 64, 75, 0.08);
       }
       .data-table td[data-f="remark"] {
         max-width: 320px;
@@ -1156,6 +1159,88 @@
         border-radius: 3px;
         padding: 0 5px;
         font-size: 11px;
+      }
+      /* 表头筛选面板：挂在 body 上（不是表头里），用完即删。
+         不跟着表格滚动，也不会被滚动容器裁掉 */
+      .fp-panel {
+        position: fixed;
+        z-index: 200;
+        min-width: 190px;
+        max-width: 280px;
+        padding: 6px;
+        font-size: 12px;
+        background: var(--vscode-editorWidget-background);
+        border: 1px solid var(--vscode-editorWidget-border);
+        border-radius: 6px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+      }
+      .fp-panel input[type="text"] {
+        width: 100%;
+        box-sizing: border-box;
+        font-size: 12px;
+      }
+      .fp-panel .fp-list {
+        max-height: 244px;
+        overflow-y: auto;
+        margin: 4px 0;
+        padding: 2px 0;
+        border-top: 1px solid var(--vscode-panel-border);
+        border-bottom: 1px solid var(--vscode-panel-border);
+      }
+      .fp-panel .fp-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 4px;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+      .fp-panel .fp-item:hover {
+        background: var(--vscode-list-hoverBackground);
+      }
+      .fp-panel .fp-item.fp-all {
+        font-weight: 500;
+      }
+      .fp-panel .fp-name {
+        flex: 1 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .fp-panel .fp-n {
+        color: var(--vscode-descriptionForeground);
+        font-variant-numeric: tabular-nums;
+      }
+      .fp-panel .fp-none {
+        display: none;
+        padding: 6px 4px;
+        color: var(--vscode-descriptionForeground);
+      }
+      .fp-panel .fp-foot {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .fp-panel .fp-sel {
+        flex: 1 1 auto;
+        color: var(--vscode-descriptionForeground);
+      }
+      .fp-panel .fp-ok {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+        border-color: var(--vscode-button-background);
+      }
+      .fp-panel .fp-ok:hover {
+        background: var(--vscode-button-hoverBackground);
+      }
+      /* 编号那套 ~ 区间语法写岔了就地报错，不用等点确定才被告知不行 */
+      .fp-panel .fp-hint {
+        min-height: 14px;
+        padding-top: 2px;
+        font-size: 11px;
+        color: #e0404b;
+      }
+      .fp-panel .fp-input.err {
+        border-color: #e0404b;
       }
     </style>
   </head>
