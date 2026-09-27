@@ -43,7 +43,9 @@ const RANGE_FILTER_FIELDS = new Set(["cost_price", "sale_price", "stockTotal"]);
 // 离散值列：取值有限可枚举，适合「勾哪几个看哪几个」。像进价这种连续数值、
 // 名称备注这种自由文本，硬做成勾选列表只会得到一个滚不到头的清单，
 // 所以那几列继续沿用原来的表达式写法（范围 / 子串 / 编号语法）。
-const ENUM_FILTER_FIELDS = new Set(["category", "series", "grade"]);
+// status 也在里面：取值只有「在售 / 已下架」两种，cellValue 本来就出中文标签
+// （注意 status===0 是「在售」、===1 是「已下架」），多选比单选下拉顺手。
+const ENUM_FILTER_FIELDS = new Set(["category", "series", "grade", "status"]);
 // 编号列筛选语法：含 ~ 走「前缀+数字区间」，否则沿用子串匹配。
 const CODE_HINT =
   "筛选编号：支持 A1~A33 / a1~a33 / 1~33（两端无字母按 A 段）/ 多段 A1~A33,L1~L22；" +
@@ -275,18 +277,8 @@ function syncListCellState() {
 }
 
 function filteredProducts() {
-  const st = filters.f_status || "";
   const cq = codeQueryMemo(filters.f_code);
   return state.products
-    .filter((p) => {
-      if (st === "on") {
-        return p.status === 0;
-      }
-      if (st === "off") {
-        return p.status === 1;
-      }
-      return true;
-    })
     .filter((p) => {
       for (const key of ENUM_FILTER_FIELDS) {
         const picked = filterCurrent(key);
@@ -535,12 +527,10 @@ function renderProducts() {
   ensureCovers(pd.page);
 }
 
-const NO_FILTER_FIELDS = new Set([
-  "soldTotal",
-  "netTotal",
-  "status",
-  "purchase_link",
-]);
+// 没有列头筛选的列：累计售出/净售是统计列（筛它们没意义，库存才有意义），
+// 采购链接是长 URL（勾选列表和子串都没意义）。status 不在这儿了——
+// 它走 ENUM_FILTER_FIELDS 的勾选面板，比原先工具栏那个单选下拉顺手。
+const NO_FILTER_FIELDS = new Set(["soldTotal", "netTotal", "purchase_link"]);
 
 // —— 表头筛选：点表头上的漏斗弹面板 ——
 // 选项后面的数字按「整份商品里这个值共有多少条」算，不叠加别的列的筛选。
@@ -790,8 +780,9 @@ function renderListBody(list) {
 function renderList(list) {
   const view = $("productListView");
   if (list.length === 0 && !hasFilter()) {
-    // 空态整块替换掉表格，签名必须作废，否则下面重建骨架时会跳过表头
-    view.innerHTML = `<p class="muted">（无商品，点「＋ 新建商品」添加；也支持「导入商品」批量粘贴）</p>`;
+    // 一个商品都没有时整块清空，不摆任何提示文案（工具栏上就有「＋ 新建商品 / 导入/导出」，
+    // 反复提示只是噪音）。签名必须作废，否则下面重建骨架时会跳过表头。
+    view.innerHTML = "";
     lastHeadSig = "";
     return;
   }
@@ -874,7 +865,11 @@ function placeFilterPanel(panel, anchor) {
   panel.style.top = Math.max(8, top) + "px";
 }
 
-function applyFilterValue(key, value) {
+// keepOpen 只给表达式面板的「✕ 清空这一列」用：清完就地生效，但面板要留着，
+// 否则用户想清第二列得重新点一次漏斗。其它调用（确定/回车）都照旧关面板。
+// 面板还开着时 renderProducts 只换表体不动表头（headSig 不含 filters），
+// 锚点不会跑，所以不用重新 placeFilterPanel。
+function applyFilterValue(key, value, keepOpen) {
   if (Array.isArray(value)) {
     if (value.length) {
       filters["f_" + key] = value;
@@ -886,7 +881,9 @@ function applyFilterValue(key, value) {
   } else {
     delete filters["f_" + key];
   }
-  closeFilterPanel();
+  if (!keepOpen) {
+    closeFilterPanel();
+  }
   syncClearFilterBtn();
   renderProducts();
 }
@@ -955,13 +952,19 @@ function openFilterPanel(key, anchor) {
     const cur = filterCurrent(key);
     panel.innerHTML =
       `<div class="fp-expr">` +
+      // ✕ 单独套一层 relative：它要对着**输入框**居中，不能对着 .fp-expr 居中——
+      // .fp-expr 里还塞着 .fp-hint，一旦底下出现报错文案，容器就变高，✕ 会跟着往下飘
+      `<div class="fp-in-wrap">` +
       `<input class="fp-input" type="text" value="${esc(cur)}" placeholder="${esc(exprPlaceholder(key))}" title="${esc(exprTitle(key))}" />` +
+      `<button class="fp-clear" type="button" title="清空这一列的筛选" aria-label="清空这一列的筛选" hidden>✕</button>` +
+      `</div>` +
       `<div class="fp-hint"></div></div>` +
       `<div class="fp-foot"><span class="fp-sel"></span>` +
       `<button class="mini-btn" data-fp-act="cancel">取消</button>` +
       `<button class="mini-btn fp-ok" data-fp-act="ok">确定</button></div>`;
     const input = panel.querySelector(".fp-input");
     const hint = panel.querySelector(".fp-hint");
+    const clearBtn = panel.querySelector(".fp-clear");
     // 编号那套 ~ 区间语法有专门的报错文案，边输边给用户看是哪儿写岔了
     const check = () => {
       if (key !== "code") {
@@ -973,8 +976,27 @@ function openFilterPanel(key, anchor) {
       input.classList.toggle("err", !!cq.bad);
       return !cq.bad;
     };
-    input.oninput = check;
+    // 空框上摆个 ✕ 纯属多余，所以跟着输入内容显隐
+    const syncClear = () => {
+      clearBtn.hidden = !input.value;
+    };
+    input.oninput = () => {
+      check();
+      syncClear();
+    };
     check();
+    syncClear();
+    clearBtn.onclick = () => {
+      input.value = "";
+      // 先 check() 再 applyFilterValue：清空之后编号那套语法错误提示和红框都得跟着没，
+      // 不然框是空的、底下还挂着上一句「写法有问题」。
+      check();
+      syncClear();
+      // 传 keepOpen：清完就地生效，面板留着，好让用户接着清别的列
+      applyFilterValue(key, "", true);
+      // 焦点还给输入框，不然点完 ✕ 焦点落在一个已被隐藏的按钮上，键盘直接失联
+      input.focus();
+    };
     focusEl = input;
     collect = () => input.value.trim();
     input.onkeydown = (ev) => {
@@ -1205,12 +1227,15 @@ function batchSetStatus(status) {
   if (state.selectedProducts.size === 0) return;
   const n = state.selectedProducts.size;
   post({ type: "setProductsStatus", ids: [...state.selectedProducts], status });
-  const hiddenVal = status === 0 ? "off" : "on";
-  if (filters.f_status === hiddenVal) {
+  // 正筛着某个状态时把这批行改成别的状态，它们会当场从结果里消失，看着像行凭空没了，
+  // 所以这种情况下把筛选清掉。方向容易搞反：status 是改**之后**的状态，
+  // 而会失配的是改**之前**那个（status===0 上架 ⇒ 这些行原本是「已下架」）。
+  const prevLabel = status === 0 ? "已下架" : "在售";
+  const f = filters.f_status;
+  if (Array.isArray(f) && f.length === 1 && f[0] === prevLabel) {
     delete filters.f_status;
-    const fs = $("filterStatus");
-    if (fs) fs.value = "";
   }
+  syncClearFilterBtn();
   toast("✅已" + (status === 0 ? "上架" : "下架") + " " + n + " 个商品");
   renderProducts();
 }

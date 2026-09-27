@@ -90,23 +90,9 @@ function bindEvents() {
   document.querySelectorAll("#tabSales .mini-tab").forEach((t) => {
     t.onclick = () => switchSalesTab(t.dataset.stab);
   });
-  $("filterStatus").onchange = () => {
-    const v = $("filterStatus").value;
-    if (v) {
-      filters.f_status = v;
-    } else {
-      delete filters.f_status;
-    }
-    syncClearFilterBtn();
-    renderProducts();
-  };
   $("clearFilterBtn").onclick = () => {
     for (const k of Object.keys(filters)) {
       delete filters[k];
-    }
-    const fs = $("filterStatus");
-    if (fs) {
-      fs.value = "";
     }
     syncClearFilterBtn();
     renderProducts();
@@ -524,27 +510,6 @@ function bindEvents() {
         post({ type: "importDB" });
       }
     });
-  if ($("onboardGoSettings")) {
-    $("onboardGoSettings").onclick = () => {
-      const tab = document.querySelector('.sub-tab[data-sub="tabSettings"]');
-      if (tab) {
-        tab.click();
-      }
-    };
-  }
-  if ($("onboardDismiss")) {
-    $("onboardDismiss").onclick = () => {
-      try {
-        localStorage.setItem("shopOnboardHidden", "1");
-      } catch {
-        /* 忽略 */
-      }
-      const p = $("onboardPanel");
-      if (p) {
-        p.style.display = "none";
-      }
-    };
-  }
   bindLiveEvents();
 }
 
@@ -595,20 +560,6 @@ function endExport() {
     }
     exportingBtn = null;
   }
-}
-
-function maybeShowOnboard() {
-  const p = $("onboardPanel");
-  if (!p) {
-    return;
-  }
-  let hidden = false;
-  try {
-    hidden = localStorage.getItem("shopOnboardHidden") === "1";
-  } catch {
-    /* 忽略 */
-  }
-  p.style.display = !hidden && state.products.length === 0 ? "" : "none";
 }
 
 function init() {
@@ -693,7 +644,6 @@ function onMessage(msg) {
       state.products = msg.products || [];
       state.settings.stock_alert = msg.stockAlert || 0;
       populateFilters();
-      maybeShowOnboard();
       updateNameTemplatePreview();
       if (typeof renderProductDrawer === "function") {
         renderProductDrawer();
@@ -819,7 +769,6 @@ function onMessage(msg) {
         `商品导入完成：新增${msg.created}，更新${msg.updated}${msg.skipped ? `，跳过${msg.skipped}` : ""}`,
       );
       closeImportMask();
-      maybeShowOnboard();
       // 有行没进去就得说清楚是哪几行，不然只能去日志面板里翻（提交完预览已经关了）
       const importBad = Array.isArray(msg.bad) ? msg.bad : [];
       const importDups = Array.isArray(msg.duplicateLines) ? msg.duplicateLines : [];

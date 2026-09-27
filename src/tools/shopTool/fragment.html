@@ -1247,6 +1247,42 @@
       .fp-panel .fp-input.err {
         border-color: #e0404b;
       }
+      /* ✕ 的定位上下文只包住输入框：.fp-hint 是 .fp-expr 里的块级兄弟节点，
+         报错文案一出现容器就变高，✕ 跟着飘就偏了 */
+      .fp-panel .fp-in-wrap {
+        position: relative;
+      }
+      /* 给 ✕ 腾出位置，不然长条件会一路顶到按钮底下 */
+      .fp-panel .fp-input {
+        padding-right: 22px;
+      }
+      /* 字形沿用仓库既有的 ✕（.d-close、.lb-cls 都是它），跟占位符里的 ⏎ 一样不是按钮文字的一部分 */
+      .fp-panel .fp-clear {
+        position: absolute;
+        top: 50%;
+        right: 4px;
+        transform: translateY(-50%);
+        width: 16px;
+        height: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        font-size: 11px;
+        line-height: 1;
+        color: var(--vscode-descriptionForeground);
+        background: transparent;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      .fp-panel .fp-clear:hover {
+        color: var(--vscode-foreground);
+        background: var(--vscode-button-hoverBackground);
+      }
+      .fp-panel .fp-clear[hidden] {
+        display: none;
+      }
     </style>
   </head>
   <body>
@@ -1261,29 +1297,12 @@
     </div>
 
     <div id="tabProducts" class="sub-panel show">
-      <div id="onboardPanel" class="panel" style="display: none; margin-bottom: 10px">
-        <div style="font-weight: 600; margin-bottom: 6px">三步开始使用</div>
-        <div class="muted" style="line-height: 1.9">
-          1. 「规则与设置」里填图片目录，让商品图和直播排品能取到图；<br />
-          2. 「商品管理 → ＋ 新建商品」或「导入商品」粘贴表格建立档案；<br />
-          3. 回到「每日销售」录入卖货，直播前到「直播排品」排九宫格。
-        </div>
-        <div style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap">
-          <button id="onboardGoSettings" class="btn-teal">去设置图片目录</button>
-          <button id="onboardDismiss">我已知道，收起</button>
-        </div>
-      </div>
       <div class="toolbar">
         <button id="viewListBtn" class="btn-teal">列表</button>
         <button id="viewGalleryBtn">画册</button>
         <span class="tb-sep"></span>
         <button id="colSetBtn">字段显示</button>
         <span class="tb-sep"></span>
-        <select id="filterStatus" title="按状态筛选（表头上方）">
-          <option value="">全部状态</option>
-          <option value="on">在售</option>
-          <option value="off">已下架</option>
-        </select>
         <button id="clearFilterBtn" class="btn-danger" style="display: none">清除筛选</button>
         <span class="tb-sep"></span>
         <button id="starMenuBtn" title="星标操作：只看/复制清单/总览图预览/全部取消">⭐ 星标 ▾</button>
