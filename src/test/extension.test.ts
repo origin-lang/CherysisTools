@@ -20,6 +20,42 @@ import {
 import { productHandlers } from '../tools/shopTool/handlers/product.js';
 import { closeDB, getDB, initDB } from '../tools/shopTool/db.js';
 
+/**
+ * 测试用的临时根：所有套件的临时目录都建在这一个父目录下，不去 %TEMP% 顶层撒。
+ * 一轮测试原本要在顶层建+删十几个目录，那些增删会惊动任何在 %TEMP% 上的东西
+ * （资源管理器窗口、搜索索引、第三方 shell 扩展），Windows 会为「刚被删掉的目录」
+ * 弹「不可用」框 —— 那是环境在反应，不是测试在弹窗。收进一个父目录后顶层每次只多一个。
+ */
+const TEST_TMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'cherysis-tests-'));
+process.on('exit', () => {
+	try {
+		fs.rmSync(TEST_TMP_ROOT, { recursive: true, force: true });
+	} catch {
+		/* 留给系统清理 */
+	}
+});
+
+/** 在专用父目录下建一个临时目录；prefix 只用于目录名可读性 */
+function makeTempDir(prefix: string): string {
+	return fs.mkdtempSync(path.join(TEST_TMP_ROOT, prefix));
+}
+
+/**
+ * 删临时目录。Windows 上文件只要还被 libvips 之类留下进程级映射就会 EPERM/EBUSY，
+ * 而 `force: true` 只挡 ENOENT、挡不住这两个 —— 裸 rmSync 会在删到一半时炸掉，
+ * 留下一个半删的目录。重试几次，仍不行就留给系统清理（绝不能让整条 suite 变红）。
+ */
+function removeTempDir(root: string): void {
+	for (let i = 0; i < 5; i++) {
+		try {
+			fs.rmSync(root, { recursive: true, force: true });
+			return;
+		} catch {
+			/* 再试一次 */
+		}
+	}
+}
+
 suite('Extension Test Suite', () => {
 	vscode.window.showInformationMessage('Start all tests.');
 
@@ -33,7 +69,7 @@ suite('直播九宫格输出目录', () => {
 	const roots: string[] = [];
 
 	function makeDir(name: string): string {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cherysis-live-'));
+		const root = makeTempDir('live-');
 		roots.push(root);
 		const dir = path.join(root, name);
 		fs.mkdirSync(dir);
@@ -115,7 +151,7 @@ suite('直播九宫格输出目录', () => {
 
 	teardown(() => {
 		for (const root of roots.splice(0)) {
-			fs.rmSync(root, { recursive: true, force: true });
+			removeTempDir(root);
 		}
 	});
 
@@ -441,7 +477,7 @@ suite('商品图片删除（占用重试 / 不做无谓备份）', () => {
 	);
 
 	function makeRoot(): string {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cherysis-img-'));
+		const root = makeTempDir('img-');
 		roots.push(root);
 		return root;
 	}
@@ -514,7 +550,7 @@ suite('商品图片删除（占用重试 / 不做无谓备份）', () => {
 
 	teardown(() => {
 		for (const root of roots.splice(0)) {
-			fs.rmSync(root, { recursive: true, force: true });
+			removeTempDir(root);
 		}
 	});
 
@@ -827,7 +863,7 @@ suite('sharp 句柄用完即释放（跑完立刻删源图必须成功）', () =
 	}
 
 	function makeRoot(): string {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cherysis-handle-'));
+		const root = makeTempDir('handle-');
 		roots.push(root);
 		return root;
 	}
@@ -860,14 +896,7 @@ suite('sharp 句柄用完即释放（跑完立刻删源图必须成功）', () =
 			// 测试跑完之前一直删不掉（同目录的 .json、新建文件都正常，不是目录级锁）。
 			// 这是缩略图缓存自己的事，跟本 suite 断言的「源图删得掉」无关。
 			// 临时目录留给系统清理，比让这条 suite 永远红着好。
-			for (let i = 0; i < 5; i++) {
-				try {
-					fs.rmSync(root, { recursive: true, force: true });
-					break;
-				} catch {
-					/* 下面再试一次，仍不行就放弃 */
-				}
-			}
+			removeTempDir(root);
 		}
 	});
 
@@ -1045,12 +1074,12 @@ suite('导入：相同字段不再重写', () => {
 	teardown(function () {
 		closeDB();
 		for (const root of roots.splice(0)) {
-			fs.rmSync(root, { recursive: true, force: true });
+			removeTempDir(root);
 		}
 	});
 
 	function makeRoot(): string {
-		const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cherysis-imp-'));
+		const root = makeTempDir('imp-');
 		roots.push(root);
 		return root;
 	}
@@ -1169,5 +1198,63 @@ suite('导入：相同字段不再重写', () => {
 		for (const r of preview.rows) {
 			assert.strictEqual(r.detail, '（无变化）', `应当标无变化：${JSON.stringify(r)}`);
 		}
+	});
+
+	test('重复编号：预览与提交都把具体行号发出去（否则只能去日志里翻）', async function () {
+		const harness = createImportHarness(makeRoot());
+		// A001 出现两次：第二条会被判重复，只保留第一条
+		const dup = 'L001\t手链A又来\t水晶\t银饰\t1\t25\t\t\t';
+		const text = [HEAD, A, dup, B].join('\n');
+
+		const { preview, done } = await run(harness, text, 'both');
+		const want = '行3: 编号 L001 重复，仅保留第一条';
+		assert.strictEqual(preview.duplicates, 1, '预览要报重复计数');
+		assert.deepStrictEqual(preview.duplicateLines, [want], '预览要带具体行号');
+		assert.strictEqual(done.duplicates, 1, '提交也要报重复计数');
+		assert.deepStrictEqual(
+			done.duplicateLines,
+			[want],
+			`提交消息必须带具体行号，前端弹窗才有内容可显示：${JSON.stringify(done)}`,
+		);
+		assert.strictEqual(harness.adds.length, 2, '重复的那行不进库');
+		assert.strictEqual(harness.db.getProductByCode('L001')!.name, '手链A', '只保留第一条');
+	});
+
+	test('没有重复时两个字段都是空，弹窗不会被无谓触发', async function () {
+		const harness = createImportHarness(makeRoot());
+		const { preview, done } = await run(harness, [HEAD, A, B].join('\n'), 'both');
+		assert.strictEqual(preview.duplicates, 0);
+		assert.deepStrictEqual(preview.duplicateLines, []);
+		assert.strictEqual(done.duplicates, 0);
+		assert.deepStrictEqual(done.duplicateLines, [], '空数组，前端按长度判断就不弹');
+	});
+
+	test('前端契约：提交完有行没进去时弹模态框，预览也列具体行', () => {
+		const read = (f: string) =>
+			fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'tools', 'shopTool', f), 'utf-8');
+		const main = read('client-main.js');
+		const prod = read('client-product.js');
+
+		assert.ok(
+			/showImportIssues\(importBad,\s*importDups\)/.test(main),
+			'productsImported 分支必须在有行没进去时调 showImportIssues',
+		);
+		assert.ok(
+			/msg\.duplicateLines/.test(main),
+			'弹窗数据必须取 duplicateLines（不是计数用的 duplicates）',
+		);
+		assert.ok(/function showImportIssues\(/.test(prod), 'showImportIssues 要存在');
+		assert.ok(
+			/showModal\(/.test(prod) && /closeModal\(\)/.test(prod),
+			'必须用模态框（showModal）且能关闭，不是 toast（toast 几秒就没了，行号来不及改）',
+		);
+		assert.ok(
+			/overflow:auto/.test(prod),
+			'弹窗列表要能滚动，否则行数一多按钮就被顶出去',
+		);
+		assert.ok(
+			/duplicateLines/.test(prod) && /编号重复/.test(prod),
+			'预览区要列出具体的重复行，不能只给个数',
+		);
 	});
 });

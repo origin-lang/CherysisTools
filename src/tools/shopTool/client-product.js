@@ -2440,6 +2440,31 @@ function savedFieldSet(settingKey) {
   return s;
 }
 
+/**
+ * 导入完成、但有行没进去时弹出来。用模态而不是 toast：toast 几秒就没了，
+ * 而这些行号是要照着去改表格的，必须点「知道了」才算完。
+ * 全部列出不截断（列表区自己滚），别让人只能看见前几条。
+ */
+function showImportIssues(bad, dups) {
+  const section = (title, arr) =>
+    !arr.length
+      ? ""
+      : `<h4 style="margin:12px 0 4px">${title}（${arr.length}）</h4>` +
+        '<div style="max-height:44vh;overflow:auto;font-size:12px;white-space:pre-wrap;' +
+        `word-break:break-all;border:1px solid var(--vscode-panel-border);border-radius:4px;padding:6px 8px">${arr
+          .map(esc)
+          .join("<br>")}</div>`;
+  const mask = showModal(`
+    <h3>导入完成，但有 ${bad.length + dups.length} 行没进去</h3>
+    ${section("编号重复，仅保留第一条", dups)}
+    ${section("无法解析", bad)}
+    <p class="muted" style="margin-top:14px">这些行没有写入数据库。改完上面的内容可以重新导入。</p>
+    <div style="display:flex;justify-content:flex-end;margin-top:8px">
+      <button class="btn-teal" data-import-ok="1">知道了</button>
+    </div>`);
+  mask.querySelector("[data-import-ok]").onclick = () => closeModal();
+}
+
 function renderImportPreview(msg) {
   pendingImportToken = String(msg.token || "");
   const el = document.getElementById("ipPreview");
@@ -2457,12 +2482,18 @@ function renderImportPreview(msg) {
     msg.bad && msg.bad.length
       ? `<details style="margin:6px 0"><summary class="muted">无法解析 ${msg.bad.length} 行（点击展开）</summary><div class="pre-blocks">${msg.bad.map(esc).join("<br>")}</div></details>`
       : "";
+  // 重复编号要列到具体行，不能只给个数：光知道「有 2 行重复」根本没法改
+  const dupHtml =
+    msg.duplicateLines && msg.duplicateLines.length
+      ? `<details style="margin:6px 0"><summary class="muted">编号重复 ${msg.duplicateLines.length} 行（点击展开看是哪几行）</summary><div class="pre-blocks">${msg.duplicateLines.map(esc).join("<br>")}</div></details>`
+      : "";
   el.innerHTML =
     `<div class="ip-summ">将<span class="ip-ok">新增 ${msg.created}</span> · 将<span class="ip-upd">更新 ${msg.updated}</span> · 将跳过 ${msg.skipped}` +
     (msg.duplicates
       ? ` · <span class="muted">重复编号 ${msg.duplicates} 行已忽略</span>`
       : "") +
     `</div>` +
+    dupHtml +
     badHtml +
     (rows.length
       ? `<div class="ip-table-wrap"><table class="data-table"><thead><tr><th>类型</th><th>编号</th><th>名称</th><th>变更</th></tr></thead><tbody>${rowHtml}</tbody></table>` +

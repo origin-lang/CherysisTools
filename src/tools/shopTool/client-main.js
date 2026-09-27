@@ -814,6 +814,12 @@ function onMessage(msg) {
       );
       closeImportMask();
       maybeShowOnboard();
+      // 有行没进去就得说清楚是哪几行，不然只能去日志面板里翻（提交完预览已经关了）
+      const importBad = Array.isArray(msg.bad) ? msg.bad : [];
+      const importDups = Array.isArray(msg.duplicateLines) ? msg.duplicateLines : [];
+      if (importBad.length || importDups.length) {
+        showImportIssues(importBad, importDups);
+      }
       break;
     }
     case "undoState": {

@@ -900,6 +900,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         skipped: plan.skipped,
         bad: plan.bad,
         duplicates: plan.dupLines.length,
+        duplicateLines: plan.dupLines,
         rows: plan.displayRows.slice(0, IMPORT_PREVIEW_ROW_LIMIT),
         total: plan.displayRows.length,
         truncated: plan.displayRows.length > IMPORT_PREVIEW_ROW_LIMIT,
@@ -1002,6 +1003,10 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         updated,
         skipped,
         bad: plan.bad,
+        // 重复编号的具体行号也要发出去：之前只进日志，提交完弹窗一关就再也找不到了。
+        // 字段形状跟 importPreview 保持一致（duplicates 计数 / duplicateLines 明细）
+        duplicates: plan.dup.length,
+        duplicateLines: plan.dup,
         mode: plan.mode as string,
       });
       h.loadAll();
