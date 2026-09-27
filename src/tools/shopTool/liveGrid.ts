@@ -2,10 +2,13 @@ import * as fs from "fs";
 import * as path from "path";
 import sharp from "sharp";
 
-function localYmd(): string {
+// 落盘文件名的时间戳：精确到秒（YYYYMMDD-HHMMSS）。
+// 只到日的话，同一天把同一组重生成一次就直接覆盖掉上一张 —— 调排版、改格子再出一次图，
+// 旧图没了，新旧也没法比。秒级足够把同一天的多次生成区分开。
+export function localStamp(): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
 function greyCellSvg(w: number, h: number): string {
@@ -115,7 +118,7 @@ export async function renderLiveGrid(
     }
   }
   const endNum = startNum + 8;
-  const outFile = path.join(outDir, `${startNum}号-${endNum}号_${localYmd()}.jpg`);
+  const outFile = path.join(outDir, `${startNum}号-${endNum}号_${localStamp()}.jpg`);
   await sharp({
     create: {
       width: canvasW,

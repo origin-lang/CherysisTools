@@ -6,13 +6,7 @@ import { Handler, HandlerCtx } from "./types.js";
 import { LivePlanRow, Product } from "../db.js";
 import { canonicalCode } from "../pricing.js";
 import { firstImageFile, previewThumbPath } from "../images.js";
-import { renderLiveGrid, renderStarOverviewBuffer, renderStarOverviewGrid, StarLabelOptions } from "../liveGrid.js";
-
-function localYmd(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
-}
+import { renderLiveGrid, renderStarOverviewBuffer, renderStarOverviewGrid, localStamp, StarLabelOptions } from "../liveGrid.js";
 
 // 直播域：选品星标、排品九宫格、星标/排品开关与生成
 export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
@@ -480,7 +474,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       const pages = chunks.length;
       post({ type: "starOverviewProgress", page: 0, total: pages, name: "", ok: true });
       for (const [i, chunk] of chunks.entries()) {
-        const fileName = `星标总览_${sel.codes.length}款_第${i + 1}张_${localYmd()}.jpg`;
+        const fileName = `星标总览_${sel.codes.length}款_第${i + 1}张_${localStamp()}.jpg`;
         try {
           // 写盘用原图（不传 imgFor）：预览可以拿小图糊弄，成品必须清楚
           files.push(await renderStarOverviewGrid(starRowsOf(chunk.codes, sel.byCode), outDir, fileName, chunk.cols, chunk.rowsN, labels));

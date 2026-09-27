@@ -922,6 +922,40 @@
       .ctx-item.ctx-danger {
         color: #e0404b;
       }
+      /* 子菜单项（列表右键的「批量操作 ▸」）：hover 展开二级菜单 */
+      .ctx-sub {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+      }
+      .ctx-sub::after {
+        content: "▸";
+        opacity: 0.7;
+        font-size: 11px;
+      }
+      .ctx-submenu {
+        display: none;
+        position: absolute;
+        left: 100%;
+        top: -5px;
+        z-index: 81;
+        min-width: 168px;
+        padding: 4px 0;
+        background: var(--vscode-editor-background);
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 4px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      }
+      .ctx-sub:hover > .ctx-submenu {
+        display: block;
+      }
+      /* 贴着屏幕右边缘时二级菜单朝左展开，否则会被裁掉 */
+      .ctx-sub.ctx-sub-flip > .ctx-submenu {
+        left: auto;
+        right: 100%;
+      }
       .toast {
         position: fixed;
         bottom: 20px;

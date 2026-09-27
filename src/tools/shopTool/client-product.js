@@ -818,6 +818,31 @@ function updateSelectionUI() {
   }
 }
 
+// 批量操作清单：工具栏「批量操作 ▾」下拉与列表右键「批量操作 ▸」子菜单共用这一份，
+// 两处入口永远长一样（改一条只需要改这里）。返回函数而不是直接跑，菜单自己决定何时执行。
+function batchOpsItems() {
+  return [
+    { label: "复制选中", run: copySelectedProducts },
+    { label: "取消全部勾选", run: clearProductSelection },
+    { sep: true },
+    { label: "上架", run: () => batchSetStatus(0) },
+    { label: "下架", run: () => batchSetStatus(1) },
+    { label: "标星", run: () => setStarsForSelected(true) },
+    { label: "取消星标", run: () => setStarsForSelected(false) },
+    { sep: true },
+    { label: "改等级", run: batchSetGrade },
+    { label: "改采购链接", run: batchSetLink },
+    { label: "改库存", run: batchSetStock },
+    { sep: true },
+    { label: "删除", danger: true, run: batchDelete },
+  ];
+}
+
+function clearProductSelection() {
+  state.selectedProducts.clear();
+  renderProducts();
+}
+
 function bindBatchOps() {
   const selectAll = $("selectAllProducts");
   if (selectAll) {
@@ -854,10 +879,7 @@ function bindBatchOps() {
 
   const batchClear = $("batchClear");
   if (batchClear) {
-    batchClear.onclick = () => {
-      state.selectedProducts.clear();
-      renderProducts();
-    };
+    batchClear.onclick = clearProductSelection;
   }
 
   const batchMenuBtn = $("batchMenuBtn");
@@ -866,17 +888,7 @@ function bindBatchOps() {
       ev.stopPropagation();
       const old = document.getElementById("batchDropdown");
       if (old) { old.remove(); return; }
-      const items = [
-        { label: "上架", run: () => batchSetStatus(0) },
-        { label: "下架", run: () => batchSetStatus(1) },
-        { label: "标星", run: () => setStarsForSelected(true) },
-        { label: "取消星标", run: () => setStarsForSelected(false) },
-        { sep: true },
-        { label: "改等级", run: batchSetGrade },
-        { label: "改采购链接", run: batchSetLink },
-        { label: "改库存", run: batchSetStock },
-        { label: "删除", danger: true, run: batchDelete },
-      ];
+      const items = batchOpsItems();
       const rect = batchMenuBtn.getBoundingClientRect();
       const menu = document.createElement("div");
       menu.id = "batchDropdown";
@@ -898,35 +910,38 @@ function bindBatchOps() {
       });
     };
   }
+}
 
-  const batchSetStatus = (status) => {
-    if (state.selectedProducts.size === 0) return;
-    const n = state.selectedProducts.size;
-    post({ type: "setProductsStatus", ids: [...state.selectedProducts], status });
-    const hiddenVal = status === 0 ? "off" : "on";
-    if (filters.f_status === hiddenVal) {
-      delete filters.f_status;
-      const fs = $("filterStatus");
-      if (fs) fs.value = "";
+// 以下批量操作一律是模块级函数（不进 bindBatchOps 的闭包）：列表右键菜单的
+// 「批量操作」子菜单也要用它们，闭包里的东西那里够不着。
+function batchSetStatus(status) {
+  if (state.selectedProducts.size === 0) return;
+  const n = state.selectedProducts.size;
+  post({ type: "setProductsStatus", ids: [...state.selectedProducts], status });
+  const hiddenVal = status === 0 ? "off" : "on";
+  if (filters.f_status === hiddenVal) {
+    delete filters.f_status;
+    const fs = $("filterStatus");
+    if (fs) fs.value = "";
+  }
+  toast("✅已" + (status === 0 ? "上架" : "下架") + " " + n + " 个商品");
+  renderProducts();
+}
+
+function batchDelete() {
+  if (state.selectedProducts.size === 0) return;
+  confirmBox("确认删除选中的 " + state.selectedProducts.size + " 个商品？\n将同时删除它们的销售记录和入库记录，且不可恢复！").then((ok) => {
+    if (ok) {
+      post({ type: "deleteProducts", ids: [...state.selectedProducts] });
+      state.selectedProducts.clear();
     }
-    toast("✅已" + (status === 0 ? "上架" : "下架") + " " + n + " 个商品");
-    renderProducts();
-  };
+  });
+}
 
-  const batchDelete = () => {
-    if (state.selectedProducts.size === 0) return;
-    confirmBox("确认删除选中的 " + state.selectedProducts.size + " 个商品？\n将同时删除它们的销售记录和入库记录，且不可恢复！").then((ok) => {
-      if (ok) {
-        post({ type: "deleteProducts", ids: [...state.selectedProducts] });
-        state.selectedProducts.clear();
-      }
-    });
-  };
-
-  const batchSetStock = () => {
-    const n = state.selectedProducts.size;
-    if (n === 0) return;
-    const mask = showModal(`
+function batchSetStock() {
+  const n = state.selectedProducts.size;
+  if (n === 0) return;
+  const mask = showModal(`
       <h3>批量改库存</h3>
       <p class="muted">将修改选中的 <b>${n}</b> 个商品（可用 ↩ 撤销）。</p>
       <div class="rows" style="margin-top:12px">
@@ -947,32 +962,32 @@ function bindBatchOps() {
         <button data-bss="cancel">取消</button>
         <button data-bss="ok" class="btn-teal">确定</button>
       </div>`);
-    const qtyInput = mask.querySelector("#bssQty");
-    qtyInput.focus();
-    qtyInput.select();
-    const submit = () => {
-      const mode = mask.querySelector("#bssMode").value;
-      const q = Math.floor(Number(qtyInput.value || 0));
-      if (!Number.isInteger(q) || q < 0) {
-        toast("数量需为非负整数");
-        return;
-      }
-      closeModal();
-      post({ type: "setProductsStock", ids: [...state.selectedProducts], mode, qty: q });
-      const label = mode === "add" ? `增加 ${q}` : mode === "sub" ? `减少 ${q}` : `设为 ${q}`;
-      toast(`✅已提交批量改库存（${label}）× ${n}`);
-    };
-    mask.querySelector('[data-bss="ok"]').onclick = submit;
-    mask.querySelector('[data-bss="cancel"]').onclick = closeModal;
-    qtyInput.onkeydown = (ev) => {
-      if (ev.key === "Enter") submit();
-    };
+  const qtyInput = mask.querySelector("#bssQty");
+  qtyInput.focus();
+  qtyInput.select();
+  const submit = () => {
+    const mode = mask.querySelector("#bssMode").value;
+    const q = Math.floor(Number(qtyInput.value || 0));
+    if (!Number.isInteger(q) || q < 0) {
+      toast("数量需为非负整数");
+      return;
+    }
+    closeModal();
+    post({ type: "setProductsStock", ids: [...state.selectedProducts], mode, qty: q });
+    const label = mode === "add" ? `增加 ${q}` : mode === "sub" ? `减少 ${q}` : `设为 ${q}`;
+    toast(`✅已提交批量改库存（${label}）× ${n}`);
   };
+  mask.querySelector('[data-bss="ok"]').onclick = submit;
+  mask.querySelector('[data-bss="cancel"]').onclick = closeModal;
+  qtyInput.onkeydown = (ev) => {
+    if (ev.key === "Enter") submit();
+  };
+}
 
-  const batchSetGrade = () => {
-    const n = state.selectedProducts.size;
-    if (n === 0) return;
-    const mask = showModal(`
+function batchSetGrade() {
+  const n = state.selectedProducts.size;
+  if (n === 0) return;
+  const mask = showModal(`
       <h3>批量改等级（${n} 个商品）</h3>
       <p class="muted">将修改选中的 <b>${n}</b> 个商品，售价按所选等级规则重算（可用 ↩ 撤销）。</p>
       <div class="rows" style="margin-top:12px">
@@ -988,20 +1003,20 @@ function bindBatchOps() {
         <button data-bsg="cancel">取消</button>
         <button data-bsg="ok" class="btn-teal">确定</button>
       </div>`);
-    const submit = () => {
-      const grade = Number(mask.querySelector("#bsgGrade").value);
-      closeModal();
-      post({ type: "setProductsField", ids: [...state.selectedProducts], field: "grade", value: grade });
-      toast(`✅已提交批量改等级 × ${n}`);
-    };
-    mask.querySelector('[data-bsg="ok"]').onclick = submit;
-    mask.querySelector('[data-bsg="cancel"]').onclick = closeModal;
+  const submit = () => {
+    const grade = Number(mask.querySelector("#bsgGrade").value);
+    closeModal();
+    post({ type: "setProductsField", ids: [...state.selectedProducts], field: "grade", value: grade });
+    toast(`✅已提交批量改等级 × ${n}`);
   };
+  mask.querySelector('[data-bsg="ok"]').onclick = submit;
+  mask.querySelector('[data-bsg="cancel"]').onclick = closeModal;
+}
 
-  const batchSetLink = () => {
-    const n = state.selectedProducts.size;
-    if (n === 0) return;
-    const mask = showModal(`
+function batchSetLink() {
+  const n = state.selectedProducts.size;
+  if (n === 0) return;
+  const mask = showModal(`
       <h3>批量改采购链接（${n} 个商品）</h3>
       <p class="muted">将写入所选商品的「采购链接」（可用 ↩ 撤销）；<br>留空提交 = 清空所有选中商品的链接。</p>
       <input id="bslLink" type="text" placeholder="https://…" style="width:100%;box-sizing:border-box;margin-top:8px" />
@@ -1009,23 +1024,22 @@ function bindBatchOps() {
         <button data-bsl="cancel">取消</button>
         <button data-bsl="ok" class="btn-teal">确定</button>
       </div>`);
-    const input = mask.querySelector("#bslLink");
-    input.focus();
-    const submit = () => {
-      const res = sanitizeProductField("purchase_link", input.value);
-      if (!res.ok) {
-        toast(res.msg);
-        return;
-      }
-      closeModal();
-      post({ type: "setProductsField", ids: [...state.selectedProducts], field: "purchase_link", value: res.value });
-      toast(`✅已提交批量改采购链接 × ${n}`);
-    };
-    mask.querySelector('[data-bsl="ok"]').onclick = submit;
-    mask.querySelector('[data-bsl="cancel"]').onclick = closeModal;
-    input.onkeydown = (ev) => {
-      if (ev.key === "Enter") submit();
-    };
+  const input = mask.querySelector("#bslLink");
+  input.focus();
+  const submit = () => {
+    const res = sanitizeProductField("purchase_link", input.value);
+    if (!res.ok) {
+      toast(res.msg);
+      return;
+    }
+    closeModal();
+    post({ type: "setProductsField", ids: [...state.selectedProducts], field: "purchase_link", value: res.value });
+    toast(`✅已提交批量改采购链接 × ${n}`);
+  };
+  mask.querySelector('[data-bsl="ok"]').onclick = submit;
+  mask.querySelector('[data-bsl="cancel"]').onclick = closeModal;
+  input.onkeydown = (ev) => {
+    if (ev.key === "Enter") submit();
   };
 }
 
@@ -2959,13 +2973,93 @@ function openColSet() {
   };
 }
 
+// 右键菜单里的「批量操作」二级菜单：勾了商品才出现。
+// 右键的那一行会自动并入选中集（菜单标题上的数字算上它），所以「勾 3 个再右键第 4 行」
+// 一次能操作 4 个 —— 不用先去把第 4 行勾上。只同步那一行的勾选框和计数，
+// 不调 renderProducts()：那会把整个列表重绘掉，正在打开的菜单连同事件一起被掀翻。
+function attachBatchSubmenu(menu, p) {
+  const already = state.selectedProducts.size;
+  if (already === 0) {
+    return;
+  }
+  const added = !state.selectedProducts.has(p.id);
+  const count = already + (added ? 1 : 0);
+  const sub = document.createElement("div");
+  sub.className = "ctx-item ctx-sub";
+  sub.innerHTML =
+    `<span>⚡ 批量操作（${count}）</span>` +
+    `<div class="ctx-submenu">` +
+    batchOpsItems()
+      .map((it, i) =>
+        it.sep
+          ? `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>`
+          : `<div class="ctx-item${it.danger ? " ctx-danger" : ""}" data-bsub="${i}">${esc(it.label)}</div>`,
+      )
+      .join("") +
+    `</div>`;
+  // 插在分隔线之后：这一段是「针对这一行」的操作，批量是「跨行」的，视觉上分开
+  const anchor = menu.querySelector('[data-pctx="off"], [data-pctx="on"]');
+  if (anchor) {
+    menu.insertBefore(sub, anchor);
+  } else {
+    menu.appendChild(sub);
+  }
+  if (added) {
+    state.selectedProducts.add(p.id);
+    const cb = document.querySelector(`.product-checkbox[data-id="${p.id}"]`);
+    if (cb) {
+      cb.checked = true;
+    }
+    const bar = $("batchOpsBar");
+    const countEl = bar ? bar.querySelector("[data-sel-count]") : null;
+    if (countEl) {
+      countEl.textContent = String(count);
+    }
+  }
+  sub.addEventListener("mouseenter", () => {
+    // 贴着屏幕右边缘就朝左展开，否则二级菜单会被裁掉
+    const r = sub.getBoundingClientRect();
+    sub.classList.toggle("ctx-sub-flip", window.innerWidth - r.right < 190);
+  });
+  sub.querySelectorAll("[data-bsub]").forEach((el) => {
+    el.onclick = (ev) => {
+      ev.stopPropagation();
+      const it = batchOpsItems()[Number(el.dataset.bsub)];
+      // 先关菜单再执行：run 里大多会 renderProducts 重绘列表，菜单留在页面上会显得像没点上
+      closeCtxMenu();
+      if (it && it.run) {
+        it.run();
+      }
+    };
+  });
+}
+
+// 菜单关闭只做「把这个 DOM 从页面上摘掉」这一件事。
+// 之所以不在这上面挂事件：点子菜单里的项也要先关菜单（run 里往往还会 renderProducts
+// 重绘列表），所以关的动作由调用方自己显式做，这里只提供统一的收尾函数。
+function closeCtxMenu() {
+  document.getElementById("ctxMenu")?.remove();
+  window.removeEventListener("mousedown", onCtxMenuDown);
+  window.removeEventListener("keydown", onCtxMenuKey);
+}
+
+function onCtxMenuDown(ev) {
+  const m = document.getElementById("ctxMenu");
+  if (m && !m.contains(ev.target)) {
+    closeCtxMenu();
+  }
+}
+
+function onCtxMenuKey(ev) {
+  if (ev.key === "Escape") {
+    closeCtxMenu();
+  }
+}
+
 function openContextMenu(e, p, field) {
   e.preventDefault();
   e.stopPropagation();
-  const old = document.getElementById("ctxMenu");
-  if (old) {
-    old.remove();
-  }
+  closeCtxMenu();
   const menu = document.createElement("div");
   menu.id = "ctxMenu";
   menu.style.cssText =
@@ -2992,8 +3086,9 @@ function openContextMenu(e, p, field) {
   menu.style.left = Math.min(e.clientX, window.innerWidth - 140) + "px";
   menu.style.top = Math.min(e.clientY, window.innerHeight - 60) + "px";
   document.body.appendChild(menu);
-  const close = () => menu.remove();
-  menu.addEventListener("click", () => close());
+  attachBatchSubmenu(menu, p);
+  const close = closeCtxMenu;
+
   const cutBtn = menu.querySelector('[data-cellop="cut"]');
   if (cutBtn) {
     cutBtn.onclick = () => {
@@ -3072,13 +3167,8 @@ function openContextMenu(e, p, field) {
     close();
   };
   setTimeout(() => {
-    const onDown = (ev) => {
-      if (!menu.contains(ev.target)) {
-        close();
-        window.removeEventListener("mousedown", onDown);
-      }
-    };
-    window.addEventListener("mousedown", onDown);
+    window.addEventListener("mousedown", onCtxMenuDown);
+    window.addEventListener("keydown", onCtxMenuKey);
   }, 0);
 }
 
