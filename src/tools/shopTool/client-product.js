@@ -818,12 +818,14 @@ function updateSelectionUI() {
   }
 }
 
-// 批量操作清单：工具栏「批量操作 ▾」下拉与列表右键「批量操作 ▸」子菜单共用这一份，
+// 批量操作清单：工具栏「批量操作 ▾」下拉与列表右键「批量操作」子菜单共用这一份，
 // 两处入口永远长一样（改一条只需要改这里）。返回函数而不是直接跑，菜单自己决定何时执行。
-function batchOpsItems() {
-  return [
-    { label: "复制选中", run: copySelectedProducts },
-    { label: "取消全部勾选", run: clearProductSelection },
+// selOnly 的那两条只管「勾选这件事本身」，批量栏里已经有 📋复制选中 / ✕取消 两个按钮，
+// 所以右键子菜单用 { selOnly: false } 把它们滤掉——菜单里再放一遍是重复。
+function batchOpsItems(opts) {
+  const all = [
+    { label: "复制选中", selOnly: true, run: copySelectedProducts },
+    { label: "取消全部勾选", selOnly: true, run: clearProductSelection },
     { sep: true },
     { label: "上架", run: () => batchSetStatus(0) },
     { label: "下架", run: () => batchSetStatus(1) },
@@ -836,6 +838,14 @@ function batchOpsItems() {
     { sep: true },
     { label: "删除", danger: true, run: batchDelete },
   ];
+  if (!opts || opts.selOnly !== false) {
+    return all;
+  }
+  // 滤掉 selOnly 那两条会让清单以一条分隔线开头，菜单顶上挂一道横线很难看：
+  // 首尾的分隔线一律不要，中间被滤空的那一段分隔线也顺手收掉。
+  return all
+    .filter((it) => !it.selOnly)
+    .filter((it, i, arr) => !(it.sep && (!arr[i - 1] || arr[i + 1].sep)));
 }
 
 function clearProductSelection() {
@@ -2973,23 +2983,21 @@ function openColSet() {
   };
 }
 
-// 右键菜单里的「批量操作」二级菜单：勾了商品才出现。
-// 右键的那一行会自动并入选中集（菜单标题上的数字算上它），所以「勾 3 个再右键第 4 行」
-// 一次能操作 4 个 —— 不用先去把第 4 行勾上。只同步那一行的勾选框和计数，
-// 不调 renderProducts()：那会把整个列表重绘掉，正在打开的菜单连同事件一起被掀翻。
-function attachBatchSubmenu(menu, p) {
-  const already = state.selectedProducts.size;
-  if (already === 0) {
+// 右键菜单里的「批量操作」二级菜单：勾了商品才出现，作用对象就是当前勾选的那一批
+// （右键在哪一行不影响范围，跟批量栏里的按钮一个口径）。
+// 刻意不在这里改勾选集：批量菜单该做的是「操作勾选的那些」，顺手把右键那一行也勾上
+// 会让人以为菜单上标了数字就是几件，而菜单其实什么都没说。
+function attachBatchSubmenu(menu) {
+  if (state.selectedProducts.size === 0) {
     return;
   }
-  const added = !state.selectedProducts.has(p.id);
-  const count = already + (added ? 1 : 0);
+  const items = batchOpsItems({ selOnly: false });
   const sub = document.createElement("div");
   sub.className = "ctx-item ctx-sub";
   sub.innerHTML =
-    `<span>⚡ 批量操作（${count}）</span>` +
+    `<span>批量操作</span>` +
     `<div class="ctx-submenu">` +
-    batchOpsItems()
+    items
       .map((it, i) =>
         it.sep
           ? `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>`
@@ -3004,18 +3012,6 @@ function attachBatchSubmenu(menu, p) {
   } else {
     menu.appendChild(sub);
   }
-  if (added) {
-    state.selectedProducts.add(p.id);
-    const cb = document.querySelector(`.product-checkbox[data-id="${p.id}"]`);
-    if (cb) {
-      cb.checked = true;
-    }
-    const bar = $("batchOpsBar");
-    const countEl = bar ? bar.querySelector("[data-sel-count]") : null;
-    if (countEl) {
-      countEl.textContent = String(count);
-    }
-  }
   sub.addEventListener("mouseenter", () => {
     // 贴着屏幕右边缘就朝左展开，否则二级菜单会被裁掉
     const r = sub.getBoundingClientRect();
@@ -3024,7 +3020,7 @@ function attachBatchSubmenu(menu, p) {
   sub.querySelectorAll("[data-bsub]").forEach((el) => {
     el.onclick = (ev) => {
       ev.stopPropagation();
-      const it = batchOpsItems()[Number(el.dataset.bsub)];
+      const it = items[Number(el.dataset.bsub)];
       // 先关菜单再执行：run 里大多会 renderProducts 重绘列表，菜单留在页面上会显得像没点上
       closeCtxMenu();
       if (it && it.run) {
@@ -3086,7 +3082,7 @@ function openContextMenu(e, p, field) {
   menu.style.left = Math.min(e.clientX, window.innerWidth - 140) + "px";
   menu.style.top = Math.min(e.clientY, window.innerHeight - 60) + "px";
   document.body.appendChild(menu);
-  attachBatchSubmenu(menu, p);
+  attachBatchSubmenu(menu);
   const close = closeCtxMenu;
 
   const cutBtn = menu.querySelector('[data-cellop="cut"]');
