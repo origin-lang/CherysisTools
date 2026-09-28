@@ -190,6 +190,40 @@ function codeQueryMemo(raw) {
   return _cqParsed;
 }
 
+// —— 工具栏全局搜索：跨列找一行，跟列头漏斗是叠加关系不是替代 ——
+// 漏斗是「结构化筛一批」（勾枚举 / 写范围），这里是「凭印象找一行」：记不清编号前缀
+// 或者只记得「香薰摆件」里有哪几个字时用。两者 AND 叠加，随便一起开。
+//
+// 匹配口径照搬删除前那版（f09f3e7 删掉、这次按原样找回），两个已知行为保持不变：
+//   ① 四个字段是用空格拼成一句话再匹配的，所以「香薰 摆件」会命中
+//      「名称=香薰 且 品类=摆件」的行——看着像巧合，但一直是这个语义，改了就是另一套；
+//   ② 编号的「去零兜底」只作用于编号列，且关键字里只要含数字就启用，
+//      所以「香薰 12」也会顺带去编号里找 12。误伤面小（只可能捞中编号，意图八成也是编号）。
+const KEYWORD_FIELDS = ["code", "name", "category", "series"];
+let _kwRaw = null;
+let _kwParsed = null;
+/** 跟 codeQueryMemo 同一套一格记忆：一次渲染会多次过 filteredProducts，别每行都重算。 */
+function keywordMemo(raw) {
+  const k = String(raw ?? "");
+  if (_kwRaw !== k) {
+    _kwRaw = k;
+    const kw = k.trim().toLowerCase();
+    _kwParsed = { kw, digits: kw.replace(/\D/g, "") };
+  }
+  return _kwParsed;
+}
+
+function matchKeyword(p, q) {
+  if (!q.kw) {
+    return true;
+  }
+  const hay = KEYWORD_FIELDS.map((f) => String(p[f] ?? "")).join(" ");
+  if (hay.toLowerCase().includes(q.kw)) {
+    return true;
+  }
+  return q.digits.length > 0 && String(p.code ?? "").replace(/\D/g, "").includes(q.digits);
+}
+
 function saveFieldValue(pid, field, raw) {
   const res = sanitizeProductField(field, raw);
   if (!res.ok) {
@@ -278,6 +312,7 @@ function syncListCellState() {
 
 function filteredProducts() {
   const cq = codeQueryMemo(filters.f_code);
+  const kw = keywordMemo(filters.keyword);
   return state.products
     .filter((p) => {
       for (const key of ENUM_FILTER_FIELDS) {
@@ -329,6 +364,8 @@ function filteredProducts() {
       }
       return true;
     })
+    // 全局搜索放最后：当最后一道关，前面漏斗/范围已经把大部分行筛掉了
+    .filter((p) => matchKeyword(p, kw))
     .sort((a, b) => {
       let r = 0;
       if (sortKey === "code") {
@@ -379,13 +416,85 @@ function fillCatList() {
     .join("");
 }
 
+// 灯箱缩放范围。1 = 原始适配大小（CSS 里的 max-width/max-height 决定）
+const LB_ZOOM_MIN = 0.2;
+const LB_ZOOM_MAX = 8;
+const LB_ZOOM_STEP = 1.15;
+
+function lbStage() {
+  return document.getElementById("lbStage");
+}
+
+// 缩放只改 img 的**真实** width/height，不走 transform: scale()：
+// transform 不改变布局尺寸，舞台拿不到真实滚动范围，放大后边缘就够不着了。
+function applyLbZoom() {
+  const stage = lbStage();
+  const big = document.getElementById("lbBig");
+  if (!stage || !big || !state.lbBase) {
+    return;
+  }
+  const z = state.lbZoom;
+  if (z === 1) {
+    // 四个一起清：下面放大时会把 max-* 写成 none，复位不还原的话
+    // 图片会按原始像素铺开、再也不受 860px / 62vh 约束
+    big.style.width = "";
+    big.style.height = "";
+    big.style.maxWidth = "";
+    big.style.maxHeight = "";
+  } else {
+    // max-width/max-height 是**硬上限，优先级高于 width**：不解除的话
+    // 想放到 1720px 会被砍回 860px，而图片本来就在上限上，等于纹丝不动；
+    // object-fit:contain 再把多出来的横向空间填成白边（看着像「没放大、
+    // 反而左右多出白边」）。写 width/height 之前必须先解除这两个上限。
+    big.style.maxWidth = "none";
+    big.style.maxHeight = "none";
+    big.style.width = Math.round(state.lbBase.w * z) + "px";
+    big.style.height = Math.round(state.lbBase.h * z) + "px";
+  }
+  // 只有真溢出了才提示可拖动
+  stage.classList.toggle(
+    "lb-pannable",
+    stage.scrollWidth > stage.clientWidth + 1 ||
+      stage.scrollHeight > stage.clientHeight + 1
+  );
+}
+
+function resetLbZoom() {
+  state.lbZoom = 1;
+  applyLbZoom();
+}
+
+// 缩放锚在指针位置：按 scroll 补偿，让指针下那一个像素点在缩放前后不动，
+// 否则滚轮往上滚时画面会「往一边跑」，放大到某个角落根本盯不住。
+function zoomLbAt(clientX, clientY, next) {
+  const stage = lbStage();
+  if (!stage || !state.lbBase) {
+    return;
+  }
+  const z = Math.min(LB_ZOOM_MAX, Math.max(LB_ZOOM_MIN, next));
+  if (z === state.lbZoom) {
+    return;
+  }
+  const r = stage.getBoundingClientRect();
+  const px = clientX - r.left + stage.scrollLeft;
+  const py = clientY - r.top + stage.scrollTop;
+  const f = z / state.lbZoom;
+  state.lbZoom = z;
+  applyLbZoom();
+  stage.scrollLeft = px * f - (clientX - r.left);
+  stage.scrollTop = py * f - (clientY - r.top);
+}
+
 function openLightbox(product) {
   if (state.lbCode !== product.code) {
     state.lbFullCache = {};
   }
   state.lbCode = product.code;
   state.lbIdx = 0;
-  state.lbPendingCopy = null;
+  state.lbZoom = 1;
+  state.lbBase = null;
+  state.lbDragged = false;
+  state.lbImagesLoaded = false;
   closeLightbox();
   const lb = document.createElement("div");
   lb.id = "lbBox";
@@ -400,13 +509,116 @@ function openLightbox(product) {
               <button class="lb-cls" id="lbClose">✕</button>
             </span>
           </div>
-          <img class="big" id="lbBig" style="display:none" />
+          <div class="lb-stage" id="lbStage">
+            <img class="big" id="lbBig" style="display:none" />
+          </div>
           <div class="thumbs" id="lbThumbs"><span class="muted" style="color:#aaa">图片加载中…</span></div>`;
+  const stage = lb.querySelector("#lbStage");
+  const big = lb.querySelector("#lbBig");
   lb.addEventListener("click", (e) => {
-    if (e.target === lb) {
+    // 拖动平移结束时浏览器照样补一个 click，不挡掉的话平移一下灯箱就关了
+    if (state.lbDragged) {
+      state.lbDragged = false;
+      return;
+    }
+    // e.target === stage 这条不能少：图片周围那片空白现在落在 stage 上，
+    // 只认 lb 的话点空白就关不掉了
+    if (e.target === lb || e.target === stage) {
       closeLightbox();
     }
   });
+  // 黑区右键：以前只挂了 click，黑区没拦 contextmenu，右键就漏到 VS Code
+  // 宿主菜单去了。跟图片右键走同一套菜单。
+  lb.addEventListener("contextmenu", (e) => {
+    if (e.target.closest(".thumbs")) {
+      return; // 缩略图自己有菜单
+    }
+    e.preventDefault();
+    openCurrentLightboxMenu(e);
+  });
+  // 图片载入完量一次「缩放 1 倍」的真实显示尺寸，作为所有缩放的基准。
+  // 量之前四个属性都得清：applyLbZoom 放大时把 max-* 写成了 none，
+  // 只清 width/height 的话会量到「上限已解除」下的原始像素尺寸而不是适配尺寸，
+  // 于是「放大着看 A → 点缩略图切 B」时 B 的基准偏大，之后每一步放大都跟着偏。
+  big.addEventListener("load", () => {
+    if (state.lbCode !== product.code) {
+      return; // 灯箱已关/已换商品，别往陈旧的 state 上写
+    }
+    big.style.width = "";
+    big.style.height = "";
+    big.style.maxWidth = "";
+    big.style.maxHeight = "";
+    state.lbBase = { w: big.offsetWidth, h: big.offsetHeight };
+    applyLbZoom();
+  });
+  big.addEventListener("dblclick", (e) => {
+    e.preventDefault();
+    resetLbZoom();
+  });
+  stage.addEventListener(
+    "wheel",
+    (e) => {
+      // ctrl+wheel 留给 VS Code 自己的界面缩放，别抢
+      if (e.ctrlKey || e.metaKey || !state.lbBase) {
+        return;
+      }
+      e.preventDefault();
+      zoomLbAt(e.clientX, e.clientY, state.lbZoom * (e.deltaY < 0 ? LB_ZOOM_STEP : 1 / LB_ZOOM_STEP));
+    },
+    { passive: false }
+  );
+  // 拖拽平移：只在舞台**真的溢出**时才启动。
+  // 1 倍时 overflow 恒为 0，点黑区照常关闭、拖一下也不会误吞关闭。
+  let drag = null;
+  stage.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) {
+      return;
+    }
+    if (
+      stage.scrollWidth <= stage.clientWidth + 1 &&
+      stage.scrollHeight <= stage.clientHeight + 1
+    ) {
+      return;
+    }
+    drag = {
+      x: e.clientX,
+      y: e.clientY,
+      sl: stage.scrollLeft,
+      st: stage.scrollTop,
+      moved: false,
+    };
+    stage.classList.add("lb-dragging");
+  });
+  const endDrag = () => {
+    if (!drag) {
+      return;
+    }
+    if (drag.moved) {
+      state.lbDragged = true;
+    }
+    drag = null;
+    stage.classList.remove("lb-dragging");
+  };
+  const onMove = (e) => {
+    if (!drag) {
+      return;
+    }
+    const dx = e.clientX - drag.x;
+    const dy = e.clientY - drag.y;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+      drag.moved = true;
+    }
+    stage.scrollLeft = drag.sl - dx;
+    stage.scrollTop = drag.st - dy;
+  };
+  // 这两个挂在 window 上，lb.remove() 摘不掉元素级监听器。
+  // 不显式回收的话，每开一次灯箱就漏两个 window 监听器 + 一整棵已脱离文档的 DOM。
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseup", endDrag);
+  state.lbTeardown = () => {
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", endDrag);
+  };
   document.body.appendChild(lb);
   lb.querySelector("#lbClose").onclick = closeLightbox;
   lb.querySelector("#lbCopy").onclick = () => copyText(fullName(product));
@@ -431,6 +643,10 @@ function openLightbox(product) {
 
 function closeLightbox() {
   const lb = document.getElementById("lbBox");
+  if (state.lbTeardown) {
+    state.lbTeardown();
+    state.lbTeardown = null;
+  }
   if (lb) {
     lb.remove();
   }

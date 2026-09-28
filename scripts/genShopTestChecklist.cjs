@@ -38,7 +38,10 @@ for (const raw of lines) {
     continue;
   }
   if (!curModule) continue;
-  const m = line.match(/^### (P-M\d{2}-\d{2}) (.+)$/);
+  // 用例 ID 允许字母后缀（07b / 13b 这种子用例，清单里一直在用）。
+  // 原来这里只认 P-M\d{2}-\d{2}，带后缀的会被静默丢掉、也不计入总数——
+  // P-M01-13b 就是这么在 HTML 里消失的。
+  const m = line.match(/^### (P-M\d{2}-\d{2}[a-z]?) (.+)$/);
   if (m) {
     curCase = {
       id: m[1],

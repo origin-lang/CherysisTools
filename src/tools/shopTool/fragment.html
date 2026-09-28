@@ -425,6 +425,44 @@
         background: var(--vscode-panel-border);
         margin: 0 2px;
       }
+      /* 全局搜索框：跟 .fp-panel .fp-in-wrap 同一个道理，✕ 单独一层做定位上下文，
+         这样 right/top 锚的是输入框本身，不会因为工具栏换行而飘 */
+      .tb-search {
+        position: relative;
+        display: flex;
+        align-items: center;
+      }
+      .tb-search input {
+        width: 190px;
+        padding-right: 22px;
+      }
+      .tb-search-x {
+        position: absolute;
+        right: 3px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 16px;
+        height: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        font-size: 11px;
+        line-height: 1;
+        color: var(--vscode-descriptionForeground);
+        background: transparent;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      .tb-search-x:hover {
+        color: var(--vscode-foreground);
+        background: var(--vscode-button-hoverBackground);
+      }
+      /* 上面给了 display:flex，会盖掉浏览器默认的 [hidden]{display:none}，得自己补回来 */
+      .tb-search-x[hidden] {
+        display: none;
+      }
       .card-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(205px, 1fr));
@@ -504,6 +542,30 @@
         margin-bottom: 12px;
         color: #fff;
         font-size: 13px;
+      }
+      /* 缩放舞台：吃掉 head 和 thumbs 之间的剩余空间，图片在里面居中。
+         min-height:0 必须有 —— flex 子项默认 min-height:auto，不置 0 就撑不缩，
+         overflow:auto 会失效，放大后拖不出滚动范围。
+         居中用子项的 margin:auto，**不能**用 align-items/justify-content:center：
+         那样图片比舞台大时，溢出部分会被裁在起始侧外，scrollLeft/scrollTop 归 0
+         也回不去左上角，等于放大后有一块永远够不着。
+         cursor 用 grab/grabbing 提示「可以拖」，只在真溢出时才切 grabbing。 */
+      .lightbox .lb-stage {
+        flex: 1;
+        min-height: 0;
+        width: 100%;
+        display: flex;
+        overflow: auto;
+        cursor: default;
+      }
+      .lightbox .lb-stage > .big {
+        margin: auto;
+      }
+      .lightbox .lb-stage.lb-pannable {
+        cursor: grab;
+      }
+      .lightbox .lb-stage.lb-dragging {
+        cursor: grabbing;
       }
       .lightbox .big {
         max-width: 860px;
@@ -1303,6 +1365,10 @@
         <span class="tb-sep"></span>
         <button id="colSetBtn">字段显示</button>
         <span class="tb-sep"></span>
+        <div class="tb-search">
+          <input id="keywordSearch" type="text" placeholder="🔍 编号 / 名称 / 品类 / 系列" title="快速找一行：按编号/名称/品类/系列做子串匹配（不区分大小写）。和列头漏斗是叠加关系不是替代——漏斗筛「一批」，这里找「一行」。回车立即生效，Esc 或 ✕ 清空。" />
+          <button id="keywordSearchX" class="tb-search-x" type="button" title="清空搜索" aria-label="清空搜索" hidden>✕</button>
+        </div>
         <button id="clearFilterBtn" class="btn-danger" style="display: none">清除筛选</button>
         <span class="tb-sep"></span>
         <button id="starMenuBtn" title="星标操作：只看/复制清单/总览图预览/全部取消">⭐ 星标 ▾</button>

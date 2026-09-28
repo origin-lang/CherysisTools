@@ -90,10 +90,63 @@ function bindEvents() {
   document.querySelectorAll("#tabSales .mini-tab").forEach((t) => {
     t.onclick = () => switchSalesTab(t.dataset.stab);
   });
+  // 工具栏全局搜索。跟删掉前那版最大的区别是加了防抖：老版 oninput 直连 renderProducts，
+  // 敲一个字就把全表重画一遍，手感发飘。
+  const kwInput = $("keywordSearch");
+  const kwX = $("keywordSearchX");
+  // ✕ 有字才出现，空框上摆个清空按钮纯属多余
+  const syncKwX = () => {
+    if (kwX) {
+      kwX.hidden = !kwInput.value;
+    }
+  };
+  const applyKeyword = () => {
+    const v = kwInput.value.trim();
+    if (v) {
+      filters.keyword = v;
+    } else {
+      delete filters.keyword;
+    }
+    syncKwX();
+    syncClearFilterBtn();
+    renderProducts();
+  };
+  const applyKeywordSoon = debounce(applyKeyword, 200);
+  kwInput.oninput = () => {
+    // ✕ 立刻跟手，只有重画列表才防抖
+    syncKwX();
+    applyKeywordSoon();
+  };
+  kwInput.onkeydown = (ev) => {
+    // Esc 清空并立刻生效，不等那个还在跑的防抖计时器
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      kwInput.value = "";
+      applyKeyword();
+      return;
+    }
+    // 回车不等防抖了，马上生效
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      kwInput.value = kwInput.value.trim();
+      applyKeyword();
+    }
+  };
+  // ✕ 走同步路径，不然点了之后还得等 200ms 才变
+  if (kwX) {
+    kwX.onclick = () => {
+      kwInput.value = "";
+      applyKeyword();
+    };
+  }
   $("clearFilterBtn").onclick = () => {
     for (const k of Object.keys(filters)) {
       delete filters[k];
     }
+    // 状态在 filters 里、输入框里的字不在，清完状态得把框和 ✕ 也抹平，
+    // 否则框里还留着字、列表却是全量，看着像筛选没生效
+    kwInput.value = "";
+    syncKwX();
     syncClearFilterBtn();
     renderProducts();
   };
@@ -945,6 +998,8 @@ function onMessage(msg) {
       if (state.lbCode !== msg.code) {
         break;
       }
+      // 标记「图册清单已到」：黑区右键要靠它区分「还在加载」和「真没有」
+      state.lbImagesLoaded = true;
       const thumbs = document.getElementById("lbThumbs");
       const big = document.getElementById("lbBig");
       if (!thumbs || !big) {
@@ -981,6 +1036,7 @@ function onMessage(msg) {
           const idx = Number(img.dataset.i);
           state.lbIdx = idx;
           const key = `${msg.code}:${idx}`;
+          resetLbZoom();
           thumbs
             .querySelectorAll("img")
             .forEach((x) => x.classList.remove("active"));
@@ -995,31 +1051,16 @@ function onMessage(msg) {
         };
         img.oncontextmenu = (e) => {
           e.preventDefault();
-          const idx = Number(img.dataset.i);
-          const key = `${msg.code}:${idx}`;
-          // 复制只能吃 data URL：没有 base64 就现取一份，取回后自动复制
-          const data = state.lbFullCache[key] || "";
-          const loading = !data;
-          if (loading) {
-            state.lbPendingCopy = { code: msg.code, idx };
-            post({ type: "getFullImage", code: msg.code, index: idx, base64: true });
-          }
-          openLightboxMenu(e, msg.code, idx, data, loading);
+          // 右键哪张就该操作哪张，先把 lbIdx 拨过去再开菜单
+          state.lbIdx = Number(img.dataset.i);
+          openCurrentLightboxMenu(e);
         };
       });
       // 用 oncontextmenu 赋值而不是 addEventListener：同一张 big 元素会被反复赋值，
       // addEventListener 会越堆越多，且旧闭包里的 code 会导致右键删错商品
       big.oncontextmenu = (e) => {
         e.preventDefault();
-        const idx = state.lbIdx || 0;
-        const data = state.lbFullCache[`${msg.code}:${idx}`] || "";
-        if (data) {
-          openLightboxMenu(e, msg.code, idx, data, false);
-          return;
-        }
-        state.lbPendingCopy = { code: msg.code, idx };
-        post({ type: "getFullImage", code: msg.code, index: idx, base64: true });
-        openLightboxMenu(e, msg.code, idx, "", true);
+        openCurrentLightboxMenu(e);
       };
       break;
     }
@@ -1038,16 +1079,11 @@ function onMessage(msg) {
           big.onerror = null;
           big.src = msg.data;
         }
-        if (
-          state.lbPendingCopy &&
-          state.lbPendingCopy.code === msg.code &&
-          state.lbPendingCopy.idx === msg.index
-        ) {
-          const pc = state.lbPendingCopy;
-          state.lbPendingCopy = null;
-          copyImageFromDataUrl(msg.data).then((ok) =>
-            ok ? toast("已复制图片") : toast("复制失败"),
-          );
+        // 图到位了就把还开着的菜单里那一项点亮，**这里一个字都不往剪贴板写**。
+        // 以前这里是「pending 就直接复制」：右键弹菜单的同一个 tick 里就置了
+        // lbPendingCopy，所以光右键就把图塞进剪贴板了。
+        if (state.lbCopyKey === `${msg.code}:${msg.index}`) {
+          enableLbCopyItem();
         }
         break;
       }
@@ -1110,20 +1146,28 @@ function setLightboxBig(big, code, index, uri) {
   big.src = uri;
 }
 
-function openLightboxMenu(e, code, idx, dataUrl, loading) {
-  const items = [
-    {
-      label: loading ? "📋 复制图片（载入中…）" : "📋 复制图片",
-      run: () => {
-        if (loading) {
-          toast("原图载入后会自动复制");
-          return;
-        }
-        copyImageFromDataUrl(dataUrl).then((ok) =>
-          ok ? toast("已复制图片") : toast("复制失败"),
-        );
-      },
+function openLightboxMenu(e, code, idx) {
+  const key = `${code}:${idx}`;
+  // 复制只能吃 data URL。base64 不在 cache 里就置灰——**不** arm 什么「载入后自动复制」：
+  // 用户只是弹了个菜单，凭什么往剪贴板塞东西。
+  const copyItem = {
+    label: "📋 复制图片",
+    disabled: true,
+    title: "原图载入中，请稍候再试",
+    run: () => {
+      // 点击那一刻再查一次：置灰时点不到，但 万一 状态在按下和抬起之间变了 呢
+      const d = state.lbFullCache[key] || "";
+      if (!d) {
+        toast("原图还在载入，请稍后再试");
+        return;
+      }
+      copyImageFromDataUrl(d).then((ok) =>
+        ok ? toast("已复制图片") : toast("复制失败"),
+      );
     },
+  };
+  const items = [
+    copyItem,
     {
       label: "🗑️ 删除图片",
       danger: true,
@@ -1153,7 +1197,46 @@ function openLightboxMenu(e, code, idx, dataUrl, loading) {
       run: () => post({ type: "openImageFile", code }),
     },
   ];
+  // 记住是哪张图的菜单：图载入完只有对得上这张才去点亮那一项
+  state.lbCopyItem = copyItem;
+  state.lbCopyKey = key;
   showImageCtxMenu(e.clientX, e.clientY, items);
+  if (state.lbFullCache[key]) {
+    enableLbCopyItem();
+  } else {
+    // 预热 cache（**不复制**）。少了这一步首次右键必然是灰的，
+    // 用户只能关掉菜单再右键一次，很别扭。
+    post({ type: "getFullImage", code, index: idx, base64: true });
+  }
+}
+
+// 把还开着的菜单里那一项从灰点亮。菜单已关时查不到节点，直接空转。
+function enableLbCopyItem() {
+  const el = document.querySelector('#imgCtxMenu [data-ic="0"]');
+  const it = state.lbCopyItem;
+  if (!el || !it) {
+    return;
+  }
+  it.disabled = false;
+  el.classList.remove("ctx-disabled");
+  el.removeAttribute("title");
+  el.textContent = it.label;
+}
+
+// 黑区（图片以外的空白）右键：以前只有图片和缩略图拦了 contextmenu，
+// 黑区漏到 VS Code 宿主菜单去了。这里跟图片右键走同一套菜单。
+function openCurrentLightboxMenu(e) {
+  if (!state.lbCode) {
+    return;
+  }
+  const thumbs = document.getElementById("lbThumbs");
+  if (!thumbs || !thumbs.querySelector("img")) {
+    // 区分「还在加载」和「真没有」：灯箱刚开时 thumbs 里是「图片加载中…」，
+    // 这时候报「该商品还没有图片」是骗人。
+    toast(state.lbImagesLoaded ? "该商品还没有图片" : "图片加载中…");
+    return;
+  }
+  openLightboxMenu(e, state.lbCode, state.lbIdx || 0);
 }
 
 window.toolClients.shopTool = {

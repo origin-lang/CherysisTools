@@ -531,7 +531,14 @@ window.toolClients = window.toolClients || {};
           if (it.sep) {
             return `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>`;
           }
-          return `<div class="ctx-item${it.danger ? " ctx-danger" : ""}" data-ic="${i}">${esc(it.label)}</div>`;
+          // disabled 走 .ctx-item.ctx-disabled（那套样式 fragment.html 里已经有了），
+          // title 用来讲清「为什么灰着」，否则用户只看到一项灰的、不知道在等什么
+          return (
+            `<div class="ctx-item${it.danger ? " ctx-danger" : ""}` +
+            `${it.disabled ? " ctx-disabled" : ""}"` +
+            ` data-ic="${i}"${it.title ? ` title="${esc(it.title)}"` : ""}>` +
+            `${esc(it.label)}</div>`
+          );
         })
         .join("");
       menu.style.left = Math.min(x, window.innerWidth - 180) + "px";
@@ -564,10 +571,19 @@ window.toolClients = window.toolClients || {};
       menu.querySelectorAll("[data-ic]").forEach((el) => {
         el.onclick = () => {
           const it = items[Number(el.dataset.ic)];
+          // 在**点击那一刻**读 it.disabled，而不是建菜单时算好的闭包值：
+          // 菜单开着的时候图可能正好载入完、调用方把 it.disabled 改成 false 并摘掉
+          // ctx-disabled 类，那样同一张菜单就能自己从灰变亮，不用重开一次。
+          // ctx-disabled 带 pointer-events:none，理论上点不到，这里再挡一道兜底。
+          if (it.disabled) {
+            return;
+          }
           close();
           if (it.run) {
             it.run();
           }
         };
       });
+      // 菜单元素交回给调用方：灯箱那边要在图载入完时把复制项点亮，只能拿到 DOM
+      return menu;
     }
