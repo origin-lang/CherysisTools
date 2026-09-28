@@ -176,6 +176,19 @@ export interface ImageHandlerDeps {
   unlink?: (fp: string) => void;
 }
 
+/**
+ * clearOneFolder 的返回值。busy 与 failed 分开是因为两者的下一步动作不一样：
+ * busy 是「另一台机器开着这些图」，重试或让对方关掉才行；failed 是权限/路径这类
+ * 本机问题，重试没意义。合成一档的话日志只能给一句套话，等于把两种病都当绝症。
+ */
+type ClearResult = {
+  outcome: "cleared" | "empty" | "nofolder" | "busy" | "failed";
+  ok: number;
+  total: number;
+  lastErr: any;
+  firstBusy: string | null;
+};
+
 export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Record<string, Handler> {
   const { log, post } = h;
   const ctx = h.ctx;
@@ -193,6 +206,71 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
   // 加载不出来时前端 onerror 回退请求 base64 通道。
   const webviewUri = (fp: string): string =>
     ctx.panel.webview.asWebviewUri(vscode.Uri.file(fp)).toString();
+
+  /** 批量日志里报编号只列前几个：勾 200 个商品全列出来，日志面板直接没法看了 */
+  const sampleCodes = (codes: string[]): string =>
+    codes.length <= 6 ? codes.join("、") : `${codes.slice(0, 6).join("、")}…`;
+
+  /**
+   * 清空**一个**商品的图片夹，删的是共享盘上的真文件。
+   *
+   * 单个和批量两个入口共用这一份，理由是措辞必须一致：单个版曾经有个 bug 是 catch {}
+   * 空吞掉单张失败、照样报「已清空 N 张」，属于谎报（有测试钉着）。批量版要是另写一遍
+   * 循环，同一个谎报就会在第二个入口原样重演。
+   *
+   * 只删文件、不碰数据库，调用方也不用为它 preOpBackup（备份的是 shop.db，对图零信息量）。
+   */
+  const clearOneFolder = async (code: string): Promise<ClearResult> => {
+    const dir = imageDir();
+    const folder = path.join(dir as string, code);
+    if (!fs.existsSync(folder)) {
+      return { outcome: "nofolder", ok: 0, total: 0, lastErr: null, firstBusy: null };
+    }
+    const files = listImageFiles(folder);
+    let ok = 0;
+    let busy = 0;
+    let lastErr: any = null;
+    let firstBusy: string | null = null;
+    for (const f of files) {
+      const fp = path.join(folder, f);
+      try {
+        await unlinkWithRetry(fp, unlinkFile);
+        ok++;
+      } catch (err: any) {
+        lastErr = err;
+        if (RETRYABLE_UNLINK.has(err?.code)) {
+          busy++;
+          firstBusy ??= fp;
+        }
+      }
+    }
+    const r = { ok, total: files.length, lastErr, firstBusy };
+    if (files.length === 0) return { ...r, outcome: "empty" };
+    if (busy === 0 && ok === files.length) return { ...r, outcome: "cleared" };
+    // busy 单独一档：它要说的是「另一台机器正开着这些图」，跟「权限/路径不对」不是一回事
+    if (busy > 0) return { ...r, outcome: "busy" };
+    return { ...r, outcome: "failed" };
+  };
+
+  /** 单个入口的日志：一个夹一次，把话说全（含被占用的排查提示） */
+  const logClearOne = (code: string, r: ClearResult): void => {
+    if (r.outcome === "nofolder") {
+      log(`⚠️${code} 无图片文件夹`);
+    } else if (r.outcome === "empty") {
+      log(`🗑${code} 图片夹本来就是空的`);
+    } else if (r.outcome === "cleared") {
+      log(`🗑已清空 ${code} 图片文件夹（${r.ok} 张）`);
+    } else if (r.outcome === "busy") {
+      // 原来这里是 catch {} 空吞掉单张失败、照样报「已清空 N 张」，属于谎报
+      log(
+        `${busyHint(`清空 ${code} 图片夹失败`, r.lastErr, r.firstBusy ?? undefined)}\n` +
+          `　本次只删掉了 ${r.ok}/${r.total} 张，剩下的还在。` +
+          `请确认图库抽屉已关、别的机器没在看这些图，再点一次「清空图片夹」。`,
+      );
+    } else {
+      log(`⚠️清空 ${code} 图片夹只成功 ${r.ok}/${r.total} 张（${r.lastErr?.message || ""}）`);
+    }
+  };
 
   const readCover = async (code: string): Promise<string> => {
     const dir = imageDir();
@@ -396,54 +474,95 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
 
     async clearImages(msg) {
       const code = String(msg.code ?? "");
+      if (!imageDir()) {
+        log("❌未配置图片根目录");
+        return;
+      }
+      if (!isPlainImageName(code)) {
+        log(`⚠️商品编号不合法：${code}`);
+        return;
+      }
+      // 同 deleteImageFile：清空图片夹也不碰数据库，不该为它白拷一次整库
+      // 先把后台缩缩略图的活儿等完：它们正在读的就是这个夹里的原图，读的时候删不掉
+      await drainInflightThumbs();
+      const r = await clearOneFolder(code);
+      logClearOne(code, r);
+      post({ type: "imagesLoaded", code, images: [], names: [] });
+      h.invalidateCover(code);
+      h.loadAll();
+    },
+
+    /**
+     * 批量清空：一次收一批商品编号，逐个清空，只在最后 loadAll() 一次。
+     *
+     * 不做成「webview 连发 N 条 clearImages」是有原因的：每条都会 loadAll()，
+     * 而 loadAll() 是把整张商品表重读一遍重推 webview（见 §loadAll 注释），
+     * 勾 50 个就是读 50 趟全库、外加刷新 50 次封面缓存——共享盘上这是几十秒的等待，
+     * 而且中途每一条都往日志里写一行，最后用户看到 50 行「已清空」不知道哪几个真成了。
+     * 这里改成逐个清、汇总成**一条**日志，失败的编号单独列出来。
+     */
+    async clearImagesBatch(msg) {
       const dir = imageDir();
       if (!dir) {
         log("❌未配置图片根目录");
         return;
       }
-      const folder = path.join(dir, code);
-      if (!fs.existsSync(folder)) {
-        log(`⚠️${code} 无图片文件夹`);
+      const raw: string[] = Array.isArray(msg.codes) ? msg.codes : [];
+      // 去重 + 只认纯单段编号：code 会被拼进 path.join(dir, code)，`../x` 能逃出图片根目录。
+      // 这跟 isPlainImageName 是同一条道理，那条守的是夹内的 name，这里守的是夹名 code。
+      const codes = [...new Set(raw.map((c) => String(c)).filter(isPlainImageName))];
+      const rejected = raw.length - codes.length;
+      if (codes.length === 0) {
+        log(rejected > 0 ? "⚠️没有合法的商品编号可清空" : "⚠️没有勾选商品");
         return;
       }
-      const files = listImageFiles(folder);
-      // 同 deleteImageFile：清空图片夹也不碰数据库，不该为它白拷一次整库
-      // 先把后台缩缩略图的活儿等完：它们正在读的就是这个夹里的原图，读的时候删不掉
+      // 队列是全局的：等一次就够，后面每个夹子都不会再有后台缩略图在读
       await drainInflightThumbs();
-      let ok = 0;
-      let busy = 0;
-      let lastErr: any = null;
-      let firstBusy: string | null = null;
-      for (const f of files) {
-        const fp = path.join(folder, f);
-        try {
-          await unlinkWithRetry(fp, unlinkFile);
-          ok++;
-        } catch (err: any) {
-          lastErr = err;
-          if (RETRYABLE_UNLINK.has(err?.code)) {
-            busy++;
-            firstBusy ??= fp;
-          }
-        }
+      const done: string[] = [];
+      const empty: string[] = [];
+      const noFolder: string[] = [];
+      const stuck: { code: string; ok: number; total: number; lastErr: any; firstBusy: string | null }[] = [];
+      for (const code of codes) {
+        const r = await clearOneFolder(code);
+        // 逐个推：灯箱开着的话它按 code 认领，合并成一条它就不知道该刷哪一格了。
+        // 没删到东西的（空夹/没夹）也要推——夹可能是刚被别人删的，覆盖缓存照样得作废。
+        post({ type: "imagesLoaded", code, images: [], names: [] });
+        h.invalidateCover(code);
+        if (r.outcome === "cleared") done.push(code);
+        else if (r.outcome === "empty") empty.push(code);
+        else if (r.outcome === "nofolder") noFolder.push(code);
+        else stuck.push({ code, ok: r.ok, total: r.total, lastErr: r.lastErr, firstBusy: r.firstBusy });
       }
-      if (files.length === 0) {
-        log(`🗑${code} 图片夹本来就是空的`);
-      } else if (busy === 0 && ok === files.length) {
-        log(`🗑已清空 ${code} 图片文件夹（${ok} 张）`);
-      } else if (busy > 0) {
-        // 原来这里是 catch {} 空吞掉单张失败、照样报「已清空 N 张」，属于谎报
-        log(
-          `${busyHint(`清空 ${code} 图片夹失败`, lastErr, firstBusy ?? undefined)}\n` +
-            `　本次只删掉了 ${ok}/${files.length} 张，剩下的还在。` +
-            `请确认图库抽屉已关、别的机器没在看这些图，再点一次「清空图片夹」。`,
-        );
-      } else {
-        log(`⚠️清空 ${code} 图片夹只成功 ${ok}/${files.length} 张（${lastErr?.message || ""}）`);
-      }
-      post({ type: "imagesLoaded", code, images: [], names: [] });
-      h.invalidateCover(code);
       h.loadAll();
+
+      // ---- 汇总成一条，别让勾 50 个变成日志里 50 行 ----
+      const lines: string[] = [];
+      if (done.length) {
+        lines.push(`🗑已清空 ${done.length} 个商品的图片文件夹：${sampleCodes(done)}`);
+      }
+      if (stuck.length) {
+        const brief = stuck
+          .slice(0, 5)
+          .map((s) => `${s.code}（只删掉 ${s.ok}/${s.total} 张）`)
+          .join("、");
+        const more = stuck.length > 5 ? `，…等 ${stuck.length} 个` : "";
+        const first = stuck[0];
+        lines.push(
+          `⚠️${stuck.length} 个没清干净：${brief}${more}\n` +
+            `　最常见的原因是图库抽屉没关、或另一台机器正看着这些图。关掉之后对这几个再点一次即可。` +
+            (first.firstBusy ? `\n　${busyHint("被占用的文件", first.lastErr, first.firstBusy)}` : ""),
+        );
+      }
+      if (empty.length) {
+        lines.push(`·${empty.length} 个图片夹本来就是空的：${sampleCodes(empty)}`);
+      }
+      if (noFolder.length) {
+        lines.push(`·${noFolder.length} 个没有图片文件夹：${sampleCodes(noFolder)}`);
+      }
+      if (rejected > 0) {
+        lines.push(`·另有 ${rejected} 个编号不合法，已跳过`);
+      }
+      log(lines.join("\n"));
     },
 
     async openImageFile(msg) {

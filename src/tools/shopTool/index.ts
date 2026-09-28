@@ -342,6 +342,7 @@ const WRITE_ACTIONS = new Set([
   "uploadImages",
   "receiveImageData",
   "clearImages",
+  "clearImagesBatch",
   "deleteImageFile",
   // 直播排品（live_plan / live_star 落库）
   "toggleLiveStar",

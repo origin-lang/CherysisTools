@@ -856,10 +856,12 @@ function filterCurrent(key) {
   return typeof raw === "string" ? raw : "";
 }
 
-// 13px 比表头正文（13px）小一号的观感最舒服：再大就跟标题抢眼了，再小就难点。
+// 15px：13px 在宽列上偏小、难点。表头行高是 26px 定死的，漏斗又是 float:right（浮动不参与
+// 行盒高度计算），所以放大不会把表头撑高——15+2×2=19px 溢出的那 3px 只是落进 th 的下内边距里。
+// 每个可筛列宽 2px（约 10~12 列，表格总宽 +20~24px），.table-wrap 有 overflow:auto 兜着。
 // viewBox 固定 12，改的是渲染尺寸，path 坐标不动。
 const FUNNEL_SVG =
-  '<svg viewBox="0 0 12 12" width="13" height="13" aria-hidden="true"><path d="M1.6 2h8.8L7 6.3v3.1L5 8.4V6.3z" fill="currentColor"/></svg>';
+  '<svg viewBox="0 0 12 12" width="15" height="15" aria-hidden="true"><path d="M1.6 2h8.8L7 6.3v3.1L5 8.4V6.3z" fill="currentColor"/></svg>';
 
 function headFilterBtn(key) {
   if (!filterKind(key)) {
@@ -1380,6 +1382,7 @@ function batchOpsItems(opts) {
     { label: "改采购链接", run: batchSetLink },
     { label: "改库存", run: batchSetStock },
     { sep: true },
+    { label: "清空图片文件夹", danger: true, run: batchClearImages },
     { label: "删除", danger: true, run: batchDelete },
   ];
   if (!opts || opts.selOnly !== false) {
@@ -1498,6 +1501,28 @@ function batchDelete() {
     if (ok) {
       post({ type: "deleteProducts", ids: [...state.selectedProducts] });
       state.selectedProducts.clear();
+    }
+  });
+}
+
+// 批量清空图片。传的是编号而不是 id：图片夹就是按编号命名的（{图片根}/{编号}），
+// 让后端从库里反查编号等于为清图白读一趟整库，扩展宿主里不划算。
+// 删完不取消勾选——和清库操作不同，用户多半想接着看着这批商品清第二遍别的。
+function batchClearImages() {
+  if (state.selectedProducts.size === 0) return;
+  const codes = [...new Set(
+    [...state.selectedProducts]
+      .map((id) => state.products.find((p) => p.id === id)?.code)
+      .filter(Boolean),
+  )];
+  if (codes.length === 0) return;
+  confirmBox(
+    `确认清空选中的 ${codes.length} 个商品的图片文件夹？\n` +
+      `图片文件会被真的删除，且不可恢复（不进 ↩ 撤销，也不进 backups/ —— 那里只备份商品库）。`,
+  ).then((ok) => {
+    if (ok) {
+      post({ type: "clearImagesBatch", codes });
+      toast(`🗑已提交批量清空图片 × ${codes.length}`);
     }
   });
 }
@@ -3589,8 +3614,11 @@ function attachBatchSubmenu(menu) {
       )
       .join("") +
     `</div>`;
-  // 插在分隔线之后：这一段是「针对这一行」的操作，批量是「跨行」的，视觉上分开
-  const anchor = menu.querySelector('[data-pctx="off"], [data-pctx="on"]');
+  // 插在「复制整行」上面：批量操作是这套菜单里用得最勤的一条（「现在整批改成这样」比
+  // 「把这一格/这一行复制走」常见得多），压在分隔线下面那段「针对这一行」的操作里，
+  // 等于每次都要越过三行复制项才够得着。代价是「跨行 vs 针对一行」那条视觉分界不再成立，
+  // 改用位置本身来区分：批量在上、复制在下。
+  const anchor = menu.querySelector('[data-copy="row"]');
   if (anchor) {
     menu.insertBefore(sub, anchor);
   } else {

@@ -702,6 +702,95 @@ suite('商品图片删除（占用重试 / 不做无谓备份）', () => {
 		assert.strictEqual(fs.readdirSync(folder).length, 1, '剩下一张还在');
 	});
 
+	// —— 批量清空图片（clearImagesBatch）——
+	// 刻意不走「webview 连发 N 条 clearImages」那条路：每条都会 loadAll() 重读整张商品表，
+	// 勾 50 个就是 50 趟全库。下面第一条把「只 loadAll 一次」钉住。
+
+	test('批量清空：逐个清、整表只重载一次、逐个推 imagesLoaded', async () => {
+		const { root } = seed();
+		const folder2 = path.join(root, 'L002');
+		fs.mkdirSync(folder2);
+		fs.writeFileSync(path.join(folder2, 'a.png'), PNG_1PX);
+		fs.writeFileSync(path.join(folder2, 'b.png'), PNG_1PX);
+		const harness = createHarness(root);
+
+		await imageHandlers(harness.h).clearImagesBatch({ codes: ['L001', 'L002'] }, harness.h);
+
+		assert.deepStrictEqual(fs.readdirSync(path.join(root, 'L001')), []);
+		assert.deepStrictEqual(fs.readdirSync(folder2), []);
+		assert.strictEqual(harness.loadAllCount, 1, 'N 个夹只该重载一次整表，不该 N 次');
+		// 灯箱按 code 认领，imagesLoaded 必须一个 code 一条，合并成一条它不知道该刷哪格
+		const pushed = harness.posted.filter((m) => m.type === 'imagesLoaded').map((m) => m.code);
+		assert.deepStrictEqual(pushed, ['L001', 'L002']);
+		assert.strictEqual(harness.backupCount, 0, '清图是纯文件操作，不该拷整库');
+		const said = harness.logs.find((l) => l.includes('已清空'));
+		assert.ok(said, '应报已清空');
+		assert.ok(said!.includes('2 个商品'), `应报清了几个，实际：${said}`);
+	});
+
+	test('批量清空：没删干净的单独报，绝不混进「已清空」', async function () {
+		this.timeout(15000);
+		const { root, folder } = seed();
+		const folder2 = path.join(root, 'L002');
+		fs.mkdirSync(folder2);
+		fs.writeFileSync(path.join(folder2, 'a.png'), PNG_1PX);
+		const harness = createHarness(root);
+		// L002 那张删不动（模拟另一台机器正开着），L001 照常清掉
+		const blocked = path.join(folder2, 'a.png');
+		const unlink = (fp: string) => {
+			if (fp === blocked) {
+				const err: NodeJS.ErrnoException = new Error('mock EBUSY');
+				err.code = 'EBUSY';
+				throw err;
+			}
+			fs.unlinkSync(fp);
+		};
+
+		await imageHandlers(harness.h, { unlink }).clearImagesBatch(
+			{ codes: ['L001', 'L002'] },
+			harness.h,
+		);
+
+		// 汇总是一条多行日志，断言要按行拆开看：
+		// 「已清空」那一行里绝不能出现 L002，否则用户会以为两个都清干净了。
+		const lines = harness.logs.join('\n').split('\n');
+		const cleared = lines.find((l) => l.includes('已清空'));
+		assert.ok(cleared, 'L001 应报已清空');
+		assert.ok(cleared!.includes('L001'), `实际：${cleared}`);
+		assert.ok(!cleared!.includes('L002'), `没删干净的不许混进「已清空」，实际：${cleared}`);
+		const stuck = lines.find((l) => l.includes('没清干净'));
+		assert.ok(stuck, '应单独说哪些没清干净');
+		assert.ok(stuck!.includes('L002（只删掉 0/1 张）'), `应报出实际删了几张，实际：${stuck}`);
+		assert.ok(
+			harness.logs.join('\n').includes('正被占用'),
+			'应说明是被占用（附 busyHint 的排查提示）',
+		);
+		assert.deepStrictEqual(fs.readdirSync(folder), [], 'L001 照样应该清掉了');
+		assert.deepStrictEqual(fs.readdirSync(folder2), ['a.png'], 'L002 的文件应该还在');
+	});
+
+	test('批量清空：编号带路径分隔符的会被跳过，图片根目录之外的东西不会被删', async () => {
+		const root = makeRoot();
+		const folder = path.join(root, 'L001');
+		fs.mkdirSync(folder);
+		fs.writeFileSync(path.join(folder, 'a.png'), PNG_1PX);
+		// 攻击目标是 root 的**兄弟**目录：`../<basename>` 拼进去刚好指到它
+		const evil = path.join(root, '..', `${path.basename(root)}-evil`);
+		fs.mkdirSync(evil, { recursive: true });
+		roots.push(evil);
+		fs.writeFileSync(path.join(evil, 'secret.png'), PNG_1PX);
+		const harness = createHarness(root);
+
+		await imageHandlers(harness.h).clearImagesBatch(
+			{ codes: ['..', `../${path.basename(root)}-evil`, 'L001'] },
+			harness.h,
+		);
+
+		assert.deepStrictEqual(fs.readdirSync(evil), ['secret.png'], '根目录外的文件不该被删');
+		assert.deepStrictEqual(fs.readdirSync(folder), [], '合法的编号照常清');
+		assert.ok(harness.logs.some((l) => l.includes('编号不合法')), '应说清跳过了几个');
+	});
+
 	test('防回归：改库操作仍必须留档，只有纯文件操作被摘出去', () => {
 		// out/test/ → out/ → 仓库根，再进 src/tools/...（编译产物只拷 .js，源码得从 src 找）
 		const repoSrc = path.join(__dirname, '..', '..', 'src', 'tools', 'shopTool', 'handlers');
