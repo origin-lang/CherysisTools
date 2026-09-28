@@ -94,11 +94,26 @@ function bindEvents() {
   // 敲一个字就把全表重画一遍，手感发飘。
   const kwInput = $("keywordSearch");
   const kwX = $("keywordSearchX");
+  const kwScopeSel = $("keywordScope");
   // ✕ 有字才出现，空框上摆个清空按钮纯属多余
   const syncKwX = () => {
     if (kwX) {
       kwX.hidden = !kwInput.value;
     }
+  };
+  // 下拉选的是哪一列，直接写到输入框的 placeholder 和 title 上。
+  // 目的是没法「忘了自己选了名称」——占位符一直摆在那儿，不用点一下才想起来。
+  // 单列模式的差异（不再跨字段空格、不再去零兜底）也必须写进 title：
+  // 它跟「全部」模式的结果集不一样，光看结果猜不出原因。
+  const syncKeywordUI = () => {
+    const scope = kwScopeSel ? kwScopeSel.value : "all";
+    const all = scope === "all";
+    // 标签表在 client-product.js（KW_SCOPE_LABEL），那边是唯一定义处，这里别再抄一份
+    const label = KW_SCOPE_LABEL[scope] || scope;
+    kwInput.placeholder = all ? "🔍 编号 / 名称 / 品类 / 系列" : `🔍 在${label}中搜索`;
+    kwInput.title = all
+      ? "子串匹配，不区分大小写。四个字段用空格拼成一句话一起找，所以「200ml 个护」能命中「名称尾=200ml 且 品类=个护」的行（打法的空格得正好对上两个字段之间那道缝）。和列头漏斗是叠加关系不是替代——漏斗筛「一批」，这里找「一行」。回车立即生效，Esc 或 ✕ 清空。"
+      : `只搜${label}一列，子串匹配，不区分大小写。四个字段不再拼在一起（多个词要这一列里字面含那个空格），也不再按编号去零兜底。和列头漏斗是叠加关系——同一列被两边筛取交集，漏斗勾「已下架」再搜「在售」会一个都不剩。`;
   };
   const applyKeyword = () => {
     const v = kwInput.value.trim();
@@ -139,6 +154,29 @@ function bindEvents() {
       applyKeyword();
     };
   }
+  // 换搜索范围。有字才重算：空框上切来切去除了改占位符没别的可做，
+  // 白跑一趟全表重画纯属浪费。
+  if (kwScopeSel) {
+    kwScopeSel.onchange = () => {
+      kwScope = kwScopeSel.value;
+      syncKeywordUI();
+      if (kwInput.value.trim()) {
+        applyKeyword();
+      }
+    };
+  }
+  // 浏览器刷新（F5）会恢复 input/select 的控件值，但 filters 是空的。
+  // 以控件当前值为准对齐一次，别让占位符和实际搜索范围对不上。
+  // 这里只同步状态不调 renderProducts()，首刷发生在 initDom 之后。
+  if (kwScopeSel) {
+    kwScope = kwScopeSel.value;
+  }
+  syncKeywordUI();
+  if (kwInput.value.trim()) {
+    filters.keyword = kwInput.value.trim();
+    syncClearFilterBtn();
+  }
+  syncKwX();
   $("clearFilterBtn").onclick = () => {
     for (const k of Object.keys(filters)) {
       delete filters[k];
@@ -146,6 +184,8 @@ function bindEvents() {
     // 状态在 filters 里、输入框里的字不在，清完状态得把框和 ✕ 也抹平，
     // 否则框里还留着字、列表却是全量，看着像筛选没生效
     kwInput.value = "";
+    // 「搜哪一列」那个下拉不复位：它是偏好（和「字段显示」同类）不是筛选条件，
+    // 而空框上 placeholder 会一直写着当前搜哪一列，漏不掉。
     syncKwX();
     syncClearFilterBtn();
     renderProducts();

@@ -195,11 +195,23 @@ function codeQueryMemo(raw) {
 // 或者只记得「香薰摆件」里有哪几个字时用。两者 AND 叠加，随便一起开。
 //
 // 匹配口径照搬删除前那版（f09f3e7 删掉、这次按原样找回），两个已知行为保持不变：
-//   ① 四个字段是用空格拼成一句话再匹配的，所以「香薰 摆件」会命中
-//      「名称=香薰 且 品类=摆件」的行——看着像巧合，但一直是这个语义，改了就是另一套；
+//   ① 四个字段是用空格拼成一句话再匹配的，所以「200ml 个护」会命中
+//      「名称尾=200ml 且 品类=个护」的行。坑在打法的空格得正好对上字段之间那道缝：
+//      「香薰 蜡烛」是搜不到的，因为「香薰」只是「香薰蜡烛」的前缀，不是一个完整字段值。
+//      看着像巧合，但一直是这个语义，改了就是另一套；
 //   ② 编号的「去零兜底」只作用于编号列，且关键字里只要含数字就启用，
 //      所以「香薰 12」也会顺带去编号里找 12。误伤面小（只可能捞中编号，意图八成也是编号）。
+//
+// 上面两条只属于「全部」这条路径。工具栏那个「搜哪一列」下拉（kwScope）默认 all；
+// 选定某一列后只剩该列的子串匹配，①的跨字段空格和②的去零兜底都不再走。
+// 不跟着收窄的话会出现最莫名其妙的一种结果：明明选了「名称」，打「香薰 12」
+// 还捞出一堆编号对不上的行。
 const KEYWORD_FIELDS = ["code", "name", "category", "series"];
+// 下拉的可选列 = 这份清单的唯一出处：fragment.html 的 <option> 照它排，client-main 的
+// 占位符/提示文案照它取标签。取值一律走 cellValue —— 状态那列出的是「在售/已下架」，
+// 和漏斗面板、画册、导出是同一套中文标签，不用另写映射。
+const KW_SCOPE_LABEL = { code: "编号", name: "名称", category: "品类", series: "系列", status: "状态" };
+let kwScope = "all";
 let _kwRaw = null;
 let _kwParsed = null;
 /** 跟 codeQueryMemo 同一套一格记忆：一次渲染会多次过 filteredProducts，别每行都重算。 */
@@ -216,6 +228,14 @@ function keywordMemo(raw) {
 function matchKeyword(p, q) {
   if (!q.kw) {
     return true;
+  }
+  if (kwScope !== "all") {
+    // 单列：只在这一列里找子串。大小写不敏感。
+    // 不用去零兜底：选了「编号」的话子串本来就够（L007 含 7、L76 含 76），
+    // 再兜一遍没多捞出任何行；选了别的列则是纯粹添乱。
+    return String(cellValue(p, kwScope) ?? "")
+      .toLowerCase()
+      .includes(q.kw);
   }
   const hay = KEYWORD_FIELDS.map((f) => String(p[f] ?? "")).join(" ");
   if (hay.toLowerCase().includes(q.kw)) {
@@ -658,6 +678,9 @@ function filterSig(list) {
     filters,
     sortKey,
     sortDir,
+    // 搜索范围也是结果集的一部分：查询词一个字没改、只切了下拉，行就换了。
+    // 不把它算进 sig 的话，切范围时若新旧结果条数刚好相同，翻到第 2 页不会退回第 1 页。
+    kw: kwScope,
   });
 }
 

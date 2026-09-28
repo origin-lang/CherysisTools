@@ -432,8 +432,14 @@
         display: flex;
         align-items: center;
       }
+      /* 选项全是两个字宽，给固定宽度免得它按最长项撑开、把右边的工具栏按钮挤掉 */
+      #keywordScope {
+        width: 64px;
+        padding: 5px 2px 5px 4px;
+      }
       .tb-search input {
-        width: 190px;
+        /* 比原来窄：左边让出一块给「搜哪一列」的下拉，净增只有十来个像素 */
+        width: 132px;
         padding-right: 22px;
       }
       .tb-search-x {
@@ -1365,6 +1371,14 @@
         <span class="tb-sep"></span>
         <button id="colSetBtn">字段显示</button>
         <span class="tb-sep"></span>
+        <select id="keywordScope" title="选要搜哪一列。默认「全部」是编号/名称/品类/系列拼起来一起做子串匹配；选定某一列就只搜那一列。和下面列头的漏斗是叠加关系，同一列被两边筛取交集，不是二选一。">
+          <option value="all">全部</option>
+          <option value="code">编号</option>
+          <option value="name">名称</option>
+          <option value="category">品类</option>
+          <option value="series">系列</option>
+          <option value="status">状态</option>
+        </select>
         <div class="tb-search">
           <input id="keywordSearch" type="text" placeholder="🔍 编号 / 名称 / 品类 / 系列" title="快速找一行：按编号/名称/品类/系列做子串匹配（不区分大小写）。和列头漏斗是叠加关系不是替代——漏斗筛「一批」，这里找「一行」。回车立即生效，Esc 或 ✕ 清空。" />
           <button id="keywordSearchX" class="tb-search-x" type="button" title="清空搜索" aria-label="清空搜索" hidden>✕</button>
