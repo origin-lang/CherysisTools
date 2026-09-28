@@ -22,6 +22,14 @@ const IMG_MIME_EXT: Record<string, string> = {
 };
 const MAX_IMG_BYTES = 25 * 1024 * 1024;
 
+/**
+ * 大图请求里的 `name` 来自 webview，拼进 path.join 就是一条任意路径，`../../x` 能逃出
+ * 商品夹读到别人的文件。只认「同目录下的纯文件名」。真正的取值还会在调用处再过一遍
+ * listImageFiles 的白名单（文件可能刚被别人删掉）。
+ */
+const isPlainImageName = (n: string): boolean =>
+  !!n && n !== "." && n !== ".." && !/[\\/]/.test(n) && !n.startsWith(".");
+
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /**
@@ -208,10 +216,13 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       imgs.push(await thumbToCachedBase64(path.join(folder, name), cacheDir(), code, name));
     }
     // 首张大图只发 URI 不发 base64：图库里其它张点开放大时按需取
+    // names 与 images 严格同序。前端拿文件名当每张图的身份，删掉第 1 张后第 2 张顶到
+    // 序号 0 也不会张冠李戴（用序号当身份时，那正是「删完大图还是旧的」那个 bug）
     post({
       type: "imagesLoaded",
       code,
       images: imgs,
+      names: files,
       big0Uri: files[0] ? webviewUri(path.join(folder, files[0])) : "",
     });
   };
@@ -253,7 +264,7 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       const code = String(msg.code ?? "");
       const dir = imageDir();
       if (!dir) {
-        post({ type: "imagesLoaded", code, images: [] });
+        post({ type: "imagesLoaded", code, images: [], names: [] });
         return;
       }
       await reloadImages(code);
@@ -261,13 +272,18 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
 
     async getFullImage(msg) {
       const code = String(msg.code ?? "");
-      const index = Number(msg.index ?? 0);
       const dir = imageDir();
       const folder = dir ? path.join(dir, code) : "";
+      const idx = Number(msg.index ?? 0);
+      const rawName = typeof msg.name === "string" ? msg.name : "";
       const files = folder ? listImageFiles(folder) : [];
-      const fp = files[index] ? path.join(folder, files[index]) : null;
+      // 传了 name 就以它为准：文件名才是这张图的身份，序号会因前面几张被删而错位。
+      // 传了但不老实（带分隔符、以点开头）就当这张取不到，**不**退回 index——退回等于
+      // 「点第 3 张返回第 1 张」，正是这里要根除的那类错位。
+      const name = rawName ? (isPlainImageName(rawName) ? rawName : null) : files[idx];
+      const fp = folder && name && files.includes(name) ? path.join(folder, name) : null;
       const reply = (extra: Record<string, unknown>) =>
-        post({ type: "fullImageLoaded", code, index, ...extra });
+        post({ type: "fullImageLoaded", code, index: idx, name: name ?? "", ...extra });
       if (!fp) {
         reply({ data: "" });
         return;
@@ -425,7 +441,7 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       } else {
         log(`⚠️清空 ${code} 图片夹只成功 ${ok}/${files.length} 张（${lastErr?.message || ""}）`);
       }
-      post({ type: "imagesLoaded", code, images: [] });
+      post({ type: "imagesLoaded", code, images: [], names: [] });
       h.invalidateCover(code);
       h.loadAll();
     },
@@ -438,15 +454,15 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
         return;
       }
       const folder = path.join(dir, code);
-      if (!fs.existsSync(folder)) {
-        log(`⚠️${code} 没有图片文件夹`);
-        return;
-      }
+      // 夹还没建时也把用户送到能落手的地方：reveal 图片根目录，而不是一句「没有图片文件夹」
+      // 就什么都不做。灯箱里一张图都没有时右键菜单只剩「打开图片文件夹」这一项，它不能是死路。
+      // 保持只读（不 mkdir）：共享盘上要不要建这个目录，不该由一次右键菜单替用户决定。
+      const target = fs.existsSync(folder) ? folder : dir;
       try {
-        await vscode.commands.executeCommand(
-          "revealFileInOS",
-          vscode.Uri.file(folder),
-        );
+        await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(target));
+        if (target !== folder) {
+          log(`📂${code} 还没有图片文件夹，已打开图片根目录（图放进 ${code} 子夹即可，或在灯箱里点上传）`);
+        }
       } catch (err: any) {
         log(`⚠️打开图片文件夹失败：${err.message}`);
       }
@@ -462,7 +478,12 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       }
       const folder = path.join(dir, code);
       const files = listImageFiles(folder);
-      const fp = files[index] ? path.join(folder, files[index]) : null;
+      // 同 getFullImage：优先按文件名删（前端弹菜单时就知道这张叫什么）。序号只在
+      // 收不到 name 时兜底——别人在这期间删掉前面一张，序号就已经指到别的文件了，
+      // 那样会删掉用户没点的那张。
+      const rawName = typeof msg.name === "string" ? msg.name : "";
+      const name = rawName ? (isPlainImageName(rawName) ? rawName : null) : files[index];
+      const fp = folder && name && files.includes(name) ? path.join(folder, name) : null;
       if (!fp) {
         log(`⚠️${code} 没有第 ${index + 1} 张图片`);
         return;

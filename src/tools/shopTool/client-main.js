@@ -1046,24 +1046,31 @@ function onMessage(msg) {
         break;
       }
       if (!msg.images.length) {
+        state.lbNames = [];
         thumbs.innerHTML = `<span class="muted" style="color:#bbb">（无图片：把图放到「图片根目录/${esc(msg.code)}」文件夹，或点「🖼 上传图片」）</span>`;
         big.style.display = "none";
         return;
       }
+      // 文件名才是每张图的身份（与 images 同序）。后端没带 names 时退回序号拼一个，
+      // 让老数据也能走通——键错中的后果是显示错图，所以这里只是兜底，正常路径都有名字
+      state.lbNames = msg.names || msg.images.map((_, i) => String(i));
       const hadIdx = state.lbIdx || 0;
       const idx = Math.min(hadIdx, msg.images.length - 1);
       state.lbIdx = idx;
       big.style.display = "inline-block";
-      const key = `${msg.code}:${idx}`;
+      // 键用文件名而不是序号：删掉第 1 张后第 2 张顶到序号 0，用序号做键的话这里会命中
+      // 「刚被删掉那张」的 base64 —— 大图停在已删除的图上，而缩略图条是重建的、排版看着对的。
+      // 键不中的代价只是重新取一次原图，键错中的代价是显示错图，所以宁可多取。
+      const key = `${msg.code}:${state.lbNames[idx]}`;
       // lbFullCache 只存 base64（来自兜底/复制通道）；显示优先走 URI，不必也不该缓存
       const cached = state.lbFullCache[key];
       if (cached) {
         big.onerror = null;
         big.src = cached;
       } else if (idx === 0 && msg.big0Uri) {
-        setLightboxBig(big, msg.code, 0, msg.big0Uri);
+        setLightboxBig(big, msg.code, state.lbNames[0], msg.big0Uri);
       } else {
-        post({ type: "getFullImage", code: msg.code, index: idx });
+        post({ type: "getFullImage", code: msg.code, index: idx, name: state.lbNames[idx] });
       }
       thumbs.innerHTML = msg.images
         .map(
@@ -1074,8 +1081,9 @@ function onMessage(msg) {
       thumbs.querySelectorAll("img").forEach((img) => {
         img.onclick = () => {
           const idx = Number(img.dataset.i);
+          const name = state.lbNames[idx];
           state.lbIdx = idx;
-          const key = `${msg.code}:${idx}`;
+          const key = `${msg.code}:${name}`;
           resetLbZoom();
           thumbs
             .querySelectorAll("img")
@@ -1086,7 +1094,7 @@ function onMessage(msg) {
             big.onerror = null;
             big.src = cached;
           } else {
-            post({ type: "getFullImage", code: msg.code, index: idx });
+            post({ type: "getFullImage", code: msg.code, index: idx, name });
           }
         };
         img.oncontextmenu = (e) => {
@@ -1114,7 +1122,9 @@ function onMessage(msg) {
       }
       // base64 通道：兜底显示 + 右键复制的实际来源，存进 lbFullCache 供本次会话复用
       if (msg.data) {
-        state.lbFullCache[`${msg.code}:${msg.index}`] = msg.data;
+        // 键用文件名（后端回带的 name），不是序号
+        const key = `${msg.code}:${msg.name || msg.index}`;
+        state.lbFullCache[key] = msg.data;
         if (state.lbIdx === msg.index) {
           big.onerror = null;
           big.src = msg.data;
@@ -1122,14 +1132,14 @@ function onMessage(msg) {
         // 图到位了就把还开着的菜单里那一项点亮，**这里一个字都不往剪贴板写**。
         // 以前这里是「pending 就直接复制」：右键弹菜单的同一个 tick 里就置了
         // lbPendingCopy，所以光右键就把图塞进剪贴板了。
-        if (state.lbCopyKey === `${msg.code}:${msg.index}`) {
+        if (state.lbCopyKey === key) {
           enableLbCopyItem();
         }
         break;
       }
       // URI 通道：默认显示路径；加载失败由 setLightboxBig 的 onerror 回退
       if (msg.uri && state.lbIdx === msg.index) {
-        setLightboxBig(big, msg.code, msg.index, msg.uri);
+        setLightboxBig(big, msg.code, msg.name, msg.uri);
       }
       break;
     }
@@ -1173,7 +1183,7 @@ function patchCoverRow(code, data) {
 // 大图显示：优先用后端给的 webview 资源 URI（0 拷贝、100% 原图）。
 // 加载不出来时（图片目录不在面板的 localResourceRoots 白名单里，或 UNC 路径加载不出）
 // onerror 自动回退请求 base64 通道；重设 src 前先摘掉 handler，否则兜底再失败会无限打转。
-function setLightboxBig(big, code, index, uri) {
+function setLightboxBig(big, code, name, uri) {
   if (!uri) {
     big.onerror = null;
     big.src = "";
@@ -1181,16 +1191,21 @@ function setLightboxBig(big, code, index, uri) {
   }
   big.onerror = () => {
     big.onerror = null;
-    post({ type: "getFullImage", code, index, base64: true });
+    post({ type: "getFullImage", code, name, base64: true });
   };
   big.src = uri;
 }
 
 function openLightboxMenu(e, code, idx) {
-  const key = `${code}:${idx}`;
+  // 这张图叫什么：后端下发的文件名才是身份，序号只是「当前选中第几张」
+  const name = state.lbNames[idx] ?? String(idx);
+  const key = `${code}:${name}`;
   // 复制只能吃 data URL。base64 不在 cache 里就置灰——**不** arm 什么「载入后自动复制」：
   // 用户只是弹了个菜单，凭什么往剪贴板塞东西。
   const copyItem = {
+    // id：让 enableLbCopyItem 能认回这一项。菜单项现在是有条件构造的，
+    // 「排在 data-ic=0」不再等价于「就是复制那项」。
+    id: "lbCopyImg",
     label: "📋 复制图片",
     disabled: true,
     title: "原图载入中，请稍候再试",
@@ -1226,7 +1241,9 @@ function openLightboxMenu(e, code, idx) {
             closeLightbox();
             // 摘掉 DOM 不等于句柄立刻释放，给浏览器一帧
             requestAnimationFrame(() => {
-              post({ type: "deleteImageFile", code, index: idx });
+              // 按名字删而不是按序号：关抽屉到请求发出之间，夹子里的文件可能被别人动过，
+              // 序号已经指到别的文件上，那样会删掉用户没点的那张
+              post({ type: "deleteImageFile", code, index: idx, name });
             });
           },
         );
@@ -1246,15 +1263,18 @@ function openLightboxMenu(e, code, idx) {
   } else {
     // 预热 cache（**不复制**）。少了这一步首次右键必然是灰的，
     // 用户只能关掉菜单再右键一次，很别扭。
-    post({ type: "getFullImage", code, index: idx, base64: true });
+    post({ type: "getFullImage", code, index: idx, name, base64: true });
   }
 }
 
 // 把还开着的菜单里那一项从灰点亮。菜单已关时查不到节点，直接空转。
 function enableLbCopyItem() {
-  const el = document.querySelector('#imgCtxMenu [data-ic="0"]');
+  const el = document.querySelector('#imgCtxMenu [data-ic-id="lbCopyImg"]');
   const it = state.lbCopyItem;
-  if (!el || !it) {
+  // 归属校验挡住一种错配：预热请求在途 → 别人把最后一张删了、清单变空 → 用户右键弹出
+  // 只有「打开图片文件夹」的菜单 → 预热回复这时才到。原来按 [data-ic="0"] 选会挑中那一项，
+  // 把它的文案改写成「复制图片」，而它的 run 仍然打开文件夹
+  if (!el || !it || it.id !== "lbCopyImg") {
     return;
   }
   it.disabled = false;
@@ -1270,13 +1290,27 @@ function openCurrentLightboxMenu(e) {
     return;
   }
   const thumbs = document.getElementById("lbThumbs");
-  if (!thumbs || !thumbs.querySelector("img")) {
-    // 区分「还在加载」和「真没有」：灯箱刚开时 thumbs 里是「图片加载中…」，
-    // 这时候报「该商品还没有图片」是骗人。
-    toast(state.lbImagesLoaded ? "该商品还没有图片" : "图片加载中…");
+  if (!thumbs) {
     return;
   }
-  openLightboxMenu(e, state.lbCode, state.lbIdx || 0);
+  // 捕获成局部：菜单点下去之前灯箱可能已经关了或换了商品，
+  // 到那时再读 state.lbCode 就会打开别人的图片夹
+  const code = state.lbCode;
+  if (!thumbs.querySelector("img")) {
+    if (!state.lbImagesLoaded) {
+      // 灯箱刚开时 thumbs 里是「图片加载中…」，这时候报「该商品还没有图片」是骗人
+      toast("图片加载中…");
+      return;
+    }
+    // 清单到了且一张都没有：复制和删除都没有对象可作用，不放这两项。
+    // 「打开图片文件夹」照旧给——空状态下这是唯一还能往下走的一步：文件夹可能存在
+    // （只是空的），也可能还没建（后端对后者会 reveal 图片根目录）
+    showImageCtxMenu(e.clientX, e.clientY, [
+      { label: "📂 打开图片文件夹", run: () => post({ type: "openImageFile", code }) },
+    ]);
+    return;
+  }
+  openLightboxMenu(e, code, state.lbIdx || 0);
 }
 
 window.toolClients.shopTool = {

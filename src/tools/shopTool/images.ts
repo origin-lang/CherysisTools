@@ -8,6 +8,40 @@ export const UPLOAD_FILTER: Record<string, string[]> = {
   图片: ["jpg", "jpeg", "png", "bmp", "webp", "gif"],
 };
 
+/**
+ * stat 不到 mtime 时的哨兵。取极大**有限**值而不是 Infinity：两个哨兵相减是 NaN，
+ * 而 NaN 参与排序会直接毁掉确定性（同组比较全判「相等」，顺序取决于 V8 当时的实现）。
+ */
+const NO_MTIME = Number.MAX_SAFE_INTEGER;
+
+const mtimeOf = (fp: string): number => {
+  try {
+    return fs.statSync(fp).mtimeMs;
+  } catch {
+    return NO_MTIME;
+  }
+};
+
+/**
+ * 文件名比较：只在「加入时间完全相同」时作回落。
+ *
+ * 为什么必须是确定性的（不能改成随机）：`deleteImageFile` 与 `getFullImage` 都是**在请求
+ * 到达时重新读一次目录**、再按下标取文件（handlers/image.ts 里两处），前端按下标发请求。
+ * 同一份夹子两次读出不同顺序，就意味着用户看到的第 2 张和实际删掉的第 2 张不是同一张。
+ */
+const byName = (a: string, b: string): number => {
+  const na = Number((a.match(/(\d+)/) || ["", "0"])[1]);
+  const nb = Number((b.match(/(\d+)/) || ["", "0"])[1]);
+  return na - nb || a.localeCompare(b);
+};
+
+/**
+ * 图片夹里的图片，按**加入文件夹的时间**升序（最早上传的排第 1，也就是封面那一张）。
+ *
+ * 为什么不用文件名：夹子里的图不一定是扩展自己放进去的——同事可以直接把文件拖进共享盘的
+ * 夹子，叫什么都行。原先按「文件名第一段数字 + 字母序」排，对 `{编号}_{时间戳}.jpg` 恰好
+ * 等价于时间序，对这种外来文件就只能排出一个任意顺序，于是「哪张是封面」变成一件看名字猜的事。
+ */
 export function listImageFiles(dir: string): string[] {
   let files: string[] = [];
   try {
@@ -17,11 +51,17 @@ export function listImageFiles(dir: string): string[] {
   } catch {
     files = [];
   }
-  files.sort((a, b) => {
-    const na = Number((a.match(/(\d+)/) || ["", "0"])[1]);
-    const nb = Number((b.match(/(\d+)/) || ["", "0"])[1]);
-    return na - nb || a.localeCompare(b);
-  });
+  // 一张图时顺序无从谈起，直接返回：绝大多数商品夹就属于这种，于是零额外 stat
+  if (files.length < 2) {
+    return files;
+  }
+  // 先 stat 完再排，不在比较函数里 stat：放比较函数里会变成 O(n log n) 次 stat，
+  // 共享盘上每次都是一趟 SMB 往返
+  const times = new Map<string, number>();
+  for (const f of files) {
+    times.set(f, mtimeOf(path.join(dir, f)));
+  }
+  files.sort((a, b) => times.get(a)! - times.get(b)! || byName(a, b));
   return files;
 }
 

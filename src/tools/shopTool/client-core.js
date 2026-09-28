@@ -34,9 +34,14 @@ window.toolClients = window.toolClients || {};
       salesDate: "",
       trend: { by: "month", rows: [], productId: null },
       lbCode: null,
+      // 灯箱当前清单的文件名，与后端 imagesLoaded.names 同序。
+      // 每张图的身份用它，不用序号：删掉前面一张会让后面几张的序号全部前移。
+      lbNames: [],
       coverCache: {},
       coverPending: {},
       coverRenderQueued: false,
+      // 大图 base64 缓存，键 = `${code}:${文件名}`。键不中的代价只是重新取一次图，
+      // 键错中的代价是显示成别的图，所以宁可多取。
       lbFullCache: {},
       liveStars: null,
       livePlan: [],
@@ -532,11 +537,14 @@ window.toolClients = window.toolClients || {};
             return `<div style="border-top:1px solid var(--vscode-panel-border);margin:3px 0"></div>`;
           }
           // disabled 走 .ctx-item.ctx-disabled（那套样式 fragment.html 里已经有了），
-          // title 用来讲清「为什么灰着」，否则用户只看到一项灰的、不知道在等什么
+          // title 用来讲清「为什么灰着」，否则用户只看到一项灰的、不知道在等什么。
+          // id 可选：菜单项构造变成有条件之后，data-ic 那个下标就不再是稳定身份了
+          // （灯箱要按 id 找回「复制图片」那一项，不能靠它排在第几个）。
           return (
             `<div class="ctx-item${it.danger ? " ctx-danger" : ""}` +
             `${it.disabled ? " ctx-disabled" : ""}"` +
-            ` data-ic="${i}"${it.title ? ` title="${esc(it.title)}"` : ""}>` +
+            ` data-ic="${i}"${it.id ? ` data-ic-id="${esc(it.id)}"` : ""}` +
+            `${it.title ? ` title="${esc(it.title)}"` : ""}>` +
             `${esc(it.label)}</div>`
           );
         })

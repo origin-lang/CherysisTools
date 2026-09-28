@@ -506,16 +506,25 @@ function zoomLbAt(clientX, clientY, next) {
 }
 
 function openLightbox(product) {
-  if (state.lbCode !== product.code) {
-    state.lbFullCache = {};
-  }
+  // closeLightbox() 必须排在赋值**前面**：它会把 state.lbCode 清成 null，
+  // 反过来先赋值就会被自己刚清掉的那个值抹回去，后面所有 imagesLoaded 都对不上 code。
+  closeLightbox();
   state.lbCode = product.code;
   state.lbIdx = 0;
   state.lbZoom = 1;
   state.lbBase = null;
   state.lbDragged = false;
   state.lbImagesLoaded = false;
-  closeLightbox();
+  state.lbNames = [];
+  // 缓存键是 `${code}:${文件名}`，同一商品内复用是安全的（文件名变了就是另一张图，
+  // 不存在「序号被复用」那种张冠李戴）。但别的商品的条目留着纯占内存（一张图转成
+  // base64 能有几 MB），开新的就把它们清掉。
+  const keep = `${product.code}:`;
+  for (const k of Object.keys(state.lbFullCache)) {
+    if (!k.startsWith(keep)) {
+      delete state.lbFullCache[k];
+    }
+  }
   const lb = document.createElement("div");
   lb.id = "lbBox";
   lb.className = "lightbox";
@@ -670,6 +679,10 @@ function closeLightbox() {
   if (lb) {
     lb.remove();
   }
+  // 必须清掉：灯箱关了还留着 code，拖放/粘贴的落点解析（productForDropOrPaste）会
+  // 拿它去找商品，imagesLoaded / fullImageLoaded 也会误以为灯箱还开着，
+  // 往一个没人看的 state 上写，下次开别的商品时那份陈旧数据就成了串味的来源
+  state.lbCode = null;
 }
 
 function filterSig(list) {

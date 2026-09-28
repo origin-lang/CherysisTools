@@ -10,7 +10,7 @@ import { settingsHandlers } from '../tools/shopTool/handlers/settings.js';
 import { HandlerCtx } from '../tools/shopTool/handlers/types.js';
 import { ToolContext } from '../core/toolContext.js';
 import { LOCAL_PREF_KEYS, withBackupTimeout } from '../tools/shopTool/index.js';
-import { previewThumbPath, drainInflightThumbs } from '../tools/shopTool/images.js';
+import { previewThumbPath, drainInflightThumbs, listImageFiles, thumbToCachedBase64 } from '../tools/shopTool/images.js';
 import { renderStarOverviewBuffer, renderLiveGrid } from '../tools/shopTool/liveGrid.js';
 import {
 	handleNineGridLabel,
@@ -482,6 +482,15 @@ suite('商品图片删除（占用重试 / 不做无谓备份）', () => {
 		return root;
 	}
 
+	/**
+	 * 显式钉死文件的 mtime。同一次 writeFileSync 连写几张，mtime 很可能落在同一毫秒上，
+	 * 那时 listImageFiles 会走「同值回落文件名」那条分支，要测的「按加入时间排」根本测不出来。
+	 */
+	function stampFile(fp: string, iso: string): void {
+		const t = new Date(iso);
+		fs.utimesSync(fp, t, t);
+	}
+
 	/** 造一个可用的图片根目录 + 一个装了 1 张图的编号夹 */
 	function seed(code = 'L001'): { root: string; folder: string } {
 		const root = makeRoot();
@@ -837,6 +846,251 @@ suite('商品图片删除（占用重试 / 不做无谓备份）', () => {
 		assert.ok(
 			!harness.logs.some((l) => l.includes('删不掉')),
 			`不该报占用，实际：${JSON.stringify(harness.logs)}`,
+		);
+	});
+});
+
+suite('图库按「加入文件夹的时间」排序（封面 = 最先放进去的那张）', () => {
+	const roots: string[] = [];
+	const PNG_1PX = Buffer.from(
+		'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+		'base64',
+	);
+
+	function makeRoot(): string {
+		const root = makeTempDir('img-sort-');
+		roots.push(root);
+		return root;
+	}
+
+	/** 钉死 mtime，否则同一次写入的几张很可能同毫秒，「按时间排」就测不出差别了 */
+	function stampFile(fp: string, iso: string): void {
+		const t = new Date(iso);
+		fs.utimesSync(fp, t, t);
+	}
+
+	/** 造一个夹子并指定每张图的加入时间；名字按传入顺序摆（`{名字, 时间}`） */
+	function seedImages(items: Array<[string, string]>): { root: string; folder: string } {
+		const root = makeRoot();
+		const folder = path.join(root, 'L001');
+		fs.mkdirSync(folder);
+		for (const [name, iso] of items) {
+			const fp = path.join(folder, name);
+			fs.writeFileSync(fp, PNG_1PX);
+			stampFile(fp, iso);
+		}
+		return { root, folder };
+	}
+
+	test('字母序和时间序故意相反时，按加入时间排（不看文件名）', () => {
+		const { folder } = seedImages([
+			['zzz.png', '2026-01-01T00:00:00Z'], // 先放
+			['aaa.png', '2026-06-01T00:00:00Z'], // 后放
+		]);
+
+		assert.deepStrictEqual(
+			listImageFiles(folder),
+			['zzz.png', 'aaa.png'],
+			'应按 mtime 升序；按文件名排的话会给出 aaa 在前',
+		);
+	});
+
+	test('加入时间完全相同时回落文件名，保证同一份夹子两次读顺序一致', () => {
+		// 这条不是口味问题：deleteImageFile / getFullImage 都是在**请求到达时**重新读一次
+		// 目录再按下标取文件，顺序不稳定就意味着删掉的不是用户看到的那张
+		const { folder } = seedImages([
+			['b.png', '2026-01-01T00:00:00Z'],
+			['a.png', '2026-01-01T00:00:00Z'],
+		]);
+
+		const first = listImageFiles(folder);
+		const second = listImageFiles(folder);
+
+		assert.deepStrictEqual(first, ['a.png', 'b.png'], '同 mtime 应按文件名 a 在前');
+		assert.deepStrictEqual(second, first, '两次读必须完全一致，否则按下标操作会指错文件');
+	});
+
+	test('封面是最先放进去的那张：与文件名字母序相反时也要选对', async () => {
+		const { root, folder } = seedImages([
+			['zzz.png', '2026-01-01T00:00:00Z'],
+			['aaa.png', '2026-06-01T00:00:00Z'],
+		]);
+		const storage = makeRoot();
+		const posted: any[] = [];
+		const coverCache = new Map<string, { data: string; dirMtime: number }>();
+		const h = {
+			ctx: {
+				defaultStorageDir: storage,
+				panel: { webview: { asWebviewUri: (u: vscode.Uri) => u } },
+			} as unknown as ToolContext,
+			imageDir: () => root,
+			coverCache,
+			log: () => undefined,
+			post: (m: any) => posted.push(m),
+			preOpBackup: async () => undefined,
+			invalidateCover: (code: string) => coverCache.delete(code),
+			loadAll: () => undefined,
+		} as unknown as HandlerCtx;
+
+		await imageHandlers(h).getCover({ code: 'L001' }, h);
+
+		const want = await thumbToCachedBase64(
+			path.join(folder, 'zzz.png'),
+			storage,
+			'L001',
+			'zzz.png',
+		);
+		assert.ok(want, '对照用的缩略图本身应生成成功');
+		assert.strictEqual(
+			coverCache.get('L001')?.data,
+			want,
+			'封面应是 mtime 最早那张（zzz），不是字母序靠前的 aaa',
+		);
+	});
+
+	test('imagesLoaded 的 names 与 images 严格同序（前端靠它把序号换算成身份）', async () => {
+		const { root, folder } = seedImages([
+			['zzz.png', '2026-01-01T00:00:00Z'],
+			['aaa.png', '2026-06-01T00:00:00Z'],
+		]);
+		const storage = makeRoot();
+		const posted: any[] = [];
+		const h = {
+			ctx: {
+				defaultStorageDir: storage,
+				panel: { webview: { asWebviewUri: (u: vscode.Uri) => u } },
+			} as unknown as ToolContext,
+			imageDir: () => root,
+			coverCache: new Map(),
+			log: () => undefined,
+			post: (m: any) => posted.push(m),
+			preOpBackup: async () => undefined,
+			invalidateCover: () => undefined,
+			loadAll: () => undefined,
+		} as unknown as HandlerCtx;
+
+		await imageHandlers(h).getImages({ code: 'L001' }, h);
+
+		const msg = posted.find((m) => m.type === 'imagesLoaded');
+		assert.ok(msg, '应推送 imagesLoaded');
+		assert.deepStrictEqual(msg.names, listImageFiles(folder));
+		assert.strictEqual(msg.names.length, msg.images.length, 'names 与 images 必须一一对应');
+	});
+
+	test('删掉一张后，剩下那张仍能按自己的文件名取到原图（就是那个 bug 的后端不变量）', async () => {
+		const { root, folder } = seedImages([
+			['a.png', '2026-01-01T00:00:00Z'],
+			['b.png', '2026-06-01T00:00:00Z'],
+		]);
+		const storage = makeRoot();
+		const posted: any[] = [];
+		const h = {
+			ctx: {
+				defaultStorageDir: storage,
+				panel: { webview: { asWebviewUri: (u: vscode.Uri) => u } },
+			} as unknown as ToolContext,
+			imageDir: () => root,
+			coverCache: new Map(),
+			log: () => undefined,
+			post: (m: any) => posted.push(m),
+			preOpBackup: async () => undefined,
+			invalidateCover: () => undefined,
+			loadAll: () => undefined,
+		} as unknown as HandlerCtx;
+		const handlers = imageHandlers(h);
+
+		await handlers.deleteImageFile({ code: 'L001', index: 0, name: 'a.png' }, h);
+		assert.strictEqual(fs.existsSync(path.join(folder, 'a.png')), false);
+		const after = posted.filter((m) => m.type === 'imagesLoaded').pop();
+		assert.deepStrictEqual(after.names, ['b.png'], 'b.png 现在排在序号 0');
+
+		// 关键：序号已经是 0 了，但它的身份仍然是 b.png。前端如果还用序号当缓存键，
+		// 这里就会命中「刚被删掉那张」的 base64 —— 大图停在已删除的图上
+		posted.length = 0;
+		await handlers.getFullImage({ code: 'L001', index: 0, name: 'b.png', base64: true }, h);
+		const got = posted.find((m) => m.type === 'fullImageLoaded');
+		assert.ok(got?.data, '按文件名应能取到 b.png 的原图');
+		assert.strictEqual(got.name, 'b.png', '回复要回带 name，前端据此写缓存键');
+	});
+
+	test('大图请求里的文件名不老实：目录穿越拿不到任何内容，且不退回序号', async () => {
+		const { root } = seedImages([['a.png', '2026-01-01T00:00:00Z']]);
+		// 夹子外面放一张真图，用来验证真的没被读到
+		fs.writeFileSync(path.join(root, 'secret.png'), PNG_1PX);
+		const storage = makeRoot();
+		const posted: any[] = [];
+		const h = {
+			ctx: {
+				defaultStorageDir: storage,
+				panel: { webview: { asWebviewUri: (u: vscode.Uri) => u } },
+			} as unknown as ToolContext,
+			imageDir: () => root,
+			coverCache: new Map(),
+			log: () => undefined,
+			post: (m: any) => posted.push(m),
+			preOpBackup: async () => undefined,
+			invalidateCover: () => undefined,
+			loadAll: () => undefined,
+		} as unknown as HandlerCtx;
+		const handlers = imageHandlers(h);
+
+		for (const bad of ['../secret.png', '..\\secret.png', 'a/b.png', '.', '..', '.hidden.png']) {
+			posted.length = 0;
+			await handlers.getFullImage({ code: 'L001', index: 0, name: bad, base64: true }, h);
+			const got = posted.find((m) => m.type === 'fullImageLoaded');
+			assert.ok(!got?.data, `${bad} 不该取到任何内容`);
+			assert.ok(!got?.uri, `${bad} 不该给出一个 URI`);
+		}
+	});
+});
+
+suite('防回归：图库与灯箱的身份一律用文件名，不用序号', () => {
+	function readClient(name: string): string {
+		// out/test/ → out/ → 仓库根，再进 src/tools/...（编译产物只拷 .js，源码得从 src 找）
+		return fs.readFileSync(
+			path.join(__dirname, '..', '..', 'src', 'tools', 'shopTool', name),
+			'utf-8',
+		);
+	}
+
+	test('大图缓存键不许再用序号', () => {
+		const src = readClient('client-main.js');
+		// `${code}:${idx}` 形式的键一旦回来，删图后就又会出现「大图还是已删除那张、
+		// 缩略图条排版却是对的」——因为删掉第 1 张会让后面所有张的序号前移
+		assert.ok(
+			!/\$\{(?:msg\.)?code\}:\$\{(?:msg\.)?idx\}/.test(src),
+			'client-main.js 里不该再有 `${code}:${idx}` 形式的缓存键（必须按文件名）',
+		);
+		assert.ok(
+			/state\.lbNames\s*=\s*msg\.names/.test(src),
+			'灯箱应保存后端下发的 names（文件名清单）',
+		);
+		assert.ok(
+			/\[data-ic-id="lbCopyImg"\]/.test(src),
+			'enableLbCopyItem 应按 id 找复制项：菜单项已改成条件构造，「排在 data-ic=0」不再等价',
+		);
+		assert.ok(
+			/data-ic-id="\$\{esc\(it\.id\)\}"/.test(readClient('client-core.js')),
+			'showImageCtxMenu 渲染时没把 item.id 落到 data-ic-id，按 id 找就无从谈起',
+		);
+	});
+
+	test('openLightbox 必须先 closeLightbox() 再赋 state.lbCode', () => {
+		const src = readClient('client-product.js');
+		// closeLightbox 会把 lbCode 清成 null。顺序反了（先赋值后 close）就等于
+		// 每次开灯箱都把 code 自己抹掉，之后 imagesLoaded 全都对不上，灯箱永远空白。
+		// 这处没有 DOM 可测，用源码断言钉住顺序
+		const body = /function openLightbox\(product\) \{[\s\S]*?\n\}/.exec(src);
+		assert.ok(body, '应能定位到 openLightbox 函数体');
+		const at = body![0];
+		assert.ok(at.includes('closeLightbox()'), 'openLightbox 内应有 closeLightbox() 调用');
+		assert.ok(
+			at.indexOf('closeLightbox()') < at.indexOf('state.lbCode = product.code'),
+			'closeLightbox() 必须排在 `state.lbCode = product.code` 之前（反过来会被自己抹掉）',
+		);
+		assert.ok(
+			/function closeLightbox\(\) \{[\s\S]*?state\.lbCode = null;[\s\S]*?\n\}/.test(src),
+			'closeLightbox 应把 state.lbCode 清成 null（否则陈旧 code 会漏给拖放/粘贴的落点解析）',
 		);
 	});
 });
