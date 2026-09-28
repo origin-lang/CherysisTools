@@ -1182,6 +1182,25 @@ suite('防回归：图库与灯箱的身份一律用文件名，不用序号', (
 			'closeLightbox 应把 state.lbCode 清成 null（否则陈旧 code 会漏给拖放/粘贴的落点解析）',
 		);
 	});
+
+	test('星标总览关掉再开必须回到 3×3（不读已摘除弹窗里的旧排版）', () => {
+		const src = readClient('client-product.js');
+		// 这个 bug 是从「还是会记住」里挖出来的：closeModal() 只 remove() 节点，starOv.mask
+		// 仍指着已摘除的子树，如果 starOvDims 只看 `!starOv.mask`，重新打开时就会在旧 select
+		// 上读出上次选的值（4×3 / custom / 自动…），把上次排版原样送回去。isConnected 这半句
+		// 把它定义成「不在文档里＝没开」，和 starOvRequestPreview 的开窗判断是同一个口径。
+		const body = /function starOvDims\(\) \{[\s\S]*?\n\}/.exec(src);
+		assert.ok(body, '应能定位到 starOvDims 函数体');
+		const at = body![0];
+		assert.ok(
+			at.includes('!starOv.mask.isConnected'),
+			'starOvDims 应把「已摘除的 mask」当作没开：否则关了弹窗再开，会把旧 select 上的排版带回',
+		);
+		assert.ok(
+			at.includes('cols: 3, rows: 3'),
+			'弹窗未开时应直接回 3×3（打开总览永远从 3×3 开始，不记上次排版）',
+		);
+	});
 });
 
 suite('sharp 句柄用完即释放（跑完立刻删源图必须成功）', () => {

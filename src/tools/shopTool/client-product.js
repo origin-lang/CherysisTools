@@ -1795,7 +1795,11 @@ const STAR_FONT_PRESETS = [
 // auto 只在用户真的点了「自动（智能）」时为 true：光靠 cols/rows=0 分不出
 // 「选了自动」和「没选」，后端会把自动当没选、回落到默认 3×3。
 function starOvDims() {
-  if (!starOv.mask) {
+  // isConnected 这半句是「还是会记住」的根：closeModal() 只 remove() 节点，starOv.mask
+  // 还指着那个已摘除的子树，里面的 [data-so-grid] 仍拖着上次选的值——弹窗关了再开，
+  // 这里会在旧 select 上读出 4×3 / custom / 自动…… 把上次排版原样送回去。跟
+  // starOvRequestPreview 开窗判断同一个口径：mask 不在文档里就算「没开」，永远回 3×3。
+  if (!starOv.mask || !starOv.mask.isConnected) {
     return { cols: 3, rows: 3, auto: false };
   }
   // 消费「🔄 确认」动作：只有这次读输入框。改标注/翻页/生成一律用已确认的排版，
