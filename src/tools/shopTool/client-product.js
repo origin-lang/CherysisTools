@@ -1764,6 +1764,9 @@ var starOv = {
   lastDir: "",
   labels: { code: true, costPrice: false, salePrice: true, fontSize: 0 },
   _fsTimer: null,
+  // 打开总览永远从 3×3 开始，不记上次排版；本次弹窗里改的排版只在本次内生效。
+  // 「🔄 确认」按钮触发的那次请求读输入框，其余调用一律用已确认的排版。
+  _useDraft: false,
 };
 
 // 3×3 排第一：自动档已不是默认（星标 60 款开方就是首屏 64 格，每格从共享盘拉 4.5MB 原图）。
@@ -1787,18 +1790,26 @@ const STAR_FONT_PRESETS = [
   ["24", "24%"],
 ];
 
+// 弹窗还没开时（第一次从工具栏菜单进来）没有 mask 可问：永远回 3×3。
+// 不记上次排版，也不把 0/0 丢给后端让它去回想——打开总览就该是 3×3。
+// auto 只在用户真的点了「自动（智能）」时为 true：光靠 cols/rows=0 分不出
+// 「选了自动」和「没选」，后端会把自动当没选、回落到默认 3×3。
 function starOvDims() {
-  // 弹窗还没开时（第一次从工具栏菜单进来）没有 mask 可问，交给后端回落（默认 3×3）。
-  // starOvRequestPreview 是「先读排版、再开窗」，所以这里必须能扛住 mask 为空。
-  // auto 只在用户真的点了「自动（智能）」时为 true：光靠 cols/rows=0 分不出
-  // 「选了自动」和「没选」，后端会把自动当没选、回落到上次记的固定排版上。
   if (!starOv.mask) {
-    return { cols: 0, rows: 0, auto: false };
+    return { cols: 3, rows: 3, auto: false };
   }
+  // 消费「🔄 确认」动作：只有这次读输入框。改标注/翻页/生成一律用已确认的排版，
+  // 免得数字输到一半被别的入口拿半截值去排。
+  const useDraft = starOv._useDraft;
+  starOv._useDraft = false;
   const sel = starOv.mask.querySelector("[data-so-grid]");
   if (sel && sel.value === "custom") {
-    const c = parseInt(starOv.mask.querySelector("[data-so-cc]").value || "0", 10);
-    const r = parseInt(starOv.mask.querySelector("[data-so-cr]").value || "0", 10);
+    const c = useDraft
+      ? parseInt(starOv.mask.querySelector("[data-so-cc]").value || "0", 10)
+      : starOv.cols;
+    const r = useDraft
+      ? parseInt(starOv.mask.querySelector("[data-so-cr]").value || "0", 10)
+      : starOv.rows;
     return {
       cols: Number.isFinite(c) ? Math.min(10, Math.max(1, c)) : 0,
       rows: Number.isFinite(r) ? Math.min(10, Math.max(1, r)) : 0,
@@ -1835,8 +1846,9 @@ function starOvSyncGrid() {
     cust.style.display = "none";
   } else {
     sel.value = "custom";
-    cr.value = starOv.rows || 1;
-    cc.value = starOv.cols || 1;
+    // 预填当前已确认的行列（3 兜底：1×1 是个没人想要的格子），用户改一个数就好
+    cr.value = starOv.rows || 3;
+    cc.value = starOv.cols || 3;
     cust.style.display = "inline-flex";
   }
 }
@@ -1846,7 +1858,7 @@ function starOvSetEnabled(on) {
     return;
   }
   const q = (s) => starOv.mask.querySelector(s);
-  ["[data-so-grid]", "[data-so-cc]", "[data-so-cr]", "[data-so-prev]", "[data-so-next]", "[data-so-gen]"].forEach((s) => {
+  ["[data-so-grid]", "[data-so-cc]", "[data-so-cr]", "[data-so-cust-go]", "[data-so-prev]", "[data-so-next]", "[data-so-gen]"].forEach((s) => {
     const el = q(s);
     if (el) {
       el.disabled = !on;
@@ -2019,6 +2031,10 @@ function starOvOnPagePreview(msg) {
 
 function starOvOpenMask(title) {
   closeModal();
+  // 每次打开都回到 3×3（不记上次排版）——下拉框、标题在第一次渲染响应回来前就显示 3×3
+  starOv.cols = 3;
+  starOv.rows = 3;
+  starOv.auto = false;
   // 加载保存的标注选项
   try {
     const saved = JSON.parse(state.settings.star_label_options || "{}");
@@ -2042,6 +2058,7 @@ function starOvOpenMask(title) {
       <span data-so-cust style="display:none;align-items:center;gap:4px" class="muted">
         <input data-so-cr type="number" min="1" max="10" style="width:56px" title="行数" />行
         × <input data-so-cc type="number" min="1" max="10" style="width:56px" title="列数" />列
+        <button data-so-cust-go class="mini-btn" title="行/列填好后点这里才重新排版（回车不触发）">🔄 预览</button>
       </span>
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
@@ -2082,16 +2099,28 @@ function starOvOpenMask(title) {
     const cust = mask.querySelector("[data-so-cust]");
     if (mask.querySelector("[data-so-grid]").value === "custom") {
       cust.style.display = "inline-flex";
+      // 切进自定义：预填当前已确认的行列，但不立即渲染——自定义是「填好点 🔄 预览」的模式
+      const cc = mask.querySelector("[data-so-cc]");
+      const cr = mask.querySelector("[data-so-cr]");
+      cc.value = starOv.cols || 3;
+      cr.value = starOv.rows || 3;
     } else {
       cust.style.display = "none";
+      // 预设仍是防抖即时渲染，只有自定义要走确认
+      starOvScheduleRefresh();
     }
-    starOvScheduleRefresh();
   };
-  mask.querySelector("[data-so-cr]").onchange = () => {
-    starOvScheduleRefresh();
-  };
-  mask.querySelector("[data-so-cc]").onchange = () => {
-    starOvScheduleRefresh();
+  // 自定义的确认按钮：校验行/列都在 1~10，置草稿标志后走同一套预览流程
+  // （回车不触发——用户只要这个按钮）
+  mask.querySelector("[data-so-cust-go]").onclick = () => {
+    const c = parseInt(mask.querySelector("[data-so-cc]").value || "0", 10);
+    const r = parseInt(mask.querySelector("[data-so-cr]").value || "0", 10);
+    if (!Number.isFinite(c) || !Number.isFinite(r) || c < 1 || c > 10 || r < 1 || r > 10) {
+      toast("自定义排版的「行」和「列」都要填，每格 1~10");
+      return;
+    }
+    starOv._useDraft = true;
+    starOvRequestPreview();
   };
   mask.querySelectorAll("[data-so-lbl]").forEach((el) => {
     el.onchange = () => {
