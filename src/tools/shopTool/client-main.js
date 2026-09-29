@@ -668,6 +668,21 @@ function init() {
   post({ type: "monthBuild", month: monthNow() });
 }
 
+// 封面一批一批到（并发 6），每条都重画一遍直播区 = 一次刷新重画 N 帧。
+// 合并到 60ms 后只画一次，里面再按格比对，没变的格不碰 DOM。
+// 用 setTimeout 而不是 requestAnimationFrame：webview 所在标签页在后台时 rAF 会被
+// 浏览器暂停，那样直播区的封面就一直不更新了；setTimeout 后台只降频、一定会到。
+let livePreviewsTimer = null;
+function scheduleLivePreviews() {
+  if (livePreviewsTimer) {
+    return;
+  }
+  livePreviewsTimer = setTimeout(() => {
+    livePreviewsTimer = null;
+    renderLivePreviews();
+  }, 60);
+}
+
 // productsLoaded 原来只换掉 state.products、只重绘详情抽屉，列表 DOM 一直是旧的 ——
 // 这是「点刷新没反应」的第三个原因（另两个：后端 aggCache、前端 coverCache 没清）。
 // 这里补上列表重绘：300ms 合并连续多次全量推送；光标还在输入框里就等离开输入框再画，不抢焦点。
@@ -741,6 +756,11 @@ function onMessage(msg) {
       if (typeof renderProductDrawer === "function") {
         renderProductDrawer();
       }
+      // 整库刷新这条路同样收不到直播区的价格通知（它只跑 renderLivePreviews 刷封面），
+      // 不叫一下的话，手动 🔄 之后直播排品里的 ¥售价 还是刷新前的数
+      if (typeof refreshLiveMeta === "function") {
+        refreshLiveMeta();
+      }
       scheduleProductsRerender();
       break;
     }
@@ -778,7 +798,15 @@ function onMessage(msg) {
         if (typeof renderProductDrawer === "function") {
           renderProductDrawer();
         }
+        // 直播排品格里的 ¥售价 是整块重建时画的，改价走增量这条路它收不到通知，
+        // 得单独叫一下，否则直播区一直显示改之前的价
+        if (typeof refreshLiveMeta === "function") {
+          refreshLiveMeta();
+        }
       }
+      // 增量也会带进新产品（新导入的行是 push 进来的），筛选漏斗要跟着重建，
+      // 否则新分类/新系列在漏斗里点不出来 —— 以前这条路径只由整库 productsLoaded 兜
+      populateFilters();
       break;
     }
     case "rulesLoaded": {
@@ -925,7 +953,7 @@ function onMessage(msg) {
           requestCoverRender();
         }
       }
-      renderLivePreviews();
+      scheduleLivePreviews();
       // 一轮校核跑完（没有在途、队列也空了）就收掉标记，之后渲染走缓存快路径
       if (
         state.coverRecheck &&
@@ -940,10 +968,23 @@ function onMessage(msg) {
     case "coverInvalidated": {
       delete state.coverCache[msg.code];
       delete state.coverPending[msg.code];
+      // 这一轮的「已校核」标记也要清掉：ensureCovers 在重核状态下见到 done 就跳过，
+      // 留着会让下面的重取请求被吞掉，图片行就一直停在「无图」
+      if (state.coverRecheckDone) {
+        delete state.coverRecheckDone[msg.code];
+      }
       if (!patchCoverRow(msg.code, "")) {
         requestCoverRender();
       }
-      renderLivePreviews();
+      // 详情抽屉正开着这个商品的话，抽屉里的封面也得跟着变空 —— 否则图片操作不再整库
+      // 重推（列表已由 patchCoverRow 更新），抽屉会停在一张已被删掉的旧图上
+      refreshDrawerCover(msg.code);
+      // 图片操作不再整库重推之后，这条通知就是「该编号封面已变」的唯一入口，必须在这里
+      // 主动重取一次：只把格子刷成无图的话，上传/拖入的新图不会再自己回来，得手动刷新。
+      // 后台缓存已随 invalidateCover 丢掉，这里取回的是磁盘现状 —— 上传得新图、删除得空，
+      // 上传和删除共用这一条自愈路径。
+      ensureCovers([{ code: msg.code }]);
+      scheduleLivePreviews();
       break;
     }
     case "liveState": {

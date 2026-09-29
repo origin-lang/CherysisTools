@@ -147,6 +147,8 @@
           }
         }
       }
+      // coverTile 判重复要一份全局计数（跟上面 seen/dup 同一口径），整块只数一次
+      const dupCounts = liveDupCounts();
       area.innerHTML = groupNos
         .map((g) => {
           const slots = plan.filter((r) => r.group_no === g);
@@ -177,7 +179,7 @@
               ? `<div class="live-meta"><span class="price">¥${money(p.sale_price)}</span></div>`
               : `<div class="live-meta">&nbsp;</div>`;
             cells += `<div class="live-cell" data-g="${g}">
-              <div class="live-cover">${coverTile(bySlot, s, startNum)}</div>
+              <div class="live-cover">${coverTile(bySlot, s, startNum, dupCounts)}</div>
               <input data-ls-cell data-g="${g}" data-slot="${s}" data-num="${num}" class="${cls}" value="${esc(code)}" placeholder="${placeholder}" title="${cls === "dup" ? "重复出现的编号，请检查是否填重了" : ""}" />
               ${meta}
             </div>`;
@@ -307,7 +309,19 @@
       }
     }
 
-    function coverTile(bySlot, s, startNum) {
+    // 整份排品里每个编号出现了几次：跨组也算。coverTile 和两处渲染都靠它判「重复」，
+    // 必须全局一份 —— 只按组数会把「同一个编号在两组各出现一次」这种跨组重复漏成正常。
+    function liveDupCounts() {
+      const counts = new Map();
+      for (const r of state.livePlan) {
+        if (r.code) {
+          counts.set(r.code, (counts.get(r.code) || 0) + 1);
+        }
+      }
+      return counts;
+    }
+
+    function coverTile(bySlot, s, startNum, dupCounts) {
       const code = bySlot.get(s) || "";
       const num = startNum + s - 1;
       const numBadge = `<span class="lp-num">${num}号</span>`;
@@ -319,20 +333,25 @@
       if (cover) {
         return `<img src="${cover}" alt="" />${numBadge}`;
       }
+      // 漏传就现场数一份：这里一旦 undefined.get 抛错，是在 renderLiveGrid 拼 innerHTML
+      // 的 map 里炸的，整块九宫格会直接不渲染（曾经就是这样整片消失的）
+      const dup = dupCounts || liveDupCounts();
       let cls = "";
       let text = esc(code);
       if (!p) {
         cls = "err";
         text = `${esc(code)}（不存在）`;
-      } else {
-        const dupCount = state.livePlan.filter((r) => r.code === code).length;
-        if (dupCount > 1) {
-          cls = "dup";
-          text = `${esc(code)}（重复）`;
-        }
+      } else if ((dup.get(code) || 0) > 1) {
+        cls = "dup";
+        text = `${esc(code)}（重复）`;
       }
       return `<div class="cover-ph ${cls}">${text}</div>${numBadge}`;
     }
+
+    // 每个 live-cover 格子上次写进去的 HTML：内容没变就不再碰 DOM。
+    // 一次封面包回来常常只动一格（其余是校核命中、图没变），整块 innerHTML 重建
+    // 会把没变的格也全部重新内嵌一遍 base64。
+    const liveCellHtml = new WeakMap();
 
     function renderLivePreview(groupNo) {
       const area = $("liveGridArea");
@@ -342,11 +361,19 @@
       const slots = state.livePlan.filter((r) => r.group_no === groupNo);
       const bySlot = new Map(slots.map((r) => [r.slot_no, r.code]));
       const startNum = (groupNo - 1) * 9 + 1;
+      // 重复计数用全局那份（跟 renderLiveGrid 同一口径，跨组重复也算重复），
+      // 以前 coverTile 每格 filter 一遍整份排品（O(格×排品)），现在整组数一次
+      const dupCounts = liveDupCounts();
       const covers = area.querySelectorAll(
         `.live-cell[data-g="${groupNo}"] .live-cover`,
       );
       covers.forEach((el, i) => {
-        el.innerHTML = coverTile(bySlot, i + 1, startNum);
+        const html = coverTile(bySlot, i + 1, startNum, dupCounts);
+        if (liveCellHtml.get(el) === html) {
+          return;
+        }
+        liveCellHtml.set(el, html);
+        el.innerHTML = html;
       });
       ensureCovers(
         state.livePlan.filter((r) => r.code).map((r) => ({ code: r.code })),
@@ -360,6 +387,44 @@
       for (const g of groupNos) {
         renderLivePreview(g);
       }
+    }
+
+    // 只把每格的价格小标签刷成当前售价，不重建直播区。
+    // 排品格里的 ¥售价 是 renderLiveGrid 整块重建时画的，而商品改价走的是 productsDelta，
+    // 那条路只刷列表和抽屉 —— 不主动叫一下，价格就停在改之前的数，要等下次整块重建才对。
+    // 刻意不用 renderLiveGrid 重来一遍：innerHTML 会把用户正敲着的格子的输入值和光标冲掉。
+    // 价格直接读格子里当前的编号，所以敲了一半的编号显示空价，跟 renderLiveGrid 一致。
+    function refreshLiveMeta() {
+      const area = $("liveGridArea");
+      if (!area) {
+        return;
+      }
+      area.querySelectorAll("[data-ls-cell]").forEach((inp) => {
+        const cell = inp.closest(".live-cell");
+        if (!cell) {
+          return;
+        }
+        const meta = cell.querySelector(".live-meta");
+        if (!meta) {
+          return;
+        }
+        const p = stateProduct(inp.value.trim());
+        const price = meta.querySelector(".price");
+        if (!p) {
+          if (price) {
+            meta.innerHTML = "&nbsp;";
+          }
+          return;
+        }
+        const want = `¥${money(p.sale_price)}`;
+        if (price) {
+          if (price.textContent !== want) {
+            price.textContent = want;
+          }
+        } else {
+          meta.innerHTML = `<span class="price">${want}</span>`;
+        }
+      });
     }
 
     function upsertLiveSlot(groupNo, slotNo, code) {

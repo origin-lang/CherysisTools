@@ -656,7 +656,8 @@ suite('商品图片删除（占用重试 / 不做无谓备份）', () => {
 			harness.posted.some((m) => m.type === 'imagesLoaded'),
 			'删失败也要 reloadImages，否则列表停在「还在」',
 		);
-		assert.strictEqual(harness.loadAllCount, 1);
+		// 删图不改商品表：不该再整库重读重推（封面作废有 coverInvalidated 单条通道）
+		assert.strictEqual(harness.loadAllCount, 0, '删图是纯文件操作，不该重载整表');
 	});
 
 	test('非占用类错误不重试，直接报原始信息', async function () {
@@ -703,10 +704,12 @@ suite('商品图片删除（占用重试 / 不做无谓备份）', () => {
 	});
 
 	// —— 批量清空图片（clearImagesBatch）——
-	// 刻意不走「webview 连发 N 条 clearImages」那条路：每条都会 loadAll() 重读整张商品表，
-	// 勾 50 个就是 50 趟全库。下面第一条把「只 loadAll 一次」钉住。
+	// 刻意不走「webview 连发 N 条 clearImages」那条路：每条都要重读整张商品表，
+	// 勾 50 个就是 50 趟全库。现在连那一次也不需要了：清图是纯文件操作，商品表一个字
+	// 没改，封面作废走 coverInvalidated（图库更新走 imagesLoaded）。
+	// 下面第一条把「0 次整表重载」钉住，防有人以后又顺手加回去。
 
-	test('批量清空：逐个清、整表只重载一次、逐个推 imagesLoaded', async () => {
+	test('批量清空：逐个清、整表一次都不重载、逐个推 imagesLoaded', async () => {
 		const { root } = seed();
 		const folder2 = path.join(root, 'L002');
 		fs.mkdirSync(folder2);
@@ -718,7 +721,7 @@ suite('商品图片删除（占用重试 / 不做无谓备份）', () => {
 
 		assert.deepStrictEqual(fs.readdirSync(path.join(root, 'L001')), []);
 		assert.deepStrictEqual(fs.readdirSync(folder2), []);
-		assert.strictEqual(harness.loadAllCount, 1, 'N 个夹只该重载一次整表，不该 N 次');
+		assert.strictEqual(harness.loadAllCount, 0, '清图不改库：N 个夹一个都不该重载整表');
 		// 灯箱按 code 认领，imagesLoaded 必须一个 code 一条，合并成一条它不知道该刷哪格
 		const pushed = harness.posted.filter((m) => m.type === 'imagesLoaded').map((m) => m.code);
 		assert.deepStrictEqual(pushed, ['L001', 'L002']);
@@ -1199,6 +1202,102 @@ suite('防回归：图库与灯箱的身份一律用文件名，不用序号', (
 		assert.ok(
 			at.includes('cols: 3, rows: 3'),
 			'弹窗未开时应直接回 3×3（打开总览永远从 3×3 开始，不记上次排版）',
+		);
+	});
+});
+
+suite('防回归：图片不再整库重推后，封面与直播价必须自己长回来', () => {
+	function readClient(name: string): string {
+		return fs.readFileSync(
+			path.join(__dirname, '..', '..', 'src', 'tools', 'shopTool', name),
+			'utf-8',
+		);
+	}
+
+	test('coverInvalidated 必须主动重取那一格的封面', () => {
+		const src = readClient('client-main.js');
+		const body = /case "coverInvalidated": \{[\s\S]*?\n {4}\}/.exec(src);
+		assert.ok(body, '应能定位到 coverInvalidated 分支');
+		const at = body![0];
+		// 图片操作（上传/拖入/粘贴/清空/删图）不再 loadAll() 之后，coverInvalidated
+		// 就是「该编号封面已变」的唯一入口。以前整库刷新会顺带把当前页封面重取一遍，
+		// 现在这条链断了：只把格子刷成「无图」而不重取，新图就再也回不来，
+		// 用户表现为「上传后列表不更新，得手动点刷新」。
+		assert.ok(
+			/ensureCovers\(\s*\[\s*\{\s*code:\s*msg\.code\s*\}\s*\]\s*\)/.test(at),
+			'coverInvalidated 里应有 ensureCovers([{ code: msg.code }]) 重取封面，' +
+				'否则上传/拖入的新图要靠手动刷新才出来',
+		);
+		// 重核标记也得一起清：ensureCovers 在 coverRecheck 状态下见到 done 就跳过，
+		// 留着会让上面那次重取被吞掉，图片行就一直停在「无图」
+		assert.ok(
+			/coverRecheckDone/.test(at),
+			'coverInvalidated 里应清掉该编号的 coverRecheckDone 标记，' +
+				'否则正在重核时这次重取会被 ensureCovers 跳过',
+		);
+	});
+
+	test('coverTile 的每个调用点都必须传重复计数（漏传会把整块九宫格炸没）', () => {
+		const src = readClient('client-live.js');
+		// coverTile 判「重复」时要读 dupCounts.get()。漏传就是 undefined.get(...)，
+		// 而它是在 renderLiveGrid 拼 innerHTML 的 map 回调里执行的 —— 一抛错整块
+		// 九宫格就渲染不出来，直播区直接一片空白。这个坑真实发生过一次。
+		const calls = [...src.matchAll(/coverTile\(([^)]*)\)/g)].map((m) => m[1]);
+		assert.ok(calls.length >= 2, `应至少有两处 coverTile 调用，实际 ${calls.length}`);
+		for (const args of calls) {
+			assert.ok(
+				/dupCounts\s*\)?$/.test(args.trim()),
+				`coverTile(${args}) 没传重复计数，判重时会 undefined.get 抛错、整块九宫格不渲染`,
+			);
+		}
+		// 再兜一层：函数体自己也要能在漏传时不炸
+		const body = /function coverTile\([\s\S]*?\n {4}\}/.exec(src);
+		assert.ok(body, '应能定位到 coverTile 函数体');
+		assert.ok(
+			/dupCounts\s*\|\|\s*liveDupCounts\(\)/.test(body![0]),
+			'coverTile 应在漏传时兜底数一份，不能让 undefined.get 抛出去',
+		);
+		// 重复判定必须是全局口径：只按组数会把跨组重复漏成正常
+		assert.ok(
+			/function liveDupCounts\(\)\s*\{[\s\S]*?for \(const r of state\.livePlan\)/.test(src),
+			'liveDupCounts 应遍历整份 state.livePlan（跨组重复也要算重复）',
+		);
+	});
+
+	test('商品改价后直播排品区的 ¥售价 必须立刻跟上', () => {
+		const live = readClient('client-live.js');
+		assert.ok(
+			/function refreshLiveMeta\(\)/.test(live),
+			'client-live.js 应提供 refreshLiveMeta()：排品格的售价是整块重建时画的，' +
+				'改价走增量通知收不到',
+		);
+		// 刻意不许拿 renderLiveGrid 重来一遍：innerHTML 会把用户正敲着的格子的
+		// 输入值和光标一起冲掉
+		const body = /function refreshLiveMeta\(\) \{[\s\S]*?\n {4}\}/.exec(live);
+		assert.ok(body, '应能定位到 refreshLiveMeta 函数体');
+		assert.ok(
+			!body![0].includes('renderLiveGrid('),
+			'refreshLiveMeta 只能改 .live-meta，不能整块重建（会冲掉正在编辑的输入和焦点）',
+		);
+		assert.ok(
+			body![0].includes('live-meta'),
+			'refreshLiveMeta 应只更新每格的 .live-meta 价格标签',
+		);
+
+		const main = readClient('client-main.js');
+		const delta = /case "productsDelta": \{[\s\S]*?\n {4}\}/.exec(main);
+		assert.ok(delta, '应能定位到 productsDelta 分支');
+		assert.ok(
+			/refreshLiveMeta\(\)/.test(delta![0]),
+			'productsDelta 收下改动后应调 refreshLiveMeta()，' +
+				'否则直播排品区一直显示改价之前的售价',
+		);
+		const loaded = /case "productsLoaded": \{[\s\S]*?\n {4}\}/.exec(main);
+		assert.ok(loaded, '应能定位到 productsLoaded 分支');
+		assert.ok(
+			/refreshLiveMeta\(\)/.test(loaded![0]),
+			'productsLoaded 也该调 refreshLiveMeta()：手动刷新走这条路，' +
+				'applyFreshProducts 只刷封面不刷价格，否则 🔄 之后直播区还是旧价',
 		);
 	});
 });

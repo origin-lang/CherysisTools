@@ -2492,6 +2492,22 @@ function closeProductDrawer() {
   }
 }
 
+/**
+ * 封面被作废（删图/清空夹/换图）时，若详情抽屉正开着这个商品，抽屉里的封面跟着重画一次。
+ * 图片操作不再整库重推（列表行已由 coverInvalidated→patchCoverRow 更新），所以抽屉这条
+ * 唯一的刷新途径就是这里；否则它会停在一张已经被删掉的旧图上。
+ */
+function refreshDrawerCover(code) {
+  if (!drawerPid || !code) {
+    return;
+  }
+  const p = state.products.find((x) => x.id === drawerPid);
+  if (!p || p.code !== code) {
+    return;
+  }
+  renderProductDrawer();
+}
+
 function drawerFieldValue(p, key) {
   switch (key) {
     case "grade":

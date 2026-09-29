@@ -953,6 +953,8 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       const rules = db.getRules();
       const ruleOf = (grade: number): SaleRule | undefined =>
         rules.find((r) => r.grade === grade);
+      // 提交完把这批编号的 id 收起来，待会儿只增量推它们（整表重推在共享盘上是几秒）
+      const touched: number[] = [];
       // 新行/更新行这两趟写包进一个事务：整批一次提交，共享盘上省掉逐行的网络提交
       db.runInTx(() => {
         for (const row of plan.newRows) {
@@ -965,7 +967,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
           const custom = row.grade === 0;
           const rule = custom ? undefined : ruleOf(row.grade);
           const sale = custom || row.manual > 0 ? row.manual : calcPrice(row.cost, rule);
-          db.addProduct({
+          const id = db.addProduct({
             code: row.code,
             name: row.name || row.code,
             category: row.category,
@@ -979,6 +981,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
             remark: "",
             stock_manual: 0,
           });
+          touched.push(id);
           created++;
         }
         for (const row of plan.updateRows) {
@@ -992,6 +995,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
           for (const op of row.writes) {
             db.updateProductField(exist.id, op.field, op.value);
           }
+          touched.push(exist.id);
           updated++;
         }
       });
@@ -1025,7 +1029,15 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         duplicateLines: plan.dup,
         mode: plan.mode as string,
       });
-      h.loadAll();
+      // 只把这批动过的商品推回去，不整库重读重推（共享盘上那是几秒的等待）。
+      // 漏斗重建前端挂在 productsDelta 上（新分类/新系列靠它出现），规则新建的
+      // 时候也顺手推一份 —— 以前这两样都是整表推送顺带做的。
+      if (touched.length > 0) {
+        h.postProductsDelta(touched);
+      }
+      if (plan.gradesToEnsure.length > 0) {
+        post({ type: "rulesLoaded", rules: db.getRules() });
+      }
     },
   };
 }

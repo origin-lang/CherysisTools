@@ -406,7 +406,6 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       log(`🖼已上传导入 ${added} 张图 → ${code} 文件夹（自动按 ${code}_时间戳.jpg 命名）`);
       await reloadImages(code);
       h.invalidateCover(code);
-      h.loadAll();
     },
 
     async receiveImageData(msg) {
@@ -466,7 +465,6 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
         );
         await reloadImages(code);
         h.invalidateCover(code);
-        h.loadAll();
       } else if (skipped) {
         log(`🖼${skipped} 张图与已有内容重复，未新增（${code}）`);
       }
@@ -489,17 +487,16 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       logClearOne(code, r);
       post({ type: "imagesLoaded", code, images: [], names: [] });
       h.invalidateCover(code);
-      h.loadAll();
     },
 
     /**
-     * 批量清空：一次收一批商品编号，逐个清空，只在最后 loadAll() 一次。
+     * 批量清空：一次收一批商品编号，逐个清空。
      *
-     * 不做成「webview 连发 N 条 clearImages」是有原因的：每条都会 loadAll()，
-     * 而 loadAll() 是把整张商品表重读一遍重推 webview（见 §loadAll 注释），
-     * 勾 50 个就是读 50 趟全库、外加刷新 50 次封面缓存——共享盘上这是几十秒的等待，
+     * 不做成「webview 连发 N 条 clearImages」是有原因的：那会让 webview 收到 N 轮封面
+     * 作废通知，共享盘上每次重新取图都要走一趟目录，勾 50 个就是 50 趟；
      * 而且中途每一条都往日志里写一行，最后用户看到 50 行「已清空」不知道哪几个真成了。
      * 这里改成逐个清、汇总成**一条**日志，失败的编号单独列出来。
+     * 单个 clearImages 同样不重载整表：封面作废走 coverInvalidated，前端自己重取那一格。
      */
     async clearImagesBatch(msg) {
       const dir = imageDir();
@@ -533,7 +530,6 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
         else if (r.outcome === "nofolder") noFolder.push(code);
         else stuck.push({ code, ok: r.ok, total: r.total, lastErr: r.lastErr, firstBusy: r.firstBusy });
       }
-      h.loadAll();
 
       // ---- 汇总成一条，别让勾 50 个变成日志里 50 行 ----
       const lines: string[] = [];
@@ -622,13 +618,11 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
         log(busyHint(`删不掉 ${code} 的第 ${index + 1} 张图片`, err, fp));
         await reloadImages(code);
         h.invalidateCover(code);
-        h.loadAll();
         return;
       }
       log(`🗑已删除 ${code} 的第 ${index + 1} 张图片`);
       await reloadImages(code);
       h.invalidateCover(code);
-      h.loadAll();
     },
   };
 }
