@@ -369,6 +369,9 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
       try {
         await h.preOpBackup();
         db.restoreDB(fp, ctx.storageDir);
+        // 恢复后整库被换：封面内存缓存按 mtime 也能自愈，但换个库就清一次更稳，
+        // 免得别台机器的同名编号夹 mtime 恰好对上而吐出旧版 base64
+        h.coverCache.clear();
         h.setDB(getDB());
         h.resetUndo();
         log("✅数据库已恢复，数据已替换为所选备份");

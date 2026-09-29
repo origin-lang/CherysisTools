@@ -909,14 +909,32 @@ function onMessage(msg) {
         pumpCovers();
         break;
       }
-      state.coverCache[msg.code] = msg.data || "";
+      const data = msg.data || "";
+      const prev = state.coverCache[msg.code];
+      state.coverCache[msg.code] = data;
       delete state.coverPending[msg.code];
+      if (state.coverRecheck) {
+        // 这一条本轮已校核完：ensureCovers 别再重发，跑完一圈自动收旗
+        state.coverRecheckDone[msg.code] = true;
+      }
       coverInFlight = Math.max(0, coverInFlight - 1);
       pumpCovers();
-      if (!patchCoverRow(msg.code, msg.data || "")) {
-        requestCoverRender();
+      // 增量校核：返回的图和内存一致 = 这段夹子没人动过 → 不用重画（省掉整页重嵌）
+      if (prev !== data) {
+        if (!patchCoverRow(msg.code, data)) {
+          requestCoverRender();
+        }
       }
       renderLivePreviews();
+      // 一轮校核跑完（没有在途、队列也空了）就收掉标记，之后渲染走缓存快路径
+      if (
+        state.coverRecheck &&
+        coverInFlight === 0 &&
+        coverQueue.length === 0 &&
+        Object.keys(state.coverPending).length === 0
+      ) {
+        state.coverRecheck = false;
+      }
       break;
     }
     case "coverInvalidated": {

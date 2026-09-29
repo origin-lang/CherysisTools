@@ -122,8 +122,9 @@ export interface ShopDB {
     id: number,
     field: "sold_qty" | "refund_qty" | "note",
     value: number | string,
-  ): void;
-  deleteSales(ids: number[]): void;
+  ): number | undefined;
+  /** 删除销售，返回被删记录涉及的商品 id：让调用方只增量刷新这几条，而不是整库重载 */
+  deleteSales(ids: number[]): number[];
   salesTrend(by: "month" | "day", month?: string, productId?: number): Array<{ period: string; sold: number; refund: number }>;
   getSettleMonths(): MonthlySettle[];
   getSettle(month: string): MonthlySettle | undefined;
@@ -145,6 +146,8 @@ export interface ShopDB {
   replaceLivePlan(plan: LivePlanRow[]): void;
   backupDB(destPath: string): Promise<void>;
   restoreDB(srcPath: string, storageDir: string): void;
+  /** 把 fn 里的一组写包进单个事务：一次提交；中途出错整体回滚（共享盘上一个批量 = 一次网络提交，而非一行一次） */
+  runInTx<T>(fn: () => T): T;
   /** 全表快照（撤销/重做用，仅内存） */
   snapshotAll(): ShopDBSnapshot;
   /** 用快照整体替换全部表（事务内 DELETE + INSERT，自动恢复主键计数） */
@@ -795,11 +798,17 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
       } else {
         salesRowNote.run(String(value ?? ""), id);
       }
+      // 把这一条记录的所属商品退回给调用方，让它可以只增量刷新这一条
+      return pid;
     },
-    deleteSales(ids) {
+    deleteSales(ids): number[] {
+      const touched = new Set<number>();
       const tx = c.transaction(() => {
         for (const id of ids) {
           const r = saleById.get(id) as any;
+          if (r) {
+            touched.add(Number(r.product_id));
+          }
           salesDel.run(id);
           if (r && salesDeductsStock()) {
             stockAdjustStmt.run(net(Number(r.sold_qty || 0), Number(r.refund_qty || 0)), Number(r.product_id));
@@ -818,6 +827,7 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
         }
       });
       tx();
+      return [...touched];
     },
     salesTrend(by, month, productId): Array<{ period: string; sold: number; refund: number }> {
       const pid = productId ?? null;
@@ -1008,6 +1018,9 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
         }
         throw err;
       }
+    },
+    runInTx<T>(fn: () => T): T {
+      return c.transaction(fn)();
     },
     snapshotAll(): ShopDBSnapshot {
       const snap: ShopDBSnapshot = {};

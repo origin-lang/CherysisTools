@@ -333,83 +333,105 @@ function syncListCellState() {
 function filteredProducts() {
   const cq = codeQueryMemo(filters.f_code);
   const kw = keywordMemo(filters.keyword);
-  return state.products
-    .filter((p) => {
-      for (const key of ENUM_FILTER_FIELDS) {
-        const picked = filterCurrent(key);
-        if (picked.length && !picked.includes(cellValue(p, key))) {
-          return false;
-        }
+  // 枚举列勾选集合预先整理成 Set：原版每条商品都 filterCurrent() 一次、再展开一次数组，
+  // 筛选面板的勾选在这一次计算里不会变，算一次就好。
+  const enumPicks = new Map();
+  for (const key of ENUM_FILTER_FIELDS) {
+    const picked = filterCurrent(key);
+    if (picked.length > 0) {
+      enumPicks.set(key, new Set(picked));
+    }
+  }
+  // 走子串匹配的文本框字段（排除走多选那条通道的枚举列）
+  const textKeys = [...TEXT_FILTER_FIELDS].filter((k) => !ENUM_FILTER_FIELDS.has(k));
+  const rangeKeys = [...RANGE_FILTER_FIELDS];
+
+  // 原版是五段链式 filter（每段把数组整份重拷一遍再重扫），合并成一趟遍历：
+  // 各路谓词在同一趟里全判断完，判断顺序与原来一致，都不改变结果。
+  const out = [];
+  test: for (const p of state.products) {
+    for (const [key, pick] of enumPicks) {
+      if (!pick.has(cellValue(p, key))) {
+        continue test;
       }
-      return true;
-    })
-    .filter((p) => matchCodeQuery(p.code, cq))
-    .filter((p) => {
-      for (const key of TEXT_FILTER_FIELDS) {
-        if (ENUM_FILTER_FIELDS.has(key)) {
-          continue; // 走多选那条通道，别再按子串过一遍
-        }
-        const v = filters["f_" + key];
-        if (
-          v &&
-          !String(cellValue(p, key)).toLowerCase().includes(String(v).toLowerCase())
-        ) {
-          return false;
-        }
-      }
-      return true;
-    })
-    .filter((p) => {
-      for (const key of RANGE_FILTER_FIELDS) {
-        const raw = filters["f_" + key];
-        if (!raw) {
-          continue;
-        }
-        const [mn, mx] = splitRangeValue(raw);
-        if (mn && Number(p[key]) < Number(mn)) {
-          return false;
-        }
-        if (mx && Number(p[key]) > Number(mx)) {
-          return false;
-        }
-      }
-      return true;
-    })
-    .filter((p) => {
+    }
+    if (!matchCodeQuery(p.code, cq)) {
+      continue;
+    }
+    for (const key of textKeys) {
+      const v = filters["f_" + key];
       if (
-        filters.f_stared &&
-        !(state.liveStars && state.liveStars.has(p.code))
+        v &&
+        !String(cellValue(p, key)).toLowerCase().includes(String(v).toLowerCase())
       ) {
-        return false;
+        continue test;
       }
-      return true;
-    })
+    }
+    for (const key of rangeKeys) {
+      const raw = filters["f_" + key];
+      if (!raw) {
+        continue;
+      }
+      const [mn, mx] = splitRangeValue(raw);
+      if (mn && Number(p[key]) < Number(mn)) {
+        continue test;
+      }
+      if (mx && Number(p[key]) > Number(mx)) {
+        continue test;
+      }
+    }
+    if (
+      filters.f_stared &&
+      !(state.liveStars && state.liveStars.has(p.code))
+    ) {
+      continue;
+    }
     // 全局搜索放最后：当最后一道关，前面漏斗/范围已经把大部分行筛掉了
-    .filter((p) => matchKeyword(p, kw))
-    .sort((a, b) => {
-      let r = 0;
-      if (sortKey === "code") {
-        const ca = parseCodeTok(a.code, false);
-        const cb = parseCodeTok(b.code, false);
-        if (ca && cb) {
-          r = ca.p < cb.p ? -1 : ca.p > cb.p ? 1 : ca.n - cb.n;
-        } else {
-          r = String(a.code || "").localeCompare(String(b.code || ""));
-        }
+    if (!matchKeyword(p, kw)) {
+      continue;
+    }
+    out.push(p);
+  }
+
+  // 排序：显示值/排序器都只算一次，比每比一次都重取省一个量级。
+  // 排序结果与原来完全一致——编号走 parseCodeTok + 数字补齐比较，其余数字列比数字、
+  // 混合或文本列比显示值，用的排序器locale也保持 zh-Hans-CN 不变。
+  if (sortKey === "code") {
+    out.sort((a, b) => {
+      const ca = parseCodeTok(a.code, false);
+      const cb = parseCodeTok(b.code, false);
+      let r;
+      if (ca && cb) {
+        r = ca.p < cb.p ? -1 : ca.p > cb.p ? 1 : ca.n - cb.n;
       } else {
-        const va = a[sortKey];
-        const vb = b[sortKey];
-        if (typeof va === "number" && typeof vb === "number") {
-          r = va - vb;
-        } else {
-          r = cellValue(a, sortKey).localeCompare(
-            cellValue(b, sortKey),
-            "zh-Hans-CN",
-          );
-        }
+        r = String(a.code || "").localeCompare(String(b.code || ""));
       }
       return r * sortDir;
     });
+    return out;
+  }
+  const coll = new Intl.Collator("zh-Hans-CN");
+  const keyed = out.map((p) => {
+    const va = p[sortKey];
+    if (typeof va === "number") {
+      return { p, num: va };
+    }
+    return { p, str: cellValue(p, sortKey) };
+  });
+  keyed.sort((a, b) => {
+    let r;
+    if (typeof a.num === "number" && typeof b.num === "number") {
+      r = a.num - b.num;
+    } else if (typeof a.num === "number") {
+      r = -1;
+    } else if (typeof b.num === "number") {
+      r = 1;
+    } else {
+      r = coll.compare(a.str, b.str);
+    }
+    return r * sortDir;
+  });
+  return keyed.map((x) => x.p);
 }
 
 function lowStock(p) {
@@ -725,6 +747,10 @@ function paginate(list) {
   return { total, pages, page: list.slice(start, start + pageSize) };
 }
 
+// 分页条外壳只建一次，之后只改会变的几处（条数/页码/前后按钮禁用态/每页下拉的选中值），
+// 不再每次整条 innerHTML 重建：排序、筛选、改格子都会触发重渲染，重建 pager 是纯浪费，
+// 还会把用户正往跳页框里输的半截数字打断。
+let pagerRefs = null;
 function renderPager(pd) {
   const el = $("productPager");
   if (!el) {
@@ -735,16 +761,41 @@ function renderPager(pd) {
   if (!show) {
     return;
   }
-  el.innerHTML = `
-        <span class="muted">共 ${pd.total} 条　每页</span>
+  if (!pagerRefs) {
+    el.innerHTML = `
+        <span class="muted">共 <b id="pagerCount"></b> 条　每页</span>
         <select id="pageSizeSel">
-          ${[50, 100, 200, 500].map((n) => `<option value="${n}"${n === pageSize ? " selected" : ""}>${n}</option>`).join("")}
+          ${[50, 100, 200, 500].map((n) => `<option value="${n}">${n}</option>`).join("")}
         </select>
-        <button class="mini-btn" data-pg="prev"${listPage <= 1 ? " disabled" : ""}>‹ 上一页</button>
-        <span class="muted">第 <b>${listPage}</b> / ${pd.pages} 页</span>
-        <button class="mini-btn" data-pg="next"${listPage >= pd.pages ? " disabled" : ""}>下一页 ›</button>
-        <input id="pageJump" type="number" min="1" max="${pd.pages}" placeholder="跳页" style="width:56px" />
+        <button class="mini-btn" data-pg="prev">‹ 上一页</button>
+        <span class="muted">第 <b id="pagerCur"></b> / <span id="pagerTotal"></span> 页</span>
+        <button class="mini-btn" data-pg="next">下一页 ›</button>
+        <input id="pageJump" type="number" min="1" max="999999" placeholder="跳页" style="width:56px" />
       `;
+    pagerRefs = {
+      count: el.querySelector("#pagerCount"),
+      cur: el.querySelector("#pagerCur"),
+      total: el.querySelector("#pagerTotal"),
+      sel: el.querySelector("#pageSizeSel"),
+      prev: el.querySelector('[data-pg="prev"]'),
+      next: el.querySelector('[data-pg="next"]'),
+      jump: el.querySelector("#pageJump"),
+    };
+  }
+  pagerRefs.count.textContent = pd.total;
+  pagerRefs.cur.textContent = listPage;
+  pagerRefs.total.textContent = pd.pages;
+  pagerRefs.prev.disabled = listPage <= 1;
+  pagerRefs.next.disabled = listPage >= pd.pages;
+  if (Number(pagerRefs.sel.value) !== pageSize) {
+    pagerRefs.sel.value = String(pageSize);
+  }
+  const jump = pagerRefs.jump;
+  jump.max = String(pd.pages);
+  // 用户正往跳页框里打字时别清它；没在输入就还原成空再接新的
+  if (document.activeElement !== jump) {
+    jump.value = "";
+  }
 }
 
 function tableScrollTop() {

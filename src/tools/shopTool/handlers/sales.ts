@@ -95,7 +95,10 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
       const seen = new Set<string>();
       const touchedIds = new Set<number>();
       const snap = h.snapshot();
-      for (let i = 0; i < lines.length; i++) {
+      // 整批粘贴包进一个事务：原来每行都是独立提交（每行最多4个语句、4次网络提交），
+      // 一批几百行就是几百次往返；合成一次提交后出错会整体回滚（不会出现半批写了）
+      db.runInTx(() => {
+        for (let i = 0; i < lines.length; i++) {
         const raw = lines[i].trim();
         if (!raw) {
           continue;
@@ -151,6 +154,7 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
           skipped++;
         }
       }
+      });
       const missingList = [...missing];
       log(
         `📥粘贴完成：新增${created} 更新${updated} 跳过${skipped}` +
@@ -188,11 +192,14 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
       }
       await h.preOpBackup();
       const snap = h.snapshot();
-      db.deleteSales(ids);
+      const pids = db.deleteSales(ids);
       h.pushUndo(snap, `删除销售记录 ${ids.length} 条`);
       log(`🗑已删除 ${ids.length} 条销售记录`);
       h.refreshSales(date);
-      h.loadAll();
+      // 只增量刷新被动到的商品（累计售出/退款、库存联动），不再整库重发重画
+      if (pids.length > 0) {
+        h.postProductsDelta([...new Set(pids)]);
+      }
     },
 
     updateSalesField(msg) {
@@ -204,6 +211,7 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
         return;
       }
       const snap = h.snapshot();
+      let pid: number | undefined;
       if (field === "sold_qty" || field === "refund_qty") {
         const n = Math.floor(Number(msg.value));
         if (!Number.isFinite(n) || n < 0) {
@@ -215,10 +223,10 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
           log(`❌${lk} 已月结锁定，不能改销售记录（去“分析·月报”解锁）`);
           return;
         }
-        db.updateSalesField(id, field, n);
+        pid = db.updateSalesField(id, field, n);
         log(`✏️已改 ${field === "sold_qty" ? "卖出" : "退款"}→ ${n}`);
       } else {
-        db.updateSalesField(id, "note", String(msg.value ?? ""));
+        pid = db.updateSalesField(id, "note", String(msg.value ?? ""));
         log("✏️已改备注");
       }
       h.pushUndo(
@@ -226,7 +234,10 @@ export function salesHandlers(h: HandlerCtx): Record<string, Handler> {
         `修改销售记录（${field === "sold_qty" ? "卖出" : field === "refund_qty" ? "退款" : "备注"}）`,
       );
       h.refreshSales(date);
-      h.loadAll();
+      // 只增量刷新这一条商品，不再整库重发重画
+      if (pid !== undefined) {
+        h.postProductsDelta([pid]);
+      }
     },
 
     salesTrend(msg) {

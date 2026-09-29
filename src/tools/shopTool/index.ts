@@ -259,6 +259,12 @@ type UndoItem = { snap: ShopDBSnapshot; desc: string; dv: number };
 const undoStack: UndoItem[] = [];
 const redoStack: UndoItem[] = [];
 
+// 商品封面 base64 的内存缓存（顺带记下商品图片夹当时的 mtime）。必须放模块级常驻：
+// 放进 handleMessage 里等于每个消息一个空 Map，getCover（handlers/image.ts）每次都要重新
+// readdir/解码共享盘文件夹，「手动🔄看别人换的图」靠 mtime 的快路径也永远走不到。
+// 跨消息常驻后：夹子没被动过 → 一次 statSync 命中即回，不再碰 readdir 和缩略图文件。
+const coverCache = new Map<string, { data: string; dirMtime: number }>();
+
 /**
  * 存本机（VS Code globalState，C 盘 state.vscdb）的偏好键。
  *
@@ -506,10 +512,8 @@ export const shopTool: ToolDefinition = {
 
     // 商品封面用 base64 按需下发（放大看图的大图另走 webview 资源 URI，见 handlers/image.ts）。
     // 缩略图磁盘缓存在本机 defaultStorageDir，改编号/删图时按编号前缀一次删净。
-    // 内存这份额外记下当时商品图片夹的 mtime：手动 🔄 时 getCover 靠它判断「这个编号的
-    // 图有没有被别人动过」，动过才重取。没这层的话，别人换了图点 🔄 也刷不出来
-    // （后端内存直接把旧 base64 原样吐回）。
-    const coverCache = new Map<string, { data: string; dirMtime: number }>();
+    // 内存那份 coverCache 是模块级常驻（见文件顶部），此处的 invalidateCover 只负责
+    // 按编号清一条 + 清本机缩略图文件 + 通知前端该编号封面作废。
     const invalidateCover = (code: string) => {
       coverCache.delete(code);
       pruneCodeThumbs(ctx.defaultStorageDir, code);

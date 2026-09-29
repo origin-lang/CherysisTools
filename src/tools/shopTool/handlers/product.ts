@@ -628,13 +628,15 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       }
       const snap = h.snapshot();
       db.replaceRules(rules);
-      for (const p of db.getProducts()) {
-        if (p.price_manual === 1) {
-          continue;
+      db.runInTx(() => {
+        for (const p of db.getProducts()) {
+          if (p.price_manual === 1) {
+            continue;
+          }
+          const rule = rules.find((r) => r.grade === p.grade);
+          db.updateProductField(p.id, "sale_price", calcPrice(p.cost_price, rule));
         }
-        const rule = rules.find((r) => r.grade === p.grade);
-        db.updateProductField(p.id, "sale_price", calcPrice(p.cost_price, rule));
-      }
+      });
       h.pushUndo(snap, "保存售价规则（已重算受影响商品售价）");
       log("📐售价规则已保存，受影响商品已重算售价");
       h.loadAll();
@@ -648,9 +650,11 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         return;
       }
       const snap = h.snapshot();
-      for (const id of ids) {
-        db.updateProductField(id, "status", status);
-      }
+      db.runInTx(() => {
+        for (const id of ids) {
+          db.updateProductField(id, "status", status);
+        }
+      });
       h.pushUndo(snap, `批量${status === 1 ? "下架" : "上架"} ${ids.length} 个商品`);
       log(`✅已${status === 1 ? "下架" : "上架"} ${ids.length} 个商品`);
       h.postProductsDelta(ids);
@@ -672,21 +676,23 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       }
       const snap = h.snapshot();
       const changed: number[] = [];
-      for (const id of ids) {
-        const p = db.getProductById(id);
-        if (!p) {
-          continue;
+      db.runInTx(() => {
+        for (const id of ids) {
+          const p = db.getProductById(id);
+          if (!p) {
+            continue;
+          }
+          const cur = Number(p.stock_manual || 0);
+          const next =
+            mode === "add"
+              ? cur + qty.value
+              : mode === "sub"
+                ? Math.max(0, cur - qty.value)
+                : qty.value;
+          db.updateStockQty(id, next);
+          changed.push(id);
         }
-        const cur = Number(p.stock_manual || 0);
-        const next =
-          mode === "add"
-            ? cur + qty.value
-            : mode === "sub"
-              ? Math.max(0, cur - qty.value)
-              : qty.value;
-        db.updateStockQty(id, next);
-        changed.push(id);
-      }
+      });
       const label =
         mode === "add"
           ? `增加 ${qty.value}`
@@ -728,30 +734,35 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       const snap = h.snapshot();
       const changed: number[] = [];
       let gradeRuleCreated = false;
-      for (const id of ids) {
-        const p = db.getProductById(id);
-        if (!p) {
-          continue;
-        }
-        if (field === "grade") {
-          if (value === 0) {
-            // 切成「自定义」：售价固定不动，不再跟随规则
-            db.updateProductField(id, "grade", 0);
-            db.updateProductField(id, "price_manual", 1);
-          } else {
-            if (db.ensureRule(Number(value))) {
-              gradeRuleCreated = true;
-            }
-            db.updateProductField(id, "grade", Number(value));
-            db.updateProductField(id, "price_manual", 0);
-            const rule = db.getRules().find((r) => r.grade === value);
-            db.updateProductField(id, "sale_price", calcPrice(p.cost_price, rule));
+      // 规则表循环里读一次就好：只有 ensureRule 真新建了才重读，其余行共用同一份
+      let rules = db.getRules();
+      db.runInTx(() => {
+        for (const id of ids) {
+          const p = db.getProductById(id);
+          if (!p) {
+            continue;
           }
-        } else {
-          db.updateProductField(id, "purchase_link", value);
+          if (field === "grade") {
+            if (value === 0) {
+              // 切成「自定义」：售价固定不动，不再跟随规则
+              db.updateProductField(id, "grade", 0);
+              db.updateProductField(id, "price_manual", 1);
+            } else {
+              if (db.ensureRule(Number(value))) {
+                gradeRuleCreated = true;
+                rules = db.getRules();
+              }
+              db.updateProductField(id, "grade", Number(value));
+              db.updateProductField(id, "price_manual", 0);
+              const rule = rules.find((r) => r.grade === value);
+              db.updateProductField(id, "sale_price", calcPrice(p.cost_price, rule));
+            }
+          } else {
+            db.updateProductField(id, "purchase_link", value);
+          }
+          changed.push(id);
         }
-        changed.push(id);
-      }
+      });
       h.pushUndo(
         snap,
         `批量${field === "grade" ? "改等级" : "改采购链接"} ${changed.length} 个商品`,
@@ -938,47 +949,52 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
           log(`ℹ️等级 ${grade} 无规则，已自动创建默认规则（cost*1.5 → +0.88）`);
         }
       }
+      // 等级会在上一步全部补齐，规则表读一次就好，不再每行重读
+      const rules = db.getRules();
       const ruleOf = (grade: number): SaleRule | undefined =>
-        db.getRules().find((r) => r.grade === grade);
-      for (const row of plan.newRows) {
-        // 提交前身份复检：预览后该编号被占用 → 跳过，避免覆盖
-        if (db.getProductByCode(row.code)) {
-          identitySkipped++;
-          skipped++;
-          continue;
+        rules.find((r) => r.grade === grade);
+      // 新行/更新行这两趟写包进一个事务：整批一次提交，共享盘上省掉逐行的网络提交
+      db.runInTx(() => {
+        for (const row of plan.newRows) {
+          // 提交前身份复检：预览后该编号被占用 → 跳过，避免覆盖
+          if (db.getProductByCode(row.code)) {
+            identitySkipped++;
+            skipped++;
+            continue;
+          }
+          const custom = row.grade === 0;
+          const rule = custom ? undefined : ruleOf(row.grade);
+          const sale = custom || row.manual > 0 ? row.manual : calcPrice(row.cost, rule);
+          db.addProduct({
+            code: row.code,
+            name: row.name || row.code,
+            category: row.category,
+            series: row.series,
+            grade: row.grade,
+            cost_price: row.cost,
+            sale_price: sale,
+            price_manual: custom || row.manual > 0 ? 1 : 0,
+            purchase_link: row.purchase_link,
+            status: row.status,
+            remark: "",
+            stock_manual: 0,
+          });
+          created++;
         }
-        const custom = row.grade === 0;
-        const rule = custom ? undefined : ruleOf(row.grade);
-        const sale = custom || row.manual > 0 ? row.manual : calcPrice(row.cost, rule);
-        db.addProduct({
-          code: row.code,
-          name: row.name || row.code,
-          category: row.category,
-          series: row.series,
-          grade: row.grade,
-          cost_price: row.cost,
-          sale_price: sale,
-          price_manual: custom || row.manual > 0 ? 1 : 0,
-          purchase_link: row.purchase_link,
-          status: row.status,
-          remark: "",
-          stock_manual: 0,
-        });
-        created++;
-      }
-      for (const row of plan.updateRows) {
-        const exist = db.getProductByCode(row.code);
-        // 提交前身份复检：预览后该编号被删除 → 跳过
-        if (!exist) {
-          identitySkipped++;
-          skipped++;
-          continue;
+        for (const row of plan.updateRows) {
+          const exist = db.getProductByCode(row.code);
+          // 提交前身份复检：预览后该编号被删除 → 跳过
+          if (!exist) {
+            identitySkipped++;
+            skipped++;
+            continue;
+          }
+          for (const op of row.writes) {
+            db.updateProductField(exist.id, op.field, op.value);
+          }
+          updated++;
         }
-        for (const op of row.writes) {
-          db.updateProductField(exist.id, op.field, op.value);
-        }
-        updated++;
-      }
+      });
       log(
         `📥商品导入（${plan.modeLabel}）：新增 ${created}，更新 ${updated}` +
           (skipped ? `，跳过 ${skipped}` : "") +

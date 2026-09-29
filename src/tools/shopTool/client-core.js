@@ -454,20 +454,29 @@ window.toolClients = window.toolClients || {};
     }
 
     /**
-     * 整批丢弃封面缓存。后端重推 productsLoaded（手动 🔄 或轮询发现别人改了库）时必须先调它：
-     * ensureCovers 见到 coverCache 里有就直接跳过，不调的话封面永远停在旧图。
-     * 只清已知的两处：列表/图库重渲染后会重新 ensureCovers 当前页，所以重取的是「看得见的行」。
+     * 整批校核封面缓存（手动 🔄 或轮询发现别人改了库时）。现在是增量式：
+     * base64 留在内存里不整批丢，只标 coverRecheck，让 ensureCovers 把当前页的封面
+     * 重新向后台发一次请求；后台按文件夹 mtime 判断——图没变原图退回，前端比对一致就不
+     * 重画；真变了的才替换。效果：刷新后没动的商品不再整批重嵌/重画，别人换的图照样刷得出来。
+     * gen +1 仍是必须的：刷新前已发出去的在途请求，回来是旧图，靠 gen 认出并丢弃。
      */
     function invalidateAllCovers() {
       coverGen++;
-      state.coverCache = {};
+      state.coverRecheck = true;
+      state.coverRecheckDone = {};
       state.coverPending = {};
       coverQueue.length = 0;
     }
 
     function ensureCovers(list) {
+      const recheck = !!state.coverRecheck;
       for (const p of list) {
-        if (state.coverCache[p.code] !== undefined) {
+        if (!recheck && state.coverCache[p.code] !== undefined) {
+          continue;
+        }
+        // 本轮校核已经重取过的（coverLoaded 里登记过），不重复发：
+        // 否则 renderLivePreviews→ensureCovers→coverLoaded 会形成无穷请求循环
+        if (recheck && state.coverRecheckDone[p.code]) {
           continue;
         }
         if (state.coverPending[p.code]) {
