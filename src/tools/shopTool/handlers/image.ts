@@ -624,5 +624,46 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       await reloadImages(code);
       h.invalidateCover(code);
     },
+
+    /**
+     * 删封面图：列表/画册里右键封面直接删掉「当前当封面那张」。
+     *
+     * 为什么不复用 deleteImageFile（那个是给灯箱按名字删指定那张的）：封面 = 夹里
+     * listImageFiles 排序后的第一张（跟 getCover 的 readCover 同一口径），这个知识
+     * 在后台。前端菜单只知道「这个商品有封面」，不知道它叫什么——按序号发过去的话，
+     * 从弹菜单到请求到达之间夹子被别台机器动过，序号就指到别的文件上了。
+     * 所以这里由后台自己认「第一张是谁」再删，不收 name/index。
+     *
+     * 只删一张不动数据库、不做整库备份（同 deleteImageFile 的取舍）。
+     */
+    async deleteCoverImage(msg) {
+      const code = String(msg.code ?? "");
+      const dir = imageDir();
+      if (!dir) {
+        log("❌未配置图片根目录");
+        return;
+      }
+      const folder = path.join(dir, code);
+      const files = listImageFiles(folder);
+      if (files.length === 0) {
+        log(`ℹ${code} 本来就没有图片，无需删除`);
+        return;
+      }
+      const fp = path.join(folder, files[0]);
+      // 同 deleteImageFile：星标总览可能正在后台读这些原图，不等就删会撞上文件锁
+      await drainInflightThumbs();
+      try {
+        await unlinkWithRetry(fp, unlinkFile);
+      } catch (err: any) {
+        // 失败也把磁盘现状推回去，否则列表/画册停在「还有图」的状态，用户分不清删掉没有
+        log(busyHint(`删不掉 ${code} 的封面图`, err, fp));
+        await reloadImages(code);
+        h.invalidateCover(code);
+        return;
+      }
+      log(`🗑已删除 ${code} 的封面图${files.length > 1 ? "（下一张自动顶上来当封面）" : ""}`);
+      await reloadImages(code);
+      h.invalidateCover(code);
+    },
   };
 }

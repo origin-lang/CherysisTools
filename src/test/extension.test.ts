@@ -674,6 +674,55 @@ suite('商品图片删除（占用重试 / 不做无谓备份）', () => {
 		assert.ok(!said!.includes('正被占用'), 'ENOENT 不是占用，别误导用户去关预览');
 	});
 
+	// 列表/画册右键封面走的是 deleteCoverImage（不经过灯箱、不收 name/index）。
+	// 它必须删掉「当前当封面那张」——夹里按加入时间排的第一张，而不是文件名排第一的那张。
+	test('删封面图：只删当前当封面那张，下一张自动顶上来', async function () {
+		this.timeout(15000);
+		const { root, folder } = seed(); // 已有 b.png（没 stamp，mtime=现在）
+		const harness = createHarness(root);
+		// 加一张加入时间更早、但文件名排在 b 之后的图：封面按加入时间取，所以封面是
+		// zz_early.png。这样能证明「删的是封面（最早加入）」，而不是「按文件名删第一个」。
+		fs.writeFileSync(path.join(folder, 'zz_early.png'), PNG_1PX);
+		stampFile(path.join(folder, 'zz_early.png'), '2020-01-01T00:00:00Z');
+		stampFile(path.join(folder, 'b.png'), '2021-01-01T00:00:00Z');
+
+		await imageHandlers(harness.h).deleteCoverImage({ code: 'L001' }, harness.h);
+
+		assert.strictEqual(
+			fs.existsSync(path.join(folder, 'zz_early.png')),
+			false,
+			'当前当封面那张（最早加入的 zz_early.png）应被删掉',
+		);
+		assert.strictEqual(
+			fs.existsSync(path.join(folder, 'b.png')),
+			true,
+			'只删封面一张，其余留在夹里',
+		);
+		assert.ok(harness.logs.some((l) => l.includes('已删除')), '应报告已删除');
+		assert.ok(!harness.logs.some((l) => l.includes('删不掉')), '不该报错');
+		// 跟 deleteImageFile 一样：删图是纯文件操作，不重载整表；封面作废走 coverInvalidated
+		assert.strictEqual(harness.loadAllCount, 0, '删封面不该重载整表');
+		assert.ok(
+			harness.posted.some((m) => m.type === 'imagesLoaded'),
+			'删完要 reloadImages，让列表/画册立刻反映磁盘现状',
+		);
+	});
+
+	test('删封面图：夹里本来就没图时不报错、不硬删', async function () {
+		this.timeout(15000);
+		const { root, folder } = seed();
+		const harness = createHarness(root);
+		fs.unlinkSync(path.join(folder, 'b.png')); // 夹空了
+
+		await imageHandlers(harness.h).deleteCoverImage({ code: 'L001' }, harness.h);
+
+		assert.ok(
+			!harness.logs.some((l) => l.includes('删不掉') && !l.includes('本来就没有')),
+			'空夹不该报「删不掉」，实际：' + JSON.stringify(harness.logs),
+		);
+		assert.strictEqual(harness.backupCount, 0, '删图不写库，不该备份');
+	});
+
 	test('清空图片夹：部分删不掉时报实际张数，不谎报「已清空」', async function () {
 		this.timeout(15000);
 		const { root, folder } = seed();
@@ -1261,6 +1310,27 @@ suite('防回归：图片不再整库重推后，封面与直播价必须自己�
 		assert.ok(
 			/function liveDupCounts\(\)\s*\{[\s\S]*?for \(const r of state\.livePlan\)/.test(src),
 			'liveDupCounts 应遍历整份 state.livePlan（跨组重复也要算重复）',
+		);
+	});
+
+	test('列表/画册的封面右键菜单里得有「删除图片」，且走 deleteCoverImage', () => {
+		const src = readClient('client-product.js');
+		// openCoverMenu 同时服务列表单元格和画册卡片（两者都带 data-p-act="img"）
+		const body = /function openCoverMenu\([\s\S]*?\n\}/.exec(src);
+		assert.ok(body, '应能定位到 openCoverMenu 函数体');
+		const at = body![0];
+		assert.ok(
+			/删除图片/.test(at),
+			'openCoverMenu 里应有「删除图片」菜单项（列表/画册右键封面直接能删）',
+		);
+		assert.ok(
+			/type:\s*["']deleteCoverImage["']/.test(at),
+			'菜单项应 post deleteCoverImage：前端只有 base64、不知道封面文件叫什么，' +
+				'得由后台认「当前当封面那张」再删（按序号发过去，夹子被别人动过就会删错）',
+		);
+		assert.ok(
+			/danger:\s*true/.test(at),
+			'删图不可逆，菜单项该标 danger（红字）',
 		);
 	});
 

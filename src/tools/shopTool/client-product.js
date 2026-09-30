@@ -3917,6 +3917,23 @@ function openCoverMenu(e, p) {
         );
       },
     });
+    // 列表/画册的封面右键直接能删，不必再拐进灯箱去点某一张。
+    // 只在真的有封面时出现（跟「复制图片」同一个门），无图时菜单里只剩「粘贴图片」。
+    // 交给后台认「当前当封面那张」再删：前端只有 base64、不知道那个文件叫什么，
+    // 按序号发过去的话，弹菜单到请求到达之间夹子被别台机器动过就会删错文件。
+    items.push({
+      label: "🗑️ 删除图片",
+      danger: true,
+      run: () => {
+        confirmBox(
+          `确认删除 ${p.code} 的封面图？\n（文件会被真的删除。夹里还有别的图的话，下一张会自动顶上来当封面）`,
+        ).then((ok) => {
+          if (ok) {
+            post({ type: "deleteCoverImage", code: p.code });
+          }
+        });
+      },
+    });
   }
   if (navigator.clipboard && navigator.clipboard.read) {
     items.push({

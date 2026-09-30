@@ -350,6 +350,7 @@ const WRITE_ACTIONS = new Set([
   "clearImages",
   "clearImagesBatch",
   "deleteImageFile",
+  "deleteCoverImage",
   // 直播排品（live_plan / live_star 落库）
   "toggleLiveStar",
   "setLiveStars",
