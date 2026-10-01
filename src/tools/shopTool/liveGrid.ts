@@ -66,6 +66,48 @@ function starLabelSvg(
   </svg>`;
 }
 
+/**
+ * 读原图的并发上限。九宫格一组 9 张、星标总览一页最多 100 格，原来是**串行**一个个读：
+ * 共享盘上每张要等它读完+解码完才开始下一张（客机实测单张约 3 秒 → 一组要 27 秒）。
+ * 并发之后墙钟时间按并发数下降，但要压着用，不是越大越好：
+ *   - 每多一路就多一份 libvips 解码的瞬时内存（4000px 的 JPEG 解码时能占几十 MB）；
+ *   - 共享盘上同时开太多流会把别人的读写挤慢，弱 NAS 还容易超时；
+ *   - libvips 自己是多线程的，路数太多等于把 CPU 核数超订一倍。
+ * 3 是「比串行快一个量级」和「别把机器和共享盘吃爆」之间的折中；要调就动这一个数。
+ */
+const IMG_READ_CONCURRENCY = 3;
+
+/**
+ * 按并发上限处理一批项，**结果严格按输入下标归位**——拼图位置全靠它，顺序绝不能乱。
+ * 单项抛错不往外冒（那一格记成 undefined），由调用方决定怎么占位：
+ * 一格读不到就不该毁掉整张图（九宫格原来正是整组失败，星标总览一直有灰底兜底）。
+ */
+async function mapCellsLimited<T, R>(
+  items: T[],
+  limit: number,
+  run: (item: T, index: number) => Promise<R>,
+): Promise<Array<R | undefined>> {
+  const out = new Array<R | undefined>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) {
+        return;
+      }
+      try {
+        out[i] = await run(items[i], i);
+      } catch {
+        out[i] = undefined;
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, () => worker()),
+  );
+  return out;
+}
+
 // 直播排品九宫格：cells 长度 9，每项 { code, img }；缺图/缺码显示灰底占位。
 // labelMode：num＝底部标「N号」；code＝标商品真实编号；none＝不标任何文字。
 // tile 尺寸按第一张有图商品等比 clamp（长边 ≤1024、短边 ≥256），避免 canvas 超 sharp 像素上限。
@@ -96,26 +138,33 @@ export async function renderLiveGrid(
   }
   const canvasW = tileW * 3;
   const canvasH = tileH * 3;
+  // 先把 9 张图**并发**读出来（读是唯一的大头：共享盘上单张要等几秒），顺序靠下标保住；
+  // 拼图层是内存操作，仍旧按格子顺序走。
+  const inputs = await mapCellsLimited(cells, IMG_READ_CONCURRENCY, async (cell) => {
+    if (!cell?.img) {
+      return null; // 缺图：交给下面走灰底
+    }
+    return await withSharpFile((f) =>
+      f(cell.img as string)
+        .resize(tileW, tileH, { fit: "fill" })
+        .toBuffer(),
+    );
+  });
   const layers: Parameters<sharp.Sharp["composite"]>[0] = [];
   const startNum = (groupNo - 1) * 9 + 1;
   for (let idx = 0; idx < 9; idx++) {
     const col = idx % 3;
     const row = Math.floor(idx / 3);
     const cell = cells[idx];
-    let input: Buffer;
-    if (cell.img) {
-      input = await withSharpFile((f) =>
-        f(cell.img as string).resize(tileW, tileH, { fit: "fill" }).toBuffer(),
-      );
-    } else {
-      input = Buffer.from(greyCellSvg(tileW, tileH), "utf-8");
-    }
+    // 读失败/缺图的那一格灰底占位，别的格子照常出图。
+    // 原来是「读不到就整组抛错失败」——网络抖一下一组白跑，比少一格糟得多。
+    const input = inputs[idx] ?? Buffer.from(greyCellSvg(tileW, tileH), "utf-8");
     layers.push({
       input,
       left: col * tileW,
       top: row * tileH,
     });
-    if (labelMode !== "none" && cell.code) {
+    if (labelMode !== "none" && cell?.code) {
       const text = labelMode === "code" ? cell.code : `${startNum + idx}号`;
       layers.push({
         input: Buffer.from(labelSvg(tileW, tileH, text), "utf-8"),
@@ -186,27 +235,31 @@ export async function renderStarOverviewBuffer(
   }
   const canvasW = tileW * cols;
   const canvasH = tileH * rowsN;
+  // 同一套取舍：读图并发（一页最多 100 格，串行时这里是几十秒到几分钟的大头），
+  // 结果按下标归位；单格取不到/解码失败就灰底占位（原来就是这个口径，只是挪进了并发任务里）
+  const inputs = await mapCellsLimited(rows, IMG_READ_CONCURRENCY, async (cell) => {
+    const src = cell.img ? await srcOf(cell.code, cell.img) : null;
+    if (!src) {
+      return Buffer.from(greyCellSvg(tileW, tileH), "utf-8");
+    }
+    try {
+      // limitInputPixels:false 让超大源图也能 resize；失败则该格灰底占位
+      return await withSharpFile((f) =>
+        f(src, { limitInputPixels: false })
+          .resize(tileW, tileH, { fit: "fill" })
+          .toBuffer(),
+      );
+    } catch {
+      return Buffer.from(greyCellSvg(tileW, tileH), "utf-8");
+    }
+  });
   const layers: Parameters<sharp.Sharp["composite"]>[0] = [];
   for (let idx = 0; idx < rows.length; idx++) {
     const col = idx % cols;
     const row = Math.floor(idx / cols);
     const cell = rows[idx];
-    let input: Buffer;
-    const src = cell.img ? await srcOf(cell.code, cell.img) : null;
-    if (src) {
-      try {
-        // limitInputPixels:false 让超大源图也能 resize；失败则该格灰底占位
-        input = await withSharpFile((f) =>
-          f(src, { limitInputPixels: false }).resize(tileW, tileH, { fit: "fill" }).toBuffer(),
-        );
-      } catch {
-        input = Buffer.from(greyCellSvg(tileW, tileH), "utf-8");
-      }
-    } else {
-      input = Buffer.from(greyCellSvg(tileW, tileH), "utf-8");
-    }
     layers.push({
-      input,
+      input: inputs[idx] ?? Buffer.from(greyCellSvg(tileW, tileH), "utf-8"),
       left: col * tileW,
       top: row * tileH,
     });

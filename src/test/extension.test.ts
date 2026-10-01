@@ -2175,3 +2175,153 @@ suite('前端契约：状态下拉与画册卡片大小', () => {
 		assert.strictEqual(stray.blurred, 0, '鼠标标记只能被一次 change 用掉');
 	});
 });
+
+/**
+ * 九宫格/星标总览原来是**串行**读原图（一格一格等），共享盘上慢得离谱；改成并发读之后
+ * 最容易踩的两个坑：并发回来的顺序把格子拼错位、以及某一格读失败把整张图带走。
+ * 这两条都用"生成真图再采样像素"来钉，而不是读源码字符串——位置对不对，只有像素说了算。
+ */
+suite('九宫格 / 星标总览：并发读图不打乱位置、单格失败不毁整张', () => {
+	const roots: string[] = [];
+
+	function makeRoot(prefix: string): string {
+		const root = makeTempDir(prefix);
+		roots.push(root);
+		return root;
+	}
+
+	teardown(() => {
+		for (const root of roots.splice(0)) {
+			removeTempDir(root);
+		}
+	});
+
+	// 9 个彼此相距很远的纯色：任意两个至少在某个通道差 127，JPEG 那点抖动吃不掉这个距离
+	const COLORS = [
+		{ r: 255, g: 0, b: 0 },
+		{ r: 0, g: 255, b: 0 },
+		{ r: 0, g: 0, b: 255 },
+		{ r: 255, g: 255, b: 0 },
+		{ r: 0, g: 255, b: 255 },
+		{ r: 255, g: 0, b: 255 },
+		{ r: 128, g: 128, b: 128 },
+		{ r: 255, g: 128, b: 0 },
+		{ r: 0, g: 128, b: 255 },
+	];
+
+	/** 9 张 300×300 纯色 PNG（300 < 1024，不会被放大 → tile=300，canvas=900×900） */
+	async function seedColored(dir: string): Promise<string[]> {
+		fs.mkdirSync(dir, { recursive: true });
+		const out: string[] = [];
+		for (let i = 0; i < 9; i++) {
+			const fp = path.join(dir, `c${i}.png`);
+			await sharp({
+				create: { width: 300, height: 300, channels: 3, background: COLORS[i] },
+			})
+				.png()
+				.toFile(fp);
+			out.push(fp);
+		}
+		return out;
+	}
+
+	/**
+	 * 采样每格里的一个点（取格内 10% 处，避开灰底占位那张"无图"文字，它在格子正中）。
+	 * 纯色块任何点都一样，取 10% 只是为了让灰底那格不采到字上。
+	 */
+	async function sampleCells(outFile: string, tile = 300, cols = 3) {
+		const { data, info } = await sharp(outFile).raw().toBuffer({ resolveWithObject: true });
+		const at = (idx: number) => {
+			const col = idx % cols;
+			const row = Math.floor(idx / cols);
+			const x = col * tile + Math.round(tile * 0.1);
+			const y = row * tile + Math.round(tile * 0.1);
+			const p = (y * info.width + x) * info.channels;
+			return { r: data[p], g: data[p + 1], b: data[p + 2] };
+		};
+		return { at, info };
+	}
+
+	const near = (
+		got: { r: number; g: number; b: number },
+		want: { r: number; g: number; b: number },
+		tol = 24,
+	): boolean =>
+		Math.abs(got.r - want.r) <= tol &&
+		Math.abs(got.g - want.g) <= tol &&
+		Math.abs(got.b - want.b) <= tol;
+
+	test('九宫格：并发读图后 9 格仍按格子位置归位（每格是自己的那张图）', async function () {
+		this.timeout(15000);
+		const root = makeRoot('grid-order-');
+		const files = await seedColored(path.join(root, 'imgs'));
+		const outDir = path.join(root, 'out');
+		fs.mkdirSync(outDir);
+		const cells = files.map((fp, i) => ({
+			code: `L${String(i + 1).padStart(3, '0')}`,
+			img: fp,
+		}));
+
+		// labelMode='none'：不压文字，采样点就只剩纯色可读
+		const out = await renderLiveGrid(cells, outDir, 1, 'none');
+
+		const { at, info } = await sampleCells(out);
+		assert.strictEqual(info.width, 900, '3 格 × 300 = 900（300 小于上限 1024，不放大）');
+		for (let i = 0; i < 9; i++) {
+			assert.ok(
+				near(at(i), COLORS[i]),
+				`第 ${i + 1} 格应该是第 ${i + 1} 张图，实际采到 ${JSON.stringify(at(i))}`,
+			);
+		}
+	});
+
+	test('九宫格：某一格读不到图时灰底占位，其余照常出图（不再整组失败）', async function () {
+		this.timeout(15000);
+		const root = makeRoot('grid-broken-');
+		const files = await seedColored(path.join(root, 'imgs'));
+		const outDir = path.join(root, 'out');
+		fs.mkdirSync(outDir);
+		const cells = files.map((fp, i) => ({
+			code: `L${String(i + 1).padStart(3, '0')}`,
+			img: i === 4 ? path.join(root, 'imgs', '这一张不存在.png') : fp,
+		}));
+
+		// 关键：以前这里是抛出去 → 整组白跑；现在必须照常出图
+		const out = await renderLiveGrid(cells, outDir, 1, 'none');
+
+		const { at } = await sampleCells(out);
+		assert.ok(
+			near(at(4), { r: 214, g: 214, b: 214 }, 30),
+			`读不到的那格应该是灰底占位（#d6d6d6），实际 ${JSON.stringify(at(4))}`,
+		);
+		assert.ok(near(at(0), COLORS[0]), '前后的好格子必须照常出图');
+		assert.ok(near(at(8), COLORS[8]), '最后一格也要在（并发下最容易漏的就是它）');
+	});
+
+	test('星标总览：并发读图后各格仍按排版位置归位', async function () {
+		this.timeout(15000);
+		const root = makeRoot('star-order-');
+		const files = await seedColored(path.join(root, 'imgs'));
+		const rows = files.map((fp, i) => ({
+			code: `L${String(i + 1).padStart(3, '0')}`,
+			img: fp,
+			price: 100 + i,
+			costPrice: 50 + i,
+		}));
+
+		// 标签全关 → 不压文字，采样点只剩纯色
+		const labels = { code: false, costPrice: false, salePrice: false, fontSize: 0 };
+		const buf = await renderStarOverviewBuffer(rows, 3, 3, labels);
+		const out = path.join(root, 'overview.jpg');
+		fs.writeFileSync(out, buf);
+
+		const { at, info } = await sampleCells(out);
+		assert.strictEqual(info.width, 900);
+		for (let i = 0; i < 9; i++) {
+			assert.ok(
+				near(at(i), COLORS[i]),
+				`第 ${i + 1} 格应该是第 ${i + 1} 张图，实际采到 ${JSON.stringify(at(i))}`,
+			);
+		}
+	});
+});
