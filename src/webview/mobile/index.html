@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN" data-host="web">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>🏪 商品店铺管理（手机版）</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <!-- ① 商品列表 / 画册 -->
+    <section id="screen-list" class="screen show">
+      <header class="bar">
+        <span class="title">🏪 商品</span>
+        <div class="seg">
+          <button id="viewGallery" class="on">画册</button>
+          <button id="viewList">列表</button>
+        </div>
+        <button id="btnReload" class="icon" title="重新从数据库读一遍">🔄</button>
+        <button id="btnNew" class="primary">＋ 新建</button>
+      </header>
+      <div class="searchbar">
+        <input id="q" type="search" placeholder="🔍 编号 / 名称 / 品类 / 系列" autocomplete="off" />
+        <span id="count" class="muted"></span>
+      </div>
+      <main id="content" class="content"></main>
+    </section>
+
+    <!-- ② 商品详情（覆盖整屏，手机上就是"进入这个商品"） -->
+    <section id="screen-detail" class="screen">
+      <header class="bar">
+        <button id="btnBack" class="icon">‹ 返回</button>
+        <span id="dTitle" class="title"></span>
+        <button id="btnUpload" class="primary">📷 传图</button>
+        <input id="filePick" type="file" accept="image/*" capture="environment" multiple hidden />
+      </header>
+      <main class="content">
+        <div id="dCover" class="cover"></div>
+        <div id="dImages" class="strip"></div>
+        <div class="card">
+          <label>名称<input id="fName" type="text" /></label>
+          <div class="row2">
+            <label>进价<input id="fCost" type="number" inputmode="decimal" step="0.01" /></label>
+            <label>售价<input id="fSale" type="number" inputmode="decimal" step="0.01" /></label>
+          </div>
+          <div class="row2">
+            <label>库存<input id="fStock" type="number" inputmode="numeric" step="1" /></label>
+            <label>状态
+              <button id="fStatus" class="toggle">在售</button>
+            </label>
+          </div>
+          <div class="row2">
+            <label>品类<input id="fCategory" type="text" list="catList" /></label>
+            <label>系列<input id="fSeries" type="text" /></label>
+          </div>
+          <button id="btnSave" class="primary wide">保存修改</button>
+          <p class="muted small">改完点保存；库存这一格就是"实际清点数"，直接写进去（与电脑版双击库存列同一口径）。</p>
+        </div>
+      </main>
+    </section>
+
+    <!-- ③ 新建商品 -->
+    <section id="screen-new" class="screen">
+      <header class="bar">
+        <button id="btnNewBack" class="icon">‹ 返回</button>
+        <span class="title">＋ 新建商品</span>
+        <button id="btnCreate" class="primary">保存</button>
+      </header>
+      <main class="content">
+        <div class="card">
+          <label>编号
+            <div class="row2">
+              <input id="nCode" type="text" placeholder="L007" autocapitalize="characters" />
+              <button id="btnNextCode" class="mini">用下一个空号</button>
+            </div>
+          </label>
+          <label>名称<input id="nName" type="text" placeholder="例如 铜合金锆石手链" /></label>
+          <div class="row2">
+            <label>品类<input id="nCategory" type="text" list="catList" /></label>
+            <label>系列<input id="nSeries" type="text" placeholder="A / B / C" /></label>
+          </div>
+          <label>等级<select id="nGrade"></select></label>
+          <div class="row2">
+            <label>进价<input id="nCost" type="number" inputmode="decimal" step="0.01" /></label>
+            <label>售价<input id="nSale" type="number" inputmode="decimal" step="0.01" placeholder="留空按规则" /></label>
+          </div>
+          <label>期初库存<input id="nStock" type="number" inputmode="numeric" step="1" value="0" /></label>
+          <p id="ruleHint" class="muted small"></p>
+        </div>
+      </main>
+    </section>
+
+    <!-- 大图查看 -->
+    <div id="viewer" class="viewer">
+      <img id="viewerImg" alt="" />
+      <button id="viewerClose" class="viewer-x">✕</button>
+    </div>
+
+    <!-- 底部状态条：最近一条日志；点开看全部 -->
+    <div id="status" class="status"><span id="statusText" class="muted">准备中…</span></div>
+    <div id="logPanel" class="logpanel"><div id="logList"></div><button id="logClose" class="primary wide">关闭</button></div>
+
+    <datalist id="catList"></datalist>
+    <script src="/app.js"></script>
+  </body>
+</html>

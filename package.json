@@ -104,7 +104,8 @@
     "lint": "eslint src",
     "check:parity": "node scripts/check-shopTool-parity.cjs",
     "test": "vscode-test",
-    "package": "vsce-pnpm package"
+    "package": "vsce-pnpm package",
+    "serve": "node out/server/index.js"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
