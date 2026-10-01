@@ -10,7 +10,7 @@ import { settingsHandlers } from '../tools/shopTool/handlers/settings.js';
 import { HandlerCtx } from '../tools/shopTool/handlers/types.js';
 import { ToolContext } from '../core/toolContext.js';
 import { LOCAL_PREF_KEYS, withBackupTimeout } from '../tools/shopTool/index.js';
-import { previewThumbPath, drainInflightThumbs, listImageFiles, thumbToCachedBase64 } from '../tools/shopTool/images.js';
+import { previewThumbPath, drainInflightThumbs, listImageFiles, thumbToCachedBase64, sharedThumbReady, sharedThumbRoot } from '../tools/shopTool/images.js';
 import { renderStarOverviewBuffer, renderLiveGrid } from '../tools/shopTool/liveGrid.js';
 import {
 	handleNineGridLabel,
@@ -1787,5 +1787,391 @@ suite('导入：相同字段不再重写', () => {
 			/duplicateLines/.test(prod) && /编号重复/.test(prod),
 			'预览区要列出具体的重复行，不能只给个数',
 		);
+	});
+});
+
+/**
+ * 共享缩略图缓存：客机第一次看某个商品时，本机缓存是空的，原来只能从共享盘把几 MB 的原图
+ * 整张读过来现缩；有了共享缓存就直接读几十 KB 的小图。这里钉住三件事——
+ * 跨机复用（盘符不同也要命中）、源图变了不能发旧图、只读机只读不写。
+ */
+suite('共享缩略图缓存（客机不再从共享盘拉原图）', () => {
+	const roots: string[] = [];
+
+	function makeRoot(prefix: string): string {
+		const root = makeTempDir(prefix);
+		roots.push(root);
+		return root;
+	}
+
+	teardown(() => {
+		for (const root of roots.splice(0)) {
+			removeTempDir(root);
+		}
+	});
+
+	/** 一张能被 sharp 解码的真图（1px PNG 缩出来全一样，验不出「读的是谁的小图」） */
+	async function photo(w = 240, h = 160): Promise<Buffer> {
+		return sharp({
+			create: { width: w, height: h, channels: 3, background: { r: 10, g: 120, b: 200 } },
+		})
+			.png()
+			.toBuffer();
+	}
+
+	/**
+	 * 造「两台机器上的同一个商品夹」：绝对路径不同、内容不同、但大小与 mtime 一致。
+	 * B 机那份刻意写成解不出来的字节：万一没命中共享缓存，缩图必然失败、回退成原图 base64，
+	 * 结果就不可能等于 A 机那张 webp —— 用它来证明「B 读的是共享缓存，不是自己的原图」。
+	 */
+	async function twoMachines(): Promise<{
+		shared: string;
+		srcA: string;
+		srcB: string;
+		folderA: string;
+		folderB: string;
+	}> {
+		const shared = makeRoot('thumb-shared-');
+		const dirA = path.join(makeRoot('thumb-machA-'), 'L001');
+		const dirB = path.join(makeRoot('thumb-machB-'), 'L001');
+		fs.mkdirSync(dirA, { recursive: true });
+		fs.mkdirSync(dirB, { recursive: true });
+		const srcA = path.join(dirA, 'shot.png');
+		const srcB = path.join(dirB, 'shot.png');
+		const bytes = await photo();
+		fs.writeFileSync(srcA, bytes);
+		fs.writeFileSync(srcB, Buffer.alloc(bytes.length, 0x41));
+		const t = new Date('2026-05-01T10:00:00Z');
+		fs.utimesSync(srcA, t, t);
+		fs.utimesSync(srcB, t, t);
+		return { shared, srcA, srcB, folderA: dirA, folderB: dirB };
+	}
+
+	test('A 机缩好放进共享缓存，B 机（另一套路径、本机缓存为空）直接复用那张小图', async () => {
+		const { shared, srcA, srcB } = await twoMachines();
+		const a = await thumbToCachedBase64(srcA, makeRoot('thumb-loA-'), 'L001', 'shot.png', {
+			root: shared,
+		});
+		assert.ok(a.startsWith('data:image/webp'), `应产出 webp 缩略图，实际 ${a.slice(0, 30)}`);
+		assert.ok(
+			fs.readdirSync(shared).some((f) => f.endsWith('.webp')),
+			'共享缓存里应落下小图',
+		);
+
+		const localB = makeRoot('thumb-loB-');
+		const b = await thumbToCachedBase64(srcB, localB, 'L001', 'shot.png', { root: shared });
+		assert.strictEqual(b, a, 'B 机应直接拿到 A 机写下的那张小图，而不是缩自己的原图');
+		assert.ok(
+			fs.readdirSync(path.join(localB, 'shop_thumbs')).some((f) => f.endsWith('.webp')),
+			'命中共享缓存后应顺手回填本机缓存',
+		);
+	});
+
+	test('源图 mtime 变了：共享缓存不再命中，不许把旧图发出去', async () => {
+		const { shared, srcA, srcB } = await twoMachines();
+		const a = await thumbToCachedBase64(srcA, makeRoot('thumb-loA2-'), 'L001', 'shot.png', {
+			root: shared,
+		});
+		const later = new Date('2026-05-02T10:00:00Z');
+		fs.utimesSync(srcB, later, later);
+		const b = await thumbToCachedBase64(srcB, makeRoot('thumb-loB2-'), 'L001', 'shot.png', {
+			root: shared,
+		});
+		assert.notStrictEqual(b, a, '指纹对不上就该重缩（宁可慢一张，也不能让人看到旧图）');
+	});
+
+	test('只读机：共享缓存照读不误，但一张都不往共享盘写', async () => {
+		const { srcA } = await twoMachines();
+		// 用一个**还不存在**的共享缓存根：只读模式一旦去建目录/写文件就会露馅
+		const sharedNew = path.join(makeRoot('thumb-ro-root-'), 'shop_thumbs_shared');
+		const ro = await thumbToCachedBase64(srcA, makeRoot('thumb-loRo-'), 'L001', 'shot.png', {
+			root: sharedNew,
+			writable: false,
+		});
+		assert.ok(ro.startsWith('data:image/webp'), '只读模式下仍应出图（现缩，只是不写共享盘）');
+		assert.strictEqual(fs.existsSync(sharedNew), false, '只读模式不该在共享盘上创建缓存目录');
+	});
+
+	test('sharedThumbRoot：没另配数据目录（storageDir === defaultStorageDir）就不启用共享层', () => {
+		const same = makeRoot('thumb-same-');
+		assert.strictEqual(sharedThumbRoot(same, same), '', '同一目录没有第二台机器会读，白占磁盘');
+		assert.strictEqual(sharedThumbRoot('', same), '');
+		const net = makeRoot('thumb-net-');
+		assert.strictEqual(sharedThumbRoot(net, same), path.join(net, 'shop_thumbs_shared'));
+	});
+
+	test('sharedThumbReady 只认指纹：源图换了（大小/mtime 变）就算没缩过', async () => {
+		const { shared, srcA, folderA } = await twoMachines();
+		await thumbToCachedBase64(srcA, makeRoot('thumb-loR-'), 'L001', 'shot.png', { root: shared });
+		assert.strictEqual(sharedThumbReady(srcA, shared, 'L001', 'shot.png'), true);
+
+		const replaced = path.join(folderA, 'shot.png');
+		fs.writeFileSync(replaced, await photo(40, 40));
+		const t = new Date('2026-05-01T10:00:00Z');
+		fs.utimesSync(replaced, t, t);
+		assert.strictEqual(sharedThumbReady(replaced, shared, 'L001', 'shot.png'), false);
+	});
+
+	test('预生成：封面与图库每张都进共享缓存，重复点全部跳过', async () => {
+		const imgRoot = makeRoot('thumb-imgs-');
+		const storage = makeRoot('thumb-storage-');
+		const local = makeRoot('thumb-host-');
+		for (const [code, n] of [
+			['L001', 3],
+			['L002', 1],
+		] as Array<[string, number]>) {
+			const folder = path.join(imgRoot, code);
+			fs.mkdirSync(folder, { recursive: true });
+			for (let i = 0; i < n; i++) {
+				fs.writeFileSync(path.join(folder, `${code}_${i}.png`), await photo(120, 80));
+			}
+		}
+		const logs: string[] = [];
+		const h = {
+			ctx: {
+				storageDir: storage,
+				defaultStorageDir: local,
+				panel: { webview: { asWebviewUri: (u: vscode.Uri) => u } },
+			} as unknown as ToolContext,
+			imageDir: () => imgRoot,
+			coverCache: new Map(),
+			readOnly: () => false,
+			log: (s: string) => logs.push(s),
+			post: () => undefined,
+			preOpBackup: async () => undefined,
+			invalidateCover: () => undefined,
+			loadAll: () => undefined,
+			db: {
+				getProducts: () => [
+					{ id: 1, code: 'L001' },
+					{ id: 2, code: 'L002' },
+					{ id: 3, code: 'L003' },
+				],
+			},
+		} as unknown as HandlerCtx;
+		/** 预生成是后台跑的（不 await），等到汇总那行为止 */
+		const waitSummary = async (): Promise<string> => {
+			for (let i = 0; i < 400; i++) {
+				const done = logs.filter((l) => l.startsWith('✅') || l.startsWith('❌'));
+				if (done.length) {
+					return done[done.length - 1];
+				}
+				await new Promise((r) => setTimeout(r, 50));
+			}
+			throw new Error(`没等到汇总日志：${logs.join(' | ')}`);
+		};
+
+		imageHandlers(h).buildSharedThumbs({}, h);
+		const first = await waitSummary();
+		assert.ok(first.includes('新生成 6 张'), `2 封面 + 4 张图应全部新生成，实际：${first}`);
+
+		const sharedRoot = path.join(storage, 'shop_thumbs_shared');
+		const files = fs.readdirSync(sharedRoot).filter((f) => f.endsWith('.webp'));
+		assert.strictEqual(
+			files.filter((f) => /@512\.webp$/.test(f) && !f.includes('~')).length,
+			2,
+			`应有 L001/L002 两枚封面，实际 ${files.join(',')}`,
+		);
+		assert.strictEqual(
+			files.filter((f) => /~[0-9a-f]{8}@512\.webp$/.test(f)).length,
+			4,
+			`应有 4 枚按文件名存的图库小图，实际 ${files.join(',')}`,
+		);
+		assert.ok(
+			!files.some((f) => f.startsWith('L003')),
+			'没有图片夹的商品不该产出任何缩略图',
+		);
+
+		// 清掉上一轮的日志：waitSummary 取的是最后一行 ✅，不清就会把第一轮的汇总当成第二轮的
+		logs.length = 0;
+		imageHandlers(h).buildSharedThumbs({}, h);
+		const second = await waitSummary();
+		assert.ok(second.includes('新生成 0 张'), `已缩过的必须跳过，实际：${second}`);
+		assert.ok(second.includes('已有 6 张'), `实际：${second}`);
+	});
+	test('没另配数据存储目录时给出可操作的提示，不是静默什么都不做', () => {
+		const same = makeRoot('thumb-plain-');
+		const logs: string[] = [];
+		const h = {
+			ctx: {
+				storageDir: same,
+				defaultStorageDir: same,
+				panel: { webview: { asWebviewUri: (u: vscode.Uri) => u } },
+			} as unknown as ToolContext,
+			imageDir: () => same,
+			coverCache: new Map(),
+			readOnly: () => false,
+			log: (s: string) => logs.push(s),
+			post: () => undefined,
+			preOpBackup: async () => undefined,
+			invalidateCover: () => undefined,
+			loadAll: () => undefined,
+			db: { getProducts: () => [] },
+		} as unknown as HandlerCtx;
+
+		imageHandlers(h).buildSharedThumbs({}, h);
+		assert.ok(
+			logs.some((l) => l.includes('没有可共享的缓存位置')),
+			`实际日志：${logs.join(' | ')}`,
+		);
+	});
+});
+
+/**
+ * 前端契约（跟本文件其它「前端契约」用例同一套路）：这两处改动都在 webview 里，
+ * 无头测试点不到，所以读源码钉住关键接线——真正容易被人后来改坏的正是这些接线。
+ */
+suite('前端契约：状态下拉与画册卡片大小', () => {
+	const read = (f: string) =>
+		fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'tools', 'shopTool', f), 'utf-8');
+
+	test('「搜哪一列 = 状态」时换成下拉，选项与 cellValue 的中文标签同一出处', () => {
+		const html = read('fragment.html');
+		const main = read('client-main.js');
+		const prod = read('client-product.js');
+
+		assert.ok(/id="keywordStatus"/.test(html), '工具栏要有状态下拉这个控件');
+		assert.ok(/id="keywordSearchWrap"/.test(html), '输入框那层要有 id，切到状态时整块藏起来');
+		assert.ok(
+			/\.tb-search\[hidden\]/.test(html),
+			'.tb-search 是 display:flex，会盖掉浏览器默认的 [hidden]{display:none}，必须自己补一条',
+		);
+		assert.ok(
+			/const STATUS_LABELS = \{ on: "在售", off: "已下架" \}/.test(prod) &&
+				/p\.status === 1 \? STATUS_LABELS\.off : STATUS_LABELS\.on/.test(prod),
+			'「在售/已下架」只能有 STATUS_LABELS 一处定义，cellValue 从它取（否则漏斗与下拉会各叫各的）',
+		);
+		assert.ok(
+			/STATUS_FILTER_OPTIONS/.test(prod) && /STATUS_FILTER_OPTIONS/.test(main),
+			'下拉选项要由 client-main 从 client-product 的 STATUS_FILTER_OPTIONS 生成，不许再抄一份标签',
+		);
+		assert.ok(
+			/isStatusScope\(\)/.test(main) && /activeKeywordRaw/.test(main),
+			'搜索词要按当前列从对应控件取：状态读下拉，其余读输入框',
+		);
+		assert.ok(
+			/kwStatusSel\.onchange = applyKeyword/.test(main),
+			'下拉选完要立即生效（下拉没有「回车才应用」的说法）',
+		);
+	});
+
+	test('画册卡片大小：档位可调、走本机偏好、切回列表自动收起', () => {		const html = read('fragment.html');
+		const main = read('client-main.js');
+		const prod = read('client-product.js');
+		const idx = read('index.ts');
+
+		assert.ok(
+			/id="gallerySize"/.test(html) && /value="xl"/.test(html),
+			'工具栏要有画册大小下拉，且最大那档比原来大得多',
+		);
+		assert.ok(
+			/var\(--card-w/.test(html) && /var\(--card-h/.test(html),
+			'卡片宽高要走 CSS 变量（.card-grid / .card img），写死像素就没人能调',
+		);
+		assert.ok(
+			/const GALLERY_SIZES = \{/.test(prod) && /function applyGallerySize/.test(prod),
+			'档位表与落点函数要存在（宽高成对给，只给宽度会把封面裁成一条竖片）',
+		);
+		assert.ok(
+			/saveGallerySize\(/.test(main) && /syncGallerySizeVisibility/.test(main),
+			'换档要存本机偏好；切到列表视图要收起这个下拉',
+		);
+		assert.ok(
+			/"gallery_size"/.test(idx),
+			'gallery_size 必须进 LOCAL_PREF_KEYS（各人屏幕宽窄不同，不能写进共享库）',
+		);
+	});
+
+	test('下拉选完交还焦点（滚轮不再把带焦点的 select 当上下键使）', () => {
+		const core = read('client-core.js');
+		const main = read('client-main.js');
+
+		assert.ok(/function installSelectBlurAfterPick\(/.test(core), '交还焦点的函数要存在');
+		assert.ok(
+			/document\.addEventListener\("change"/.test(core) && /sel\.blur\(\)/.test(core),
+			'要在 document 上委托 change 再 blur —— 委托才盖得住各处动态生成的下拉（抽屉、内联编辑器、弹窗）',
+		);
+		assert.ok(
+			/sel\.tagName !== "SELECT"/.test(core),
+			'只处理下拉的 change，别把输入框/复选框的改动也顺手 blur 了',
+		);
+		assert.ok(
+			/pointerdown/.test(core) && /byPointer/.test(core),
+			'只对鼠标来的那次改动 blur：键盘用户按 ↑↓ 换档时焦点被抽走的话，每换一档都得重新 Tab 回来',
+		);
+		assert.ok(
+			/document\.__shopSelectBlurAfterPick/.test(core),
+			'安装要幂等且标记挂 document 上：切工具时脚本会重新执行一遍，模块级标志会被重置',
+		);
+		assert.ok(
+			!/installSelectWheelGuard|scrollAncestorBy/.test(core),
+			'不要再叠回「拦 wheel + 转发滚动量」那套（第一版）：商品管理页里真正的滚动容器是工具栏的**兄弟**，' +
+				'祖先链上找不到能滚的东西，量会被丢掉、鼠标停在工具栏上反而更滚不动；两套机制并存只会互相打架',
+		);
+		assert.ok(/installSelectBlurAfterPick\(\)/.test(main), 'bindEvents 里要真的把它装上');
+	});
+
+	/**
+	 * 上面那条是「源码里有没有这些接线」，这条把它**真跑一遍**：那段逻辑只碰 `document`
+	 * （一个 addEventListener），所以抽出来喂个假 document 就能驱动它——三个分支
+	 * （鼠标改 / 键盘改 / 非下拉的 change）和幂等性都是行为级断言，不是读字符串。
+	 * 浏览器里点不到的东西，这是能拿到的最硬的证据。
+	 */
+	test('交还焦点的行为：鼠标改完 blur、键盘改完不动、非下拉的 change 不碰', () => {
+		const src = read('client-core.js');
+		const begin = src.indexOf('function installSelectBlurAfterPick(');
+		assert.ok(begin >= 0, '先得在 client-core.js 里找到那个函数');
+		// 花括号配平切出函数体：函数里有两层嵌套的箭头函数，正则截不可靠
+		let depth = 0;
+		let end = -1;
+		for (let i = src.indexOf('{', begin); i < src.length; i++) {
+			if (src[i] === '{') {
+				depth++;
+			} else if (src[i] === '}') {
+				depth--;
+				if (depth === 0) {
+					end = i + 1;
+					break;
+				}
+			}
+		}
+		assert.ok(end > begin, '函数体要能配平切出来');
+		const make = new Function(
+			'document',
+			`${src.slice(begin, end)}; return installSelectBlurAfterPick;`,
+		) as (doc: unknown) => () => void;
+
+		/** 假 document：只实现 addEventListener，回调按类型收好，测试里手动触发 */
+		const handlers: Record<string, Array<(e: any) => void>> = {};
+		const fakeDoc = {
+			addEventListener: (t: string, fn: (e: any) => void) => {
+				(handlers[t] = handlers[t] || []).push(fn);
+			},
+		};
+		const fire = (t: string, e: any) => (handlers[t] || []).forEach((fn) => fn(e));
+
+		const install = make(fakeDoc);
+		install();
+		install(); // 幂等：装第二遍不该再挂一组
+		assert.strictEqual((handlers.change || []).length, 1, '重复安装不该挂第二组监听');
+
+		const mouseSel = { tagName: 'SELECT', blurred: 0, blur() { this.blurred++; } };
+		fire('pointerdown', { target: { closest: () => mouseSel } });
+		fire('change', { target: mouseSel });
+		assert.strictEqual(mouseSel.blurred, 1, '鼠标选完要交还焦点（滚轮才不会拿它当上下键）');
+
+		const kbSel = { tagName: 'SELECT', blurred: 0, blur() { this.blurred++; } };
+		fire('keydown', {});
+		fire('change', { target: kbSel });
+		assert.strictEqual(kbSel.blurred, 0, '键盘改完不能抽走焦点，否则每换一档都要重新 Tab 回来');
+
+		const input = { tagName: 'INPUT', blurred: 0, blur() { this.blurred++; } };
+		fire('pointerdown', { target: { closest: () => input } });
+		fire('change', { target: input });
+		assert.strictEqual(input.blurred, 0, '非下拉的 change 不该被碰');
+		// 上一次 change 已经把手势标记读掉了：紧接着来一次没有鼠标前提的下拉改动，不该 blur
+		const stray = { tagName: 'SELECT', blurred: 0, blur() { this.blurred++; } };
+		fire('change', { target: stray });
+		assert.strictEqual(stray.blurred, 0, '鼠标标记只能被一次 change 用掉');
 	});
 });

@@ -38,14 +38,14 @@
   - 自动算：`goods_cost` = Σ((卖−退) × 快照进价)、`sold_total`、`refund_total`
   - `profit` = income − goods_cost − extra_expense；`locked`(锁定当月 sales_record，可解锁重做)
 - `settings`（key-value，**共享库**）：只剩三个全组共用的业务规则 —— `name_template`(完整名称模板)、`stock_alert`(库存预警阈值)、`sales_deduct_stock`(销售自动扣库存，默认开)。另有一个历史遗留的 `image_dir` 旧值，仅作本机 VS Code 设置未配时的回落。
-  - **个人偏好已全部搬出本表**，改存本机 VS Code `globalState`（`%APPDATA%\Code\User\globalStorage\state.vscdb`），各人各设、永不写共享盘：`row_height`、`font_size`、`col_visible_list` / `col_visible_gallery`、`col_image_list` / `col_image_gallery`、`col_show_ops`、`import_fields` / `import_mode` / `export_fields`、`live_out_dir`、`live_grid_label`、`star_label_options`、`star_grid_mode` / `star_grid_cols` / `star_grid_rows`，以及只读开关 `readOnly`。
+  - **个人偏好已全部搬出本表**，改存本机 VS Code `globalState`（`%APPDATA%\Code\User\globalStorage\state.vscdb`），各人各设、永不写共享盘：`row_height`、`font_size`、`gallery_size`(画册卡片大小 s/m/l/xl，默认 l)、`col_visible_list` / `col_visible_gallery`、`col_image_list` / `col_image_gallery`、`col_show_ops`、`import_fields` / `import_mode` / `export_fields`、`live_out_dir`、`live_grid_label`、`star_label_options`、`star_grid_mode` / `star_grid_cols` / `star_grid_rows`，以及只读开关 `readOnly`。
   - 分流点单一：读写都走 `index.ts` 的 `getSetting` / `setSetting`（`LOCAL_PREF_KEYS` 判定），handler 一律用 `h.getSetting` / `h.setSetting`，直接 `db.getSetting` / `db.setSetting` 会绕过。旧值留在表里不再读取。
 
 **库存口径 = `products.stock_manual`，落库直读**（`getProductsWithTotals` 把该列作为 `stockTotal` 下发）；写入由「补货入库 / 删除入库 / 销售（开关开着）/ 清点」维护，`MAX(0, …)` 保证不为负。
 
 ## 页面（4 个 Tab）
 
-1. **商品管理**：列表视图（行=款式：封面缩略图+编号+名称+系列+等级+进价+售价+库存+状态；点封面/按钮懒加载看全部图）+ **画册视图**（封面墙+可配置的关键字段卡）。**行内双击编辑**（改动即存）、**列头随时筛选**（输入后按 **Enter** 才应用，「清除筛选」一键还原，回车/下拉是应用时机；**编号列可输范围**：`A1~A33` / `1~33`（A 段）/ 逗号多段 `A1~A33,L1~L22` 取并集；单值带字母按精确编号 `L1`→L001，纯数字/文本按子串）、**右键复制整行 / 整表（当前筛选结果）**、**字段显隐**（列表与画册两套独立持久化设置；「字段显示」弹窗只显示**当前视图**的那一份，不再两组混排）。库存低于阈值标红「该补货」。下架行置灰整行。**「导入商品」**按钮支持整表粘贴导入（含表头的行会在**任意位置**自动整行跳过）。**「＋ 新建商品 / 行内编辑品类」输入框为 datalist 联想（5 个预设 + 现有品类 + 自由输入）。**
+1. **商品管理**：列表视图（行=款式：封面缩略图+编号+名称+系列+等级+进价+售价+库存+状态；点封面/按钮懒加载看全部图）+ **画册视图**（封面墙+可配置的关键字段卡；卡片大小由工具栏「画册大小」下拉调，档位存本机偏好 `gallery_size`，只影响 CSS 变量 `--card-w` / `--card-h`，切回列表自动收起）。**行内双击编辑**（改动即存）、**列头随时筛选**（输入后按 **Enter** 才应用，「清除筛选」一键还原，回车/下拉是应用时机；**编号列可输范围**：`A1~A33` / `1~33`（A 段）/ 逗号多段 `A1~A33,L1~L22` 取并集；单值带字母按精确编号 `L1`→L001，纯数字/文本按子串）、**工具栏「搜哪一列」选到「状态」时输入框换成下拉**（全部状态/在售/已下架；选项由 `client-product.js` 的 `STATUS_FILTER_OPTIONS` 生成，「在售/已下架」只有 `STATUS_LABELS` 一处定义、`cellValue` 也用它）、**右键复制整行 / 整表（当前筛选结果）**、**字段显隐**（列表与画册两套独立持久化设置；「字段显示」弹窗只显示**当前视图**的那一份，不再两组混排）。库存低于阈值标红「该补货」。下架行置灰整行。**「导入商品」**按钮支持整表粘贴导入（含表头的行会在**任意位置**自动整行跳过）。**「＋ 新建商品 / 行内编辑品类」输入框为 datalist 联想（5 个预设 + 现有品类 + 自由输入）。**
 2. **每日销售**：
    - 手动录：日期（默认今天）+ 选/输编号 + 卖出数 + 退款数，一行一条
    - **批量粘贴**：文本框 `编号<TAB>卖出<TAB>退款` 每行，回车即批量 upsert，库存自动变；文件/表区域中间夹表头行会自动跳过；解析完的 `pasteHint` 会列出「新增/更新/跳过/未匹配/无法解析行」明细
@@ -53,7 +53,21 @@
    - **表格行**：勾选框（首列）+ 表头全选 + 标题栏「🔄 刷新 / 删除选中」按钮；表头为 卖出数量/退款数量/净售数量/进价快照（快照带 tooltip：记录当天成交进价，之后改进价不影响历史月报）；**任何录入/粘贴/删除后表格自动刷新**，不必再手动操作
    - **销售趋势**：选「全部 / 单个商品」+「按天 / 按月」，柱子=净售（悬停看明细）；按「按日」须选月份
 3. **分析·月报**：点「生成 YYYY-MM 月报」→ 填到账/支出 → 自动算货成本与利润 → **归档锁定当月**。多月对比表 + 净利润柱状图。
-4. **规则与设置**：售价规则表（增删改；导入/新建/改等级时若该等级**没有规则会自动套一个默认规则** `cost*1.5→+0.88`，避免售价=成本）、完整名称模板（如 `{name}+{series}{grade}+{code}`，生成后一键复制去平台上链接）、图片根目录、预警阈值。
+4. **规则与设置**：售价规则表（增删改；导入/新建/改等级时若该等级**没有规则会自动套一个默认规则** `cost*1.5→+0.88`，避免售价=成本）、完整名称模板（如 `{name}+{series}{grade}+{code}`，生成后一键复制去平台上链接）、图片根目录、预警阈值、**图片加速（共享缩略图）**——主机上点「生成共享缩略图」把全部商品的封面+图库小图预先缩进 `{storageDir}/shop_thumbs_shared/`，客机首次看图就直接读几十 KB 的小图（见 `images.ts` 的 `sharedThumbRoot` / `SHARED_THUMB_DIRNAME`，以及 §缩略图两级缓存）。
+
+## 缩略图两级缓存（客机看图加速）
+
+`thumbToCachedBase64(src, cacheDir, code, fileName?, shared?)` 三级查找，顺序就是「便宜 → 贵」：
+
+1. **本机缓存** `{defaultStorageDir}/shop_thumbs/`（一次 stat + 读几十 KB，最便宜）；
+2. **共享缓存** `{storageDir}/shop_thumbs_shared/`（另配了 `cherysis.storageDir` 才启用；一次 stat + 读几十 KB，但走网络）——命中顺手回填①；
+3. 读**原图**现缩（一次 stat + 读几 MB 原图 + 解码，最贵）。
+
+- 共享那份的 meta **只存指纹**（`mtimeMs|size`，取整到毫秒以便跨机比对），**不存绝对源路径**：各机盘符写法不同（`Z:\` vs `Y:\`），存路径等于永远不命中还互相覆写。本机那份沿用原来的精确 mtimeMs，改格式会把所有人现存的缓存一次性作废。
+- 写共享缓存是「先落 webp（临时文件 + 原子改名）再写 meta」：反过来会让正在读的人拿新指纹读到旧图。
+- `sharedThumbRoot(storageDir, defaultStorageDir)` 在两者**相同**时返回空串（没另配目录 = 单机，没有第二台机器会读，不白占磁盘）。
+- **只读模式**传 `{writable:false}`：共享缓存照读不误（只读机最需要它），但一张都不写共享盘。`invalidateCover` 里的共享清理也只在非只读时执行。
+- 预生成 `buildSharedThumbs`：封面一轮 + 图库每张一轮，并发 4，**不 await**（上千张要跑几分钟），日志报进度；已缩过的用 `sharedThumbReady`（只看 meta）跳过。登记在 `WRITE_ACTIONS` 里。
 
 ## 关键流程
 
@@ -77,7 +91,7 @@
 ## 使用注意
 
 - **重复录/导入默认「累加」**：界面上的「当天已有记录时」默认选的是累加（也可改成覆盖/跳过）。
-- **图片目录与封面**：封面和放大看图都是 base64 下发（和 lightbox 同一机制），**选完图片目录立即生效，不用重开面板**；上传图片复制进当前目录后立即生效。
+- **图片目录与封面**：封面和放大看图都是 base64 下发（和 lightbox 同一机制），**选完图片目录立即生效，不用重开面板**；上传图片复制进当前目录后立即生效。多人共用时想要客机看图快，见上面「缩略图两级缓存」（主机点一次「生成共享缩略图」）。
 - **工具间切换 / 重开面板自动续**：切到别的工具再回来、或重开工具集面板，会自动重新读取 SQLite 数据并回到上次用的工具；若仍显示「无商品」先看下方运行日志有没有报错。
 - **数据库文件**：`shop.db` 与 `procurement.db` 同目录（`cherysis.storageDir` 指定，默认全局存储）。改后端 `index.ts`/`db.ts` 需 `pnpm run compile`；改 `client.js`/`fragment.html` 直接 F5 重载。
 - **月结锁定**是「当月销售记录只读」的软锁：锁定后保存/删除/粘贴当月的销售会被拒绝，需先解锁。删除月报不会删除销售记录。

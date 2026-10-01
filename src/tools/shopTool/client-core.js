@@ -445,6 +445,66 @@ window.toolClients = window.toolClients || {};
       };
     }
 
+    /**
+     * 鼠标选完下拉就把焦点交还出去（键盘选的不动）。装一次就够，重复调用直接返回。
+     *
+     * 为什么：Chromium 只在 `<select>` **有焦点**时才把滚轮当上下方向键使。用户点它调过一次值，
+     * 焦点就一直留在上面，之后鼠标划过它滚一下，值会自己往后跳一格（画册大小：大 → 特大），
+     * onchange 一跑就重排卡片，还会把误触的值**存进本机偏好**、重开面板还错着。
+     * blur 掉等于撤掉那个前提——不去跟浏览器的默认行为对抗。
+     *
+     * 为什么只对「鼠标来的那次改动」blur：键盘用户 Tab 到下拉、按 ↑↓ 换档时，如果每次都被抽走
+     * 焦点，他每换一档就得重新 Tab 回来一次。所以先记下上一次交互是鼠标还是键盘，只处理鼠标那路。
+     * （也考虑过 `:focus-visible`，一行就够，但「鼠标点过的 select 算不算 focus-visible」各家实现
+     * 有出入；这里要的是确定行为，所以用标记。）
+     *
+     * 为什么用 document 上的 change 委托，而不是给每个 `<select>` 挂一个：下拉既有写死在
+     * fragment.html 里的（工具栏、每日销售、设置那 9 个），也有各处动态生成的（分页每页条数、
+     * 抽屉里的等级/状态、双击出来的内联编辑器、各种弹窗），逐个挂就得记住「每次新建 DOM 后再挂一遍」，
+     * 漏一个就是同一个坑再踩一次。
+     *
+     * 别改回「拦 wheel + 把滚动量转交给能滚的祖先」那套（第一版就是）。实测行不通：商品管理页里
+     * 真正的滚动容器（画廊 #productGalleryView、列表 .table-wrap）是工具栏的**兄弟**而不是祖先，
+     * 祖先链上根本找不到能滚的东西，量被丢掉、鼠标停在工具栏那一带上反而更滚不动；而 overflow:hidden
+     * 的祖先又不能碰（改它的 scrollTop 会把整个页签顶歪）。这里不碰滚动，只撤焦点，滚轮交还浏览器。
+     *
+     * 「装没装过」的标记挂 document 上，不用模块级变量：切工具时 main.html 会把客户端脚本整个移除
+     * 再重新注入（`loadToolClient`），脚本会重新执行一遍、模块级标志跟着重置，挂 document 上才活得久。
+     */
+    function installSelectBlurAfterPick() {
+      if (document.__shopSelectBlurAfterPick) {
+        return;
+      }
+      document.__shopSelectBlurAfterPick = true;
+      // 上一次交互是鼠标还是键盘。用 pointerdown 而不是 click：click 要等 change 之后才到。
+      let byPointer = false;
+      document.addEventListener(
+        "pointerdown",
+        (e) => {
+          byPointer = !!(e.target && e.target.closest && e.target.closest("select"));
+        },
+        true
+      );
+      document.addEventListener(
+        "keydown",
+        () => {
+          byPointer = false;
+        },
+        true
+      );
+      document.addEventListener("change", (e) => {
+        const sel = e.target;
+        // 这次改动读掉了，不管落点是不是下拉都清掉：留着的话，点过别处再发生的
+        // 一次「非鼠标改动」会被当鼠标改动、平白 blur 一下
+        const wasPointer = byPointer;
+        byPointer = false;
+        if (!sel || sel.tagName !== "SELECT" || !wasPointer) {
+          return;
+        }
+        sel.blur();
+      });
+    }
+
     function pumpCovers() {
       while (coverInFlight < COVER_CONCURRENCY && coverQueue.length > 0) {
         const code = coverQueue.shift();

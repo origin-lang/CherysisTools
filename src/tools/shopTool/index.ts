@@ -4,7 +4,7 @@ import * as path from "path";
 import { ToolDefinition } from "../../core/toolRegistry.js";
 import { getDB, initDB, ShopDB, ShopDBSnapshot } from "./db.js";
 import { canonicalCode, fileStamp, todayStr } from "./pricing.js";
-import { pruneCodeThumbs, pruneOldThumbs } from "./images.js";
+import { pruneCodeThumbs, pruneOldThumbs, pruneThumbRoot, sharedThumbRoot } from "./images.js";
 import { resolveImageDir, effectiveImageDir } from "./imageDir.js";
 import { Handler, HandlerCtx } from "./handlers/types.js";
 import { productHandlers } from "./handlers/product.js";
@@ -286,6 +286,8 @@ export const LOCAL_PREF_KEYS = new Set([
   "col_image_list",
   "col_image_gallery",
   "col_show_ops",
+  // 画册卡片大小（小/标准/大/特大）：屏幕宽窄因人而异，跟字号行高同一类
+  "gallery_size",
   // 直播排品 / 星标总览
   "live_out_dir",
   "live_grid_label",
@@ -351,6 +353,8 @@ const WRITE_ACTIONS = new Set([
   "clearImagesBatch",
   "deleteImageFile",
   "deleteCoverImage",
+  // 预生成共享缩略图（写共享数据目录里那份缓存，不是写库）
+  "buildSharedThumbs",
   // 直播排品（live_plan / live_star 落库）
   "toggleLiveStar",
   "setLiveStars",
@@ -518,6 +522,12 @@ export const shopTool: ToolDefinition = {
     const invalidateCover = (code: string) => {
       coverCache.delete(code);
       pruneCodeThumbs(ctx.defaultStorageDir, code);
+      // 共享那份也按编号清掉：图上/编号变了以后旧的小图再不能发出去（否则客机看的是旧图），
+      // 留着也只是占共享盘。只读机不删——删除也是写共享盘，承诺就是不碰它。
+      const sharedRoot = sharedThumbRoot(ctx.storageDir, ctx.defaultStorageDir);
+      if (sharedRoot && !readOnly()) {
+        pruneThumbRoot(sharedRoot, code);
+      }
       ctx.postToWebview({ type: "coverInvalidated", code });
     };
 
@@ -748,6 +758,7 @@ export const shopTool: ToolDefinition = {
           col_image_list: pref("col_image_list"),
           col_image_gallery: pref("col_image_gallery"),
           col_show_ops: pref("col_show_ops", "1"),
+          gallery_size: pref("gallery_size", "l"),
           live_grid_label: pref("live_grid_label"),
           // 以前从没下发过，前端却在 starOvOpenMask 里读它 → 存下的标注选项永远回填不进去
           star_label_options: pref("star_label_options"),
@@ -780,6 +791,7 @@ export const shopTool: ToolDefinition = {
           col_image_list: pref("col_image_list"),
           col_image_gallery: pref("col_image_gallery"),
           col_show_ops: pref("col_show_ops", "1"),
+          gallery_size: pref("gallery_size", "l"),
           live_grid_label: pref("live_grid_label"),
           star_label_options: pref("star_label_options"),
           import_fields: pref("import_fields"),

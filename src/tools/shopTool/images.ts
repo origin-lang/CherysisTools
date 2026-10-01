@@ -84,6 +84,40 @@ export const COVER_THUMB = 512;
 // 每次都会判定失效并互相覆写，纯粹白折腾。缓存随时可重建，放本机没有一致性代价。
 const THUMB_DIRNAME = "shop_thumbs";
 
+/**
+ * 共享缩略图缓存目录名（放在 cherysis.storageDir 里，也就是共享盘上那份数据目录里）。
+ *
+ * 为什么要有第二份缓存：本机那份（shop_thumbs）只有在**每台机器自己**上才有，客机第一次
+ * 看某个编号的封面时，本机缓存是空的，只能去共享盘读**原图**——一张手机拍的 JPEG 好几 MB，
+ * 一次开面板要读几十张，SMB 带宽就卡在这儿。共享缓存里存的是同一张图的 512px webp（几十 KB），
+ * 谁先缩好放进去，后面所有机器都直接读小图。
+ *
+ * 目录名刻意跟本机那份不一样：没另配 cherysis.storageDir 时 storageDir 就等于本机默认目录，
+ * 两者会落在同一个父目录下，同名就变成同一份缓存互相覆盖（两边的 meta 格式不同，见 sharedEntry）。
+ */
+const SHARED_THUMB_DIRNAME = "shop_thumbs_shared";
+
+/**
+ * 共享缩略图缓存根目录；返回空串 = 不启用共享缓存。
+ *
+ * 只在「另配了数据存储目录」时启用：没配的时候 storageDir 就是本机默认目录，压根没有第二台
+ * 机器会读到它，多存一份只是白占磁盘。配了（哪怕配的是本机别的盘）就启用——是缓存，
+ * 不是共享时最坏也就是占点地方，没有一致性代价。
+ */
+export function sharedThumbRoot(storageDir: string, defaultStorageDir: string): string {
+  if (!storageDir || !defaultStorageDir) {
+    return "";
+  }
+  try {
+    if (path.resolve(storageDir) === path.resolve(defaultStorageDir)) {
+      return "";
+    }
+  } catch {
+    return "";
+  }
+  return path.join(storageDir, SHARED_THUMB_DIRNAME);
+}
+
 function thumbRoot(cacheDir: string): string {
   return path.join(cacheDir, THUMB_DIRNAME);
 }
@@ -123,17 +157,30 @@ function cacheEntry(cacheDir: string, name: string): CacheEntry | null {
 }
 
 function fileFingerprint(src: string): string {
+  return fingerprints(src).local;
+}
+
+/**
+ * 一次 stat 出两个指纹，省掉第二趟共享盘 stat（每次 stat 在网络盘上都是一趟往返）。
+ *
+ * - `local`：沿用原来的精确 mtimeMs（改了格式等于把所有人现存的缩略图缓存一次性作废，
+ *   客机下次开面板就得把原图重读一遍——正是这次要避免的事，所以本机这份不动）。
+ * - `shared`：mtime 取整到毫秒。这份 meta 要跨机器比对，整数比浮点稳（不同机器的
+ *   SMB 客户端把同一个时间戳换算成 mtimeMs 时，末几位理论上可能有表示差异）；
+ *   毫秒内的改动照旧由 getCover 的「图片夹 mtime」那道闸兜住。
+ */
+function fingerprints(src: string): { local: string; shared: string } {
   try {
     const st = fs.statSync(src);
-    return `${st.mtimeMs}|${st.size}`;
+    return { local: `${st.mtimeMs}|${st.size}`, shared: `${Math.round(st.mtimeMs)}|${st.size}` };
   } catch {
-    return "";
+    return { local: "", shared: "" };
   }
 }
 
-/** 命中返回 base64（不含 data: 前缀），未命中/校验不过返回 null */
-function readCache(entry: CacheEntry, src: string): string | null {
-  if (!cacheValid(entry, src)) {
+/** 命中返回 base64（不含 data: 前缀），未命中/校验不过返回 null。fp 可传已经算好的指纹，省一趟 stat */
+function readCache(entry: CacheEntry, src: string, fp?: string): string | null {
+  if (!cacheValid(entry, src, fp)) {
     return null;
   }
   try {
@@ -144,14 +191,16 @@ function readCache(entry: CacheEntry, src: string): string | null {
 }
 
 /** 缓存是否可用：源路径一致 + 源图指纹（mtime+大小）没变 + 缩略图文件还在 */
-function cacheValid(entry: CacheEntry, src: string): boolean {
+function cacheValid(entry: CacheEntry, src: string, fp?: string): boolean {
   try {
     const meta = JSON.parse(fs.readFileSync(entry.metaPath, "utf-8")) as {
       src?: string;
       key?: string;
     };
     return (
-      meta.src === src && meta.key === fileFingerprint(src) && fs.existsSync(entry.thumbPath)
+      meta.src === src &&
+      meta.key === (fp ?? fileFingerprint(src)) &&
+      fs.existsSync(entry.thumbPath)
     );
   } catch {
     /* 无缓存或缓存头不匹配 */
@@ -159,16 +208,111 @@ function cacheValid(entry: CacheEntry, src: string): boolean {
   }
 }
 
-function writeCache(entry: CacheEntry, src: string, data: string): void {
+function writeCache(entry: CacheEntry, src: string, data: string, fp?: string): void {
   // thumbToBase64 在 sharp 失败时会回退成原图 base64（jpeg/png...），那不是缩略图，别写进缓存
   if (!data.startsWith("data:image/webp")) {
     return;
   }
   try {
     fs.writeFileSync(entry.thumbPath, Buffer.from(data.split(",")[1], "base64"));
-    fs.writeFileSync(entry.metaPath, JSON.stringify({ src, key: fileFingerprint(src) }));
+    fs.writeFileSync(entry.metaPath, JSON.stringify({ src, key: fp ?? fileFingerprint(src) }));
   } catch {
     /* 写缓存失败忽略 */
+  }
+}
+
+// ===== 共享缩略图缓存（跨机器共用的那一份，见 SHARED_THUMB_DIRNAME）=====
+
+/**
+ * 共享缓存的落点。create=false 时**不建目录**：只读机、只是来判断「这张缩好没有」的调用，
+ * 不该因为看一眼就在共享盘上创建文件夹。
+ */
+function sharedEntry(root: string, name: string, create = false): CacheEntry | null {
+  if (!root) {
+    return null;
+  }
+  if (create) {
+    try {
+      fs.mkdirSync(root, { recursive: true });
+    } catch {
+      return null;
+    }
+  }
+  const file = `${name}.webp`;
+  return { thumbPath: path.join(root, file), metaPath: path.join(root, `${file}.json`) };
+}
+
+/**
+ * 读共享缓存里的缩略图。meta 只认真实指纹，**不认绝对源路径**：
+ * 同一张图在各人机器上的盘符写法不一样（Z:\商品图片 vs Y:\商品图片，
+ * 名字也可能不是这个），把绝对路径写进 meta 就等于永远不命中、还互相盖。
+ *
+ * 指纹对不上、meta 缺失、webp 不在，一律当没命中（调用方退回本机缓存/原图，行为与没有共享层时一致）。
+ */
+function readSharedCache(entry: CacheEntry, fp: string): string | null {
+  if (!fp) {
+    return null;
+  }
+  try {
+    const meta = JSON.parse(fs.readFileSync(entry.metaPath, "utf-8")) as { key?: string };
+    if (meta.key !== fp) {
+      return null;
+    }
+    return fs.readFileSync(entry.thumbPath).toString("base64");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 写共享缓存。顺序是「webp 先落地、meta 后写」，中间不能被换过来：
+ * 别人可能正在读，先落 meta 会让它拿着新指纹读到旧图（画出别人的图，比慢一点糟得多）；
+ * 先落 webp 则最坏是「新图 + 旧 meta」，读的人发现指纹对不上，重缩一张就完事。
+ *
+ * 先写临时文件再改名：另一台机器可能正好读到一半，半张 webp 解不出来。
+ */
+function writeSharedCache(entry: CacheEntry, fp: string, data: string): void {
+  if (!fp || !data.startsWith("data:image/webp")) {
+    return;
+  }
+  const tmp = `${entry.thumbPath}.${process.pid}.${Date.now().toString(36)}.tmp`;
+  try {
+    fs.mkdirSync(path.dirname(entry.thumbPath), { recursive: true });
+    fs.writeFileSync(tmp, Buffer.from(data.split(",")[1], "base64"));
+    fs.renameSync(tmp, entry.thumbPath);
+    fs.writeFileSync(entry.metaPath, JSON.stringify({ key: fp }));
+  } catch {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      /* 临时文件没清掉就算了，下次同名会覆盖 */
+    }
+  }
+}
+
+/**
+ * 共享缓存里这张图的小图是否已经缩好。**只看 meta、不读 webp**：预生成时用它跳过已完成的，
+ * 重复点「生成共享缩略图」就只是把几千个 meta 扫一遍，不会把几千张图再从共享盘读回来。
+ */
+export function sharedThumbReady(
+  src: string,
+  root: string,
+  code: string,
+  fileName?: string,
+): boolean {
+  const entry = sharedEntry(root, thumbName(code, fileName));
+  if (!entry) {
+    return false;
+  }
+  const fp = fingerprints(src).shared;
+  if (!fp) {
+    return false;
+  }
+  try {
+    const meta = JSON.parse(fs.readFileSync(entry.metaPath, "utf-8")) as { key?: string };
+    return meta.key === fp;
+  } catch {
+    return false;
   }
 }
 
@@ -192,25 +336,64 @@ export async function thumbToBase64(src: string, size = COVER_THUMB): Promise<st
 }
 
 /**
+ * 共享缩略图缓存参数。root 用 sharedThumbRoot() 算（空串 = 不启用）；
+ * writable=false 表示只读模式：共享缓存**照读不误**，但一张都不往里写。
+ */
+export type SharedThumbCache = {
+  root: string;
+  writable?: boolean;
+};
+
+/**
  * 512 缩略图 base64，走本机磁盘缓存。fileName 省略 = 商品封面那一枚；
  * 给了文件名 = 图库里具体某张（抽屉、图库缩略图），与封面分开缓存互不覆盖。
+ *
+ * 三级查找，顺序就是「便宜 → 贵」：
+ *   ① 本机缓存（一次 stat + 读几十 KB，最便宜）
+ *   ② 共享缓存（一次 stat + 读几十 KB，但走网络）
+ *   ③ 读原图现缩（一次 stat + 读几 MB 原图 + 解码，最贵）
+ * 命中 ② 时顺手回填 ①：同一台机器第二次看这张图，连共享盘那一趟都省了。
+ * 没有 shared（未配数据存储目录）时行为与加这层之前完全一致。
  */
 export async function thumbToCachedBase64(
   src: string,
   cacheDir: string,
   code: string,
   fileName?: string,
+  shared?: SharedThumbCache,
 ): Promise<string> {
-  const entry = cacheEntry(cacheDir, thumbName(code, fileName));
+  const name = thumbName(code, fileName);
+  // 指纹只算一次：本机缓存和共享缓存都要用它，各算一次就是两趟共享盘 stat
+  const fp = fingerprints(src);
+  const entry = cacheEntry(cacheDir, name);
   if (entry) {
-    const hit = readCache(entry, src);
+    const hit = readCache(entry, src, fp.local);
     if (hit !== null) {
       return "data:image/webp;base64," + hit;
     }
   }
+  const root = shared?.root ?? "";
+  if (root) {
+    const sEntry = sharedEntry(root, name);
+    if (sEntry) {
+      const hit = readSharedCache(sEntry, fp.shared);
+      if (hit !== null) {
+        if (entry) {
+          writeCache(entry, src, "data:image/webp;base64," + hit, fp.local);
+        }
+        return "data:image/webp;base64," + hit;
+      }
+    }
+  }
   const data = await thumbToBase64(src);
   if (entry) {
-    writeCache(entry, src, data);
+    writeCache(entry, src, data, fp.local);
+  }
+  if (root && shared?.writable !== false) {
+    const sEntry = sharedEntry(root, name, true);
+    if (sEntry) {
+      writeSharedCache(sEntry, fp.shared, data);
+    }
   }
   return data;
 }
@@ -320,14 +503,13 @@ export function previewThumbPath(
 }
 
 /**
- * 清掉某编号的全部缩略图缓存（封面 + 预览 + 图库里每张）。改编号、删图、清空图片、删商品时调用：
- * 缓存目录在本机，不会自动同步给别人，所以必须按前缀一次删净，别只删封面那一枚。
+ * 清掉某个缩略图根目录下属于该编号的全部缓存（封面 + 预览 + 图库里每张）。
+ * 根目录由调用方给：本机那份传 thumbRoot(cacheDir)，共享那份传 sharedThumbRoot(...)。
  */
-export function pruneCodeThumbs(cacheDir: string, code: string): void {
-  if (!cacheDir) {
+export function pruneThumbRoot(root: string, code: string): void {
+  if (!root) {
     return;
   }
-  const root = thumbRoot(cacheDir);
   const base = safeCode(code);
   try {
     for (const f of fs.readdirSync(root)) {
@@ -349,18 +531,30 @@ export function pruneCodeThumbs(cacheDir: string, code: string): void {
 }
 
 /**
- * 清掉 mtime 超过 keepDays 的旧缩略图。改过编号的商品，旧编号那几枚缓存再也没人会用到
- * （库里已不存在该编号），留着只是各占一点磁盘；顺带兜住任何漏网的残留。
+ * 清掉某编号的全部**本机**缩略图缓存（封面 + 预览 + 图库里每张）。改编号、删图、清空图片、
+ * 删商品时调用：缓存目录在本机，不会自动同步给别人，所以必须按前缀一次删净，别只删封面那一枚。
+ * 共享那份由调用方另外调 pruneThumbRoot(sharedThumbRoot(...)) —— 会不会写共享盘取决于是不是只读机。
  */
-export function pruneOldThumbs(cacheDir: string, keepDays = 30): void {
+export function pruneCodeThumbs(cacheDir: string, code: string): void {
   if (!cacheDir) {
     return;
   }
-  const root = thumbRoot(cacheDir);
+  pruneThumbRoot(thumbRoot(cacheDir), code);
+}
+
+/**
+ * 清掉某个缩略图根目录下 mtime 超过 keepDays 的旧缩略图。改过编号的商品，旧编号那几枚缓存
+ * 再也没人会用到（库里已不存在该编号），留着只是各占一点磁盘；顺带兜住任何漏网的残留。
+ * 也扫 .tmp：共享缓存写一半失败留下的临时文件没人会再碰它。
+ */
+export function pruneThumbRootByAge(root: string, keepDays: number): void {
+  if (!root) {
+    return;
+  }
   const cutoff = Date.now() - keepDays * 86400000;
   try {
     for (const f of fs.readdirSync(root)) {
-      if (!f.endsWith(".webp") && !f.endsWith(".webp.json")) {
+      if (!f.endsWith(".webp") && !f.endsWith(".webp.json") && !f.endsWith(".tmp")) {
         continue;
       }
       const fp = path.join(root, f);
@@ -375,4 +569,12 @@ export function pruneOldThumbs(cacheDir: string, keepDays = 30): void {
   } catch {
     /* 目录不存在则无事可做 */
   }
+}
+
+/** 按天数清本机缩略图缓存；keepDays 的取舍见 pruneThumbRootByAge */
+export function pruneOldThumbs(cacheDir: string, keepDays = 30): void {
+  if (!cacheDir) {
+    return;
+  }
+  pruneThumbRootByAge(thumbRoot(cacheDir), keepDays);
 }

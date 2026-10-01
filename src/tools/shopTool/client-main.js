@@ -31,6 +31,7 @@ function bindEvents() {
     $("viewListBtn").classList.add("btn-teal");
     $("viewGalleryBtn").classList.remove("btn-teal");
     closeFilterPanel();
+    syncGallerySizeVisibility();
     renderProducts();
   };
   $("viewGalleryBtn").onclick = () => {
@@ -39,8 +40,18 @@ function bindEvents() {
     $("viewListBtn").classList.remove("btn-teal");
     // 切画册时列表整个隐藏了，面板要是还开着就会浮在画布上
     closeFilterPanel();
+    syncGallerySizeVisibility();
     renderProducts();
   };
+  const gsSel = $("gallerySize");
+  if (gsSel) {
+    gsSel.onchange = () => saveGallerySize(gsSel.value);
+  }
+  // 鼠标选完下拉就交还焦点：Chromium 只在 <select> **有焦点**时才把滚轮当上下键使，
+  // 焦点一直留着 → 鼠标划过它滚一下就把值改了（画册大小「自己变大变小」就是这个），
+  // 而且改完还会把误触的值存进本机偏好。走 document 上的 change 委托，
+  // 装一次覆盖全部下拉（含各处动态生成的），见 client-core.js。
+  installSelectBlurAfterPick();
   const pgr = $("productPager");
   if (pgr) {
     pgr.addEventListener("click", (e) => {
@@ -95,10 +106,28 @@ function bindEvents() {
   const kwInput = $("keywordSearch");
   const kwX = $("keywordSearchX");
   const kwScopeSel = $("keywordScope");
-  // ✕ 有字才出现，空框上摆个清空按钮纯属多余
+  const kwStatusSel = $("keywordStatus");
+  const kwWrap = $("keywordSearchWrap");
+  // 「搜哪一列」选到状态时，输入框整块换成下拉：状态只有在售/已下架两种取值，
+  // 让用户手打中文等于让他去猜系统内部存的是哪两个字，打错一个就是个空表。
+  // 选项数据在 client-product.js 的 STATUS_FILTER_OPTIONS（在售/已下架的唯一出处）。
+  const isStatusScope = () => kwScope === "status";
+  /** 当前搜索条件从哪个控件读：状态看下拉，其余看输入框。两个控件的值各自保留，
+      切回来时还在，但生效的永远只有当前这一列的那个。 */
+  const activeKeywordRaw = () =>
+    isStatusScope() ? (kwStatusSel ? kwStatusSel.value : "") : kwInput.value.trim();
+  if (kwStatusSel && kwStatusSel.options.length === 0 && typeof STATUS_FILTER_OPTIONS !== "undefined") {
+    for (const o of STATUS_FILTER_OPTIONS) {
+      const opt = document.createElement("option");
+      opt.value = o.value;
+      opt.textContent = o.label;
+      kwStatusSel.appendChild(opt);
+    }
+  }
+  // ✕ 有字才出现，空框上摆个清空按钮纯属多余；状态模式整块输入框都藏了，✕ 自然也不该露
   const syncKwX = () => {
     if (kwX) {
-      kwX.hidden = !kwInput.value;
+      kwX.hidden = isStatusScope() || !kwInput.value;
     }
   };
   // 下拉选的是哪一列，直接写到输入框的 placeholder 和 title 上。
@@ -106,17 +135,27 @@ function bindEvents() {
   // 单列模式的差异（不再跨字段空格、不再去零兜底）也必须写进 title：
   // 它跟「全部」模式的结果集不一样，光看结果猜不出原因。
   const syncKeywordUI = () => {
-    const scope = kwScopeSel ? kwScopeSel.value : "all";
-    const all = scope === "all";
+    const status = isStatusScope();
+    if (kwWrap) {
+      kwWrap.hidden = status;
+    }
+    if (kwStatusSel) {
+      kwStatusSel.hidden = !status;
+    }
+    if (status) {
+      // 下拉自带「全部状态 / 在售 / 已下架」和 title，输入框那套占位符文案在这儿没有落点
+      return;
+    }
+    const all = kwScope === "all";
     // 标签表在 client-product.js（KW_SCOPE_LABEL），那边是唯一定义处，这里别再抄一份
-    const label = KW_SCOPE_LABEL[scope] || scope;
+    const label = KW_SCOPE_LABEL[kwScope] || kwScope;
     kwInput.placeholder = all ? "🔍 编号 / 名称 / 品类 / 系列" : `🔍 在${label}中搜索`;
     kwInput.title = all
       ? "子串匹配，不区分大小写。四个字段用空格拼成一句话一起找，所以「200ml 个护」能命中「名称尾=200ml 且 品类=个护」的行（打法的空格得正好对上两个字段之间那道缝）。和列头漏斗是叠加关系不是替代——漏斗筛「一批」，这里找「一行」。回车立即生效，Esc 或 ✕ 清空。"
       : `只搜${label}一列，子串匹配，不区分大小写。四个字段不再拼在一起（多个词要这一列里字面含那个空格），也不再按编号去零兜底。和列头漏斗是叠加关系——同一列被两边筛取交集，漏斗勾「已下架」再搜「在售」会一个都不剩。`;
   };
   const applyKeyword = () => {
-    const v = kwInput.value.trim();
+    const v = activeKeywordRaw();
     if (v) {
       filters.keyword = v;
     } else {
@@ -154,13 +193,18 @@ function bindEvents() {
       applyKeyword();
     };
   }
-  // 换搜索范围。有字才重算：空框上切来切去除了改占位符没别的可做，
-  // 白跑一趟全表重画纯属浪费。
+  if (kwStatusSel) {
+    // 下拉没有「回车才生效」的说法，选完就是选完了，立刻重画
+    kwStatusSel.onchange = applyKeyword;
+  }
+  // 换搜索范围。要不要重画看「生效的搜索词」变没变：原先只看输入框里有没有字，
+  // 是因为那时候切列不改变 input 的值；现在进/出「状态」会换一个控件取值
+  // （在搜「香薰」时切到状态列，它一个都匹配不上），必须按新控件重算一次。
   if (kwScopeSel) {
     kwScopeSel.onchange = () => {
       kwScope = kwScopeSel.value;
       syncKeywordUI();
-      if (kwInput.value.trim()) {
+      if ((filters.keyword || "") !== activeKeywordRaw()) {
         applyKeyword();
       }
     };
@@ -172,8 +216,9 @@ function bindEvents() {
     kwScope = kwScopeSel.value;
   }
   syncKeywordUI();
-  if (kwInput.value.trim()) {
-    filters.keyword = kwInput.value.trim();
+  const initKeyword = activeKeywordRaw();
+  if (initKeyword) {
+    filters.keyword = initKeyword;
     syncClearFilterBtn();
   }
   syncKwX();
@@ -184,6 +229,10 @@ function bindEvents() {
     // 状态在 filters 里、输入框里的字不在，清完状态得把框和 ✕ 也抹平，
     // 否则框里还留着字、列表却是全量，看着像筛选没生效
     kwInput.value = "";
+    // 状态下拉也归位（它就是「状态」这一列的筛选值，不清就等于没清干净）
+    if (kwStatusSel) {
+      kwStatusSel.value = "";
+    }
     // 「搜哪一列」那个下拉不复位：它是偏好（和「字段显示」同类）不是筛选条件，
     // 而空框上 placeholder 会一直写着当前搜哪一列，漏不掉。
     syncKwX();
@@ -589,6 +638,10 @@ function bindEvents() {
     fsSel.onchange = () => saveFontSize(fsSel.value);
   }
   $("dbBackupBtn").onclick = () => post({ type: "exportDB" });
+  if ($("buildSharedThumbsBtn")) {
+    // 后台跑、日志报进度，点完就能继续用面板；重复点后端会拦（同一时间只跑一个）
+    $("buildSharedThumbsBtn").onclick = () => post({ type: "buildSharedThumbs" });
+  }
   if ($("dbPathBtn")) {
     // webview 里没有 executeCommand，只能 post 给扩展侧去叫命令。选目录的流程
     // 只有命令里那一份（校验/确认/关连接/清快照），面板不重复实现，免得两处对不上。
@@ -604,6 +657,14 @@ function bindEvents() {
       }
     });
   bindLiveEvents();
+}
+
+/** 「画册大小」是画册视图专属的控件：列表视图里它没有作用对象，摆着只会挤工具栏 */
+function syncGallerySizeVisibility() {
+  const sel = $("gallerySize");
+  if (sel) {
+    sel.hidden = viewMode !== "gallery";
+  }
 }
 
 function applyRowHeight(raw) {
@@ -821,6 +882,9 @@ function onMessage(msg) {
       renderSettings();
       applyRowHeight(state.settings.row_height);
       applyFontSize(state.settings.font_size);
+      applyGallerySize(state.settings.gallery_size);
+      syncGallerySizeUI(state.settings.gallery_size);
+      syncGallerySizeVisibility();
       if (typeof updateSalesDeductTip === "function") {
         updateSalesDeductTip();
       }

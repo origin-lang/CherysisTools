@@ -465,13 +465,25 @@
         color: var(--vscode-foreground);
         background: var(--vscode-button-hoverBackground);
       }
-      /* 上面给了 display:flex，会盖掉浏览器默认的 [hidden]{display:none}，得自己补回来 */
-      .tb-search-x[hidden] {
+      /* 上面给了 display:flex，会盖掉浏览器默认的 [hidden]{display:none}，得自己补回来。
+         .tb-search 本身也是 flex，切到「状态」把它整块换掉时同样要吃这条规则 */
+      .tb-search-x[hidden],
+      .tb-search[hidden] {
         display: none;
       }
+      /* 「搜哪一列=状态」时顶替搜索框的那个下拉：取值只有在售/已下架两种，
+         让用户手打中文既慢又容易打成别的字（打错了就是一张空表）。
+         选项由 client-product.js 的 STATUS_LABELS 生成，那里是「在售/已下架」的唯一出处 */
+      #keywordStatus {
+        width: 84px;
+        padding: 5px 4px;
+      }
+      /* 画册卡片尺寸：宽度和图片高度都由 --card-w / --card-h 驱动，值由工具栏那个
+         「画册大小」下拉按人设定（client-product.js 的 applyGallerySize），
+         在这里写死像素就没人能调了。兜底值 = 「大」那一档 */
       .card-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(205px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(var(--card-w, 260px), 1fr));
         gap: 12px;
       }
       .card {
@@ -487,14 +499,14 @@
       }
       .card img {
         width: 100%;
-        height: 180px;
+        height: var(--card-h, 230px);
         object-fit: cover;
         display: block;
         background: var(--vscode-editor-background);
       }
       .card .ph {
         width: 100%;
-        height: 180px;
+        height: var(--card-h, 230px);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -1368,10 +1380,16 @@
       <div class="toolbar">
         <button id="viewListBtn" class="btn-teal">列表</button>
         <button id="viewGalleryBtn">画册</button>
+        <select id="gallerySize" title="画册卡片多大。只影响本机（各人各设，不写共享库），切到「列表」时会自动收起。想看得更清楚就往大了调，屏幕宽就选特大。" hidden>
+          <option value="s">小</option>
+          <option value="m">标准</option>
+          <option value="l">大</option>
+          <option value="xl">特大</option>
+        </select>
         <span class="tb-sep"></span>
         <button id="colSetBtn">字段显示</button>
         <span class="tb-sep"></span>
-        <select id="keywordScope" title="选要搜哪一列。默认「全部」是编号/名称/品类/系列拼起来一起做子串匹配；选定某一列就只搜那一列。和下面列头的漏斗是叠加关系，同一列被两边筛取交集，不是二选一。">
+        <select id="keywordScope" title="选要搜哪一列。默认「全部」是编号/名称/品类/系列拼起来一起做子串匹配；选定某一列就只搜那一列。选「状态」时右边的输入框会换成一个下拉框（状态只有在售/已下架两种，不用手打）。和下面列头的漏斗是叠加关系，同一列被两边筛取交集，不是二选一。">
           <option value="all">全部</option>
           <option value="code">编号</option>
           <option value="name">名称</option>
@@ -1379,10 +1397,11 @@
           <option value="series">系列</option>
           <option value="status">状态</option>
         </select>
-        <div class="tb-search">
+        <div class="tb-search" id="keywordSearchWrap">
           <input id="keywordSearch" type="text" placeholder="🔍 编号 / 名称 / 品类 / 系列" title="快速找一行：按编号/名称/品类/系列做子串匹配（不区分大小写）。和列头漏斗是叠加关系不是替代——漏斗筛「一批」，这里找「一行」。回车立即生效，Esc 或 ✕ 清空。" />
           <button id="keywordSearchX" class="tb-search-x" type="button" title="清空搜索" aria-label="清空搜索" hidden>✕</button>
         </div>
+        <select id="keywordStatus" title="按状态筛：全部 / 在售 / 已下架。选完立即生效，不用按回车。和列头状态列的漏斗是叠加关系（两边都筛就是交集）。" hidden></select>
         <button id="clearFilterBtn" class="btn-danger" style="display: none">清除筛选</button>
         <span class="tb-sep"></span>
         <button id="starMenuBtn" title="星标操作：只看/复制清单/总览图预览/全部取消">⭐ 星标 ▾</button>
@@ -1716,6 +1735,21 @@ L032,1"></textarea>
           <button id="dbRestoreBtn" class="btn-danger">从备份恢复</button>
         </div>
         <p class="muted" style="margin: 8px 0 0 0">备份会生成一个完整的 .db 快照文件（含 WAL 未落盘数据）；恢复会用所选备份整体替换当前全部数据，操作前建议先备份一次。数据库目录是只读的，要换点「📁 更换…」走选文件夹流程，避免手滑把路径改坏；改完需重开工具面板。</p>
+      </div>
+      <div class="panel">
+        <h4 style="margin: 0 0 8px 0">图片加速（共享缩略图）</h4>
+        <div class="rows">
+          <button id="buildSharedThumbsBtn" class="btn-teal" title="把每个商品的封面和图库小图预先缩好，放进共享数据目录里的 shop_thumbs_shared。其他电脑打开面板时直接读几十 KB 的小图，不用从共享盘拉几 MB 的原图。只写图片缓存，不动数据库、不动原图。">生成共享缩略图</button>
+          <span class="muted" style="flex: 1; min-width: 0">在这台「主机」上点一次，其他电脑翻商品、开画册就会快很多。</span>
+        </div>
+        <p class="muted" style="margin: 8px 0 0 0">
+          原理：原始图片有几 MB，缩略图只有几十 KB。客机第一次看到某个商品时，本来要先把原图从共享盘整张读过来再缩小，
+          慢就慢在这一步；预先把小图放进共享目录后，客机直接读小图。<br />
+          · 只对新图/改过的图有用得着的工作量：已经缩过的会跳过，重复点只是扫一遍。<br />
+          · 只写共享目录里的图片缓存，<b>不碰数据库、也不动原图</b>；图片改了或编号改了，那一个编号的缓存会自动作废重缩。<br />
+          · 需要「数据存储目录」指向共享盘（见上面一行）；只在 VS Code 默认目录、没有第二台机器时会提示无处可放。<br />
+          · 跑的时候下方「运行日志」会报进度（上千张图可能要几分钟），期间可以照常用面板。
+        </p>
       </div>
       <div class="panel">
         <h4 style="margin: 0 0 8px 0">商品列表操作提示</h4>

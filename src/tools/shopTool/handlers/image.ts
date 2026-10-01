@@ -9,6 +9,10 @@ import {
   listImageFiles,
   thumbToCachedBase64,
   drainInflightThumbs,
+  sharedThumbReady,
+  sharedThumbRoot,
+  pruneThumbRoot,
+  SharedThumbCache,
 } from "../images.js";
 
 // 图片域：封面/图库缩略图/大图/上传/清空/删除/打开文件夹
@@ -189,6 +193,99 @@ type ClearResult = {
   firstBusy: string | null;
 };
 
+/**
+ * 「生成共享缩略图」的并发度：瓶颈在共享盘带宽和 libvips 解码，4 路实测够把千兆网吃满；
+ * 再往上对总时长没什么帮助，反而会跟同时在看图的人抢带宽。
+ */
+const BUILD_SHARED_CONCURRENCY = 4;
+
+/** 同一时间只允许一次预生成：连点两下不该起两个任务把共享盘打满 */
+let buildSharedRunning = false;
+
+type BuildJob = { code: string; src: string; fileName?: string };
+
+/**
+ * 把所有商品的封面 + 图库每张缩略图预先缩进共享缓存。主机上点一次，客机第一次打开某个商品
+ * 就能直接读到几十 KB 的小图，而不是从共享盘拉几 MB 的原图现缩。
+ *
+ * 封面那一轮先跑：列表和画册只看封面，先让「翻商品」快起来；图库（点开详情才看）排后面。
+ * 已经在共享缓存里、且指纹对得上的直接跳过（只看 meta 不读图），所以重复点也只是扫一遍。
+ */
+async function runBuildSharedThumbs(root: string, imgDir: string, h: HandlerCtx): Promise<void> {
+  const startedAt = Date.now();
+  const products = h.db.getProducts();
+  const folders: Array<{ code: string; files: string[] }> = [];
+  for (const p of products) {
+    const files = listImageFiles(path.join(imgDir, p.code));
+    if (files.length) {
+      folders.push({ code: p.code, files });
+    }
+  }
+  if (folders.length === 0) {
+    h.log("ℹ没有可生成的图片（所有商品夹都是空的）");
+    return;
+  }
+  const covers: BuildJob[] = folders.map((f) => ({
+    code: f.code,
+    src: path.join(imgDir, f.code, f.files[0]),
+  }));
+  const rest: BuildJob[] = [];
+  for (const f of folders) {
+    for (const name of f.files) {
+      rest.push({ code: f.code, src: path.join(imgDir, f.code, name), fileName: name });
+    }
+  }
+  const queue = [...covers, ...rest];
+  const total = queue.length;
+  h.log(
+    `🖼开始生成共享缩略图：${folders.length} 个有图商品 / ${total} 张（先跑 ${covers.length} 张封面）→ ${root}`,
+  );
+  let next = 0;
+  let made = 0;
+  let skipped = 0;
+  let failed = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const job = queue[next++];
+      if (!job) {
+        return;
+      }
+      if (sharedThumbReady(job.src, root, job.code, job.fileName)) {
+        skipped++;
+      } else {
+        try {
+          const data = await thumbToCachedBase64(
+            job.src,
+            h.ctx.defaultStorageDir,
+            job.code,
+            job.fileName,
+            { root, writable: true },
+          );
+          if (data) {
+            made++;
+          } else {
+            failed++;
+          }
+        } catch {
+          failed++;
+        }
+      }
+      const done = made + skipped + failed;
+      // 每 50 张报一次：这个循环可能跑几分钟，不报进度用户不知道它到底在动没有
+      if (done % 50 === 0 && done < total) {
+        h.log(`…共享缩略图 ${done}/${total}（新生成 ${made}、已有 ${skipped}、失败 ${failed}）`);
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(BUILD_SHARED_CONCURRENCY, total) }, () => worker()),
+  );
+  const secs = Math.round((Date.now() - startedAt) / 1000);
+  h.log(
+    `✅共享缩略图完成：新生成 ${made} 张、已有 ${skipped} 张、失败 ${failed} 张（共 ${total} 张，用时 ${secs} 秒）`,
+  );
+}
+
 export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Record<string, Handler> {
   const { log, post } = h;
   const ctx = h.ctx;
@@ -199,6 +296,20 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
   // 缩略图缓存一律放本机（defaultStorageDir），不放共享数据目录：缓存键含绝对源路径，
   // 各人在共享盘上的盘符写法不同，共用一份会每次判定失效并互相覆写。
   const cacheDir = (): string => ctx.defaultStorageDir;
+
+  // 第二级：共享盘上的那份缩略图（客机第一次看图时不用读原图，见 images.ts SHARED_THUMB_DIRNAME）。
+  // 只在另配了 cherysis.storageDir 时才有（没配就没人会来读，白占磁盘）。
+  const sharedRoot = (): string => sharedThumbRoot(ctx.storageDir, ctx.defaultStorageDir);
+
+  /**
+   * 传给 thumbToCachedBase64 的共享层参数。只读模式给它 writable:false：
+   * 共享缓存照读（正是只读机最需要的加速），但一张都不往共享盘上写 —— 只读模式的承诺就是
+   * 「不碰共享盘」，缓存再小也是写。
+   */
+  const sharedOpts = (): SharedThumbCache | undefined => {
+    const root = sharedRoot();
+    return root ? { root, writable: !h.readOnly() } : undefined;
+  };
 
   // 大图优先给 webview 资源 URI：原图动辄几 MB，转 base64 再 postMessage 一次就是几十 MB 流量，
   // 而且每次点开放大都要重来一遍。URI 由浏览器自己流式解码，0 拷贝、100% 原图、放大不糊。
@@ -282,7 +393,7 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
     if (files.length === 0) {
       return "";
     }
-    return thumbToCachedBase64(path.join(folder, files[0]), cacheDir(), code);
+    return thumbToCachedBase64(path.join(folder, files[0]), cacheDir(), code, undefined, sharedOpts());
   };
 
   const reloadImages = async (code: string) => {
@@ -291,7 +402,9 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
     const files = listImageFiles(folder);
     const imgs: string[] = [];
     for (const name of files) {
-      imgs.push(await thumbToCachedBase64(path.join(folder, name), cacheDir(), code, name));
+      imgs.push(
+        await thumbToCachedBase64(path.join(folder, name), cacheDir(), code, name, sharedOpts()),
+      );
     }
     // 首张大图只发 URI 不发 base64：图库里其它张点开放大时按需取
     // names 与 images 严格同序。前端拿文件名当每张图的身份，删掉第 1 张后第 2 张顶到
@@ -664,6 +777,39 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       log(`🗑已删除 ${code} 的封面图${files.length > 1 ? "（下一张自动顶上来当封面）" : ""}`);
       await reloadImages(code);
       h.invalidateCover(code);
+    },
+
+    /**
+     * 主机上的「生成共享缩略图」：把全部商品的封面 + 图库小图预先缩进共享缓存，
+     * 客机第一次打开某个商品就直接读几十 KB 的小图（见 images.ts SHARED_THUMB_DIRNAME）。
+     *
+     * 刻意不 await：上千张图要从共享盘读原图现缩，跑起来几分钟，卡在 handler 里这段时间
+     * 整个面板的消息都排在这后面。改成后台跑 + 日志报进度（日志区就在页面底部，看得见）。
+     * 只读模式由 index.ts 的 WRITE_ACTIONS 在入口拦下（它要写共享盘），这里不用再判一次。
+     */
+    buildSharedThumbs() {
+      const root = sharedRoot();
+      if (!root) {
+        log(
+          "⚠️没有可共享的缓存位置：本机用的就是 VS Code 默认存储目录。先到「规则与设置 → 数据库备份/恢复」点「📁 更换…」，把数据目录指到共享盘（各台机器指同一份），再来生成",
+        );
+        return;
+      }
+      const dir = imageDir();
+      if (!dir) {
+        log("⚠️未配置商品图片根目录，无法生成缩略图");
+        return;
+      }
+      if (buildSharedRunning) {
+        log("ℹ共享缩略图正在生成中，不用重复点（进度看下面几行）");
+        return;
+      }
+      buildSharedRunning = true;
+      void runBuildSharedThumbs(root, dir, h)
+        .catch((err: any) => log(`❌生成共享缩略图失败：${err?.message ?? err}`))
+        .finally(() => {
+          buildSharedRunning = false;
+        });
     },
   };
 }

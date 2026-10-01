@@ -1,5 +1,17 @@
 // shopTool 前端模块（加载顺序第 3 个）：商品管理（列表/画册/筛选/内联编辑/批量/新建/导入/入库/列设置/右键菜单）
 // 拆分自原 src/tools/shopTool/client.js，逻辑未改动
+// 「在售 / 已下架」的唯一出处：列表单元格、画册角标、列头漏斗的选项、工具栏状态下拉
+// 全从这儿取。以前这两个词只活在 cellValue 里，工具栏那个下拉要是自己再写一份，
+// 改了这边忘了那边就会出现「漏斗里叫已下架、下拉里叫下架」——同一状态两个名字。
+const STATUS_LABELS = { on: "在售", off: "已下架" };
+// 工具栏「搜哪一列=状态」那个下拉的选项（顺序即显示顺序）；value 为空串 = 不筛。
+// 由 client-main.js 建 <option>，这里只出数据。
+const STATUS_FILTER_OPTIONS = [
+  { value: "", label: "全部状态" },
+  { value: STATUS_LABELS.on, label: STATUS_LABELS.on },
+  { value: STATUS_LABELS.off, label: STATUS_LABELS.off },
+];
+
 function cellValue(p, key) {
   switch (key) {
     case "code":
@@ -7,7 +19,7 @@ function cellValue(p, key) {
     case "grade":
       return displayGrade(p);
     case "status":
-      return p.status === 1 ? "已下架" : "在售";
+      return p.status === 1 ? STATUS_LABELS.off : STATUS_LABELS.on;
     case "netTotal":
       return String(p.soldTotal - p.refundTotal);
     case "cost_price":
@@ -2376,6 +2388,44 @@ function onStarOverviewDone(msg) {
   } else {
     toast(`已生成 ${count} 张星标总览图 → ${dir}`);
   }
+}
+
+// 画册卡片尺寸档位：卡片最小宽度 + 图片（封面）高度，两个一起动才像「放大」。
+// 只给宽度不动高度的话卡片会变成一条窄高的竖片，封面被 cover 裁得只剩中间一道。
+// 取值只影响本机（走 globalState 的 gallery_size），不动共享库。
+const GALLERY_SIZES = {
+  s: { w: 170, h: 150, label: "小" },
+  m: { w: 205, h: 180, label: "标准" },
+  l: { w: 260, h: 230, label: "大" },
+  xl: { w: 330, h: 290, label: "特大" },
+};
+// 默认「大」：比原来那版（205/180）大一圈，但不至于让一屏只放得下两张。
+const GALLERY_SIZE_DEFAULT = "l";
+function gallerySizeOf(raw) {
+  return GALLERY_SIZES[raw] ? raw : GALLERY_SIZE_DEFAULT;
+}
+/** 把档位写到 #productGalleryView 的 CSS 变量上（.card-grid/.card img 读它，见 fragment.html） */
+function applyGallerySize(raw) {
+  const view = $("productGalleryView");
+  if (!view) {
+    return;
+  }
+  const size = GALLERY_SIZES[gallerySizeOf(raw)];
+  view.style.setProperty("--card-w", size.w + "px");
+  view.style.setProperty("--card-h", size.h + "px");
+}
+/** 下拉要跟着当前档位走（首刷、F5 后、别人改了 globalState 都要对齐） */
+function syncGallerySizeUI(raw) {
+  const sel = $("gallerySize");
+  if (sel) {
+    sel.value = gallerySizeOf(raw);
+  }
+}
+function saveGallerySize(raw) {
+  const key = gallerySizeOf(raw);
+  applyGallerySize(key);
+  syncGallerySizeUI(key);
+  post({ type: "saveSettings", key: "gallery_size", value: key });
 }
 
 function renderGallery(list) {
