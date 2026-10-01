@@ -1,4 +1,3 @@
-import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
 import * as XLSX from "xlsx";
@@ -395,7 +394,7 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
       try {
         const fp = String(msg.path ?? "");
         if (fp) {
-          await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(fp));
+          await ctx.revealInOS(fp);
         }
       } catch (err: any) {
         log(`❌定位文件失败：${err.message}`);

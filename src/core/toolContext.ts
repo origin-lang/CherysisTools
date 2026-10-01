@@ -32,6 +32,23 @@ export interface ToolContext {
   confirm(message: string, detail?: string): Promise<boolean>;
   /** 弹多个自定义按钮的模态对话框，返回被点的那个；关窗或点最后一项兜底项为 undefined */
   chooseAction(message: string, detail: string, actions: string[]): Promise<string | undefined>;
+  /**
+   * 把本机文件路径转成前端能直接加载的图片地址。
+   * VS Code：webview 资源 URI（原图不进 base64，浏览器自己流式解码）；
+   * 网页版：`/image` 端点。handler 一律走这里，别再直接碰 panel.webview。
+   */
+  imageUrl(fp: string): string;
+  /**
+   * 在系统文件管理器里定位文件。
+   * VS Code：revealFileInOS；网页版做不到 → 改成"给下载 / 给共享路径"。
+   */
+  revealInOS(fp: string): Promise<void>;
+  /**
+   * 让用户重新选数据存储目录。
+   * VS Code：走 `Cherysis.setStorageDir` 命令（选目录/确认/关连接都在那儿）；
+   * 网页版：目录是服务端配置，网页上只读展示、不提供这个动作。
+   */
+  pickStorageDir(): Promise<void>;
 }
 
 /** 创建工具上下文 */
@@ -104,6 +121,18 @@ export function createToolContext(
         ...items,
       );
       return picked?.title;
+    },
+    imageUrl(fp) {
+      // 走资源 URI 而不是 base64：原图几 MB，base64 过一次 postMessage 就是几十 MB 流量，
+      // 且每次点开放大都要重来；URI 由浏览器自己流式解码、0 拷贝、100% 原图。
+      // 前提是该文件在面板的 localResourceRoots 白名单里（面板创建时按当时的图片根目录收集）。
+      return panel.webview.asWebviewUri(vscode.Uri.file(fp)).toString();
+    },
+    async revealInOS(fp) {
+      await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(fp));
+    },
+    async pickStorageDir() {
+      await vscode.commands.executeCommand("Cherysis.setStorageDir");
     },
   };
 }

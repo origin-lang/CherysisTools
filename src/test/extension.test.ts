@@ -509,7 +509,10 @@ suite('商品图片删除（占用重试 / 不做无谓备份）', () => {
 		let loadAllCount = 0;
 		const ctx = {
 			defaultStorageDir: storage,
-			panel: { webview: { asWebviewUri: (u: vscode.Uri) => u } },
+			// 宿主那一层：handler 现在只认 ctx.imageUrl / revealInOS / pickStorageDir
+			imageUrl: (fp: string) => `file:///${String(fp).replace(/\\/g, "/")}`,
+			revealInOS: async () => undefined,
+			pickStorageDir: async () => undefined,
 		} as unknown as ToolContext;
 		const h = {
 			ctx,
@@ -1062,7 +1065,11 @@ suite('图库按「加入文件夹的时间」排序（封面 = 最先放进去�
 		const h = {
 			ctx: {
 				defaultStorageDir: storage,
-				panel: { webview: { asWebviewUri: (u: vscode.Uri) => u } },
+				// 宿主那一层：handler 现在只认 ctx.imageUrl / revealInOS / pickStorageDir，
+				// 不再直接碰 panel.webview（那是 VS Code 宿主的事）
+				imageUrl: (fp: string) => `file:///${String(fp).replace(/\\/g, "/")}`,
+				revealInOS: async () => undefined,
+				pickStorageDir: async () => undefined,
 			} as unknown as ToolContext,
 			imageDir: () => root,
 			coverCache,
@@ -1099,7 +1106,11 @@ suite('图库按「加入文件夹的时间」排序（封面 = 最先放进去�
 		const h = {
 			ctx: {
 				defaultStorageDir: storage,
-				panel: { webview: { asWebviewUri: (u: vscode.Uri) => u } },
+				// 宿主那一层：handler 现在只认 ctx.imageUrl / revealInOS / pickStorageDir，
+				// 不再直接碰 panel.webview（那是 VS Code 宿主的事）
+				imageUrl: (fp: string) => `file:///${String(fp).replace(/\\/g, "/")}`,
+				revealInOS: async () => undefined,
+				pickStorageDir: async () => undefined,
 			} as unknown as ToolContext,
 			imageDir: () => root,
 			coverCache: new Map(),
@@ -1128,7 +1139,11 @@ suite('图库按「加入文件夹的时间」排序（封面 = 最先放进去�
 		const h = {
 			ctx: {
 				defaultStorageDir: storage,
-				panel: { webview: { asWebviewUri: (u: vscode.Uri) => u } },
+				// 宿主那一层：handler 现在只认 ctx.imageUrl / revealInOS / pickStorageDir，
+				// 不再直接碰 panel.webview（那是 VS Code 宿主的事）
+				imageUrl: (fp: string) => `file:///${String(fp).replace(/\\/g, "/")}`,
+				revealInOS: async () => undefined,
+				pickStorageDir: async () => undefined,
 			} as unknown as ToolContext,
 			imageDir: () => root,
 			coverCache: new Map(),
@@ -1163,7 +1178,11 @@ suite('图库按「加入文件夹的时间」排序（封面 = 最先放进去�
 		const h = {
 			ctx: {
 				defaultStorageDir: storage,
-				panel: { webview: { asWebviewUri: (u: vscode.Uri) => u } },
+				// 宿主那一层：handler 现在只认 ctx.imageUrl / revealInOS / pickStorageDir，
+				// 不再直接碰 panel.webview（那是 VS Code 宿主的事）
+				imageUrl: (fp: string) => `file:///${String(fp).replace(/\\/g, "/")}`,
+				revealInOS: async () => undefined,
+				pickStorageDir: async () => undefined,
 			} as unknown as ToolContext,
 			imageDir: () => root,
 			coverCache: new Map(),
@@ -1931,7 +1950,11 @@ suite('共享缩略图缓存（客机不再从共享盘拉原图）', () => {
 			ctx: {
 				storageDir: storage,
 				defaultStorageDir: local,
-				panel: { webview: { asWebviewUri: (u: vscode.Uri) => u } },
+				// 宿主那一层：handler 现在只认 ctx.imageUrl / revealInOS / pickStorageDir，
+				// 不再直接碰 panel.webview（那是 VS Code 宿主的事）
+				imageUrl: (fp: string) => `file:///${String(fp).replace(/\\/g, "/")}`,
+				revealInOS: async () => undefined,
+				pickStorageDir: async () => undefined,
 			} as unknown as ToolContext,
 			imageDir: () => imgRoot,
 			coverCache: new Map(),
@@ -1996,7 +2019,11 @@ suite('共享缩略图缓存（客机不再从共享盘拉原图）', () => {
 			ctx: {
 				storageDir: same,
 				defaultStorageDir: same,
-				panel: { webview: { asWebviewUri: (u: vscode.Uri) => u } },
+				// 宿主那一层：handler 现在只认 ctx.imageUrl / revealInOS / pickStorageDir，
+				// 不再直接碰 panel.webview（那是 VS Code 宿主的事）
+				imageUrl: (fp: string) => `file:///${String(fp).replace(/\\/g, "/")}`,
+				revealInOS: async () => undefined,
+				pickStorageDir: async () => undefined,
 			} as unknown as ToolContext,
 			imageDir: () => same,
 			coverCache: new Map(),
@@ -2323,5 +2350,47 @@ suite('九宫格 / 星标总览：并发读图不打乱位置、单格失败不�
 				`第 ${i + 1} 格应该是第 ${i + 1} 张图，实际采到 ${JSON.stringify(at(i))}`,
 			);
 		}
+	});
+});
+
+/**
+ * 网页版的前提：整条后端导入链必须能在**没有 vscode** 的 Node 进程里加载。
+ * 光靠"记得别 import"必然烂，所以钉两条：
+ *   ① 源码层面：`src/tools/shopTool` 下（含 handlers）不许出现 `from "vscode"`；
+ *   ② 产物层面：编译出来的 `out/tools/shopTool` 里不许出现 `require("vscode")`
+ *      —— 这条更硬：`import type` 有没有被正确抹掉，只有看产物才知道。
+ * 注意第 ② 条不能改成"真加载一遍"：测试跑在扩展宿主里，`vscode` 是可解析的，加载永远成功。
+ */
+suite('分层：shopTool 后端不依赖 vscode（网页版的前提）', () => {
+	test('源码与编译产物里都没有 vscode 依赖', () => {
+		const srcRoot = path.join(__dirname, '..', '..', 'src', 'tools', 'shopTool');
+		const outRoot = path.join(__dirname, '..', 'tools', 'shopTool');
+		const walk = (dir: string, ext: string): string[] => {
+			const acc: string[] = [];
+			for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+				const fp = path.join(dir, e.name);
+				if (e.isDirectory()) {
+					acc.push(...walk(fp, ext));
+				} else if (e.name.endsWith(ext)) {
+					acc.push(fp);
+				}
+			}
+			return acc;
+		};
+		const hits = (root: string, ext: string, re: RegExp): string[] =>
+			walk(root, ext)
+				.filter((fp) => re.test(fs.readFileSync(fp, 'utf-8')))
+				.map((fp) => path.relative(root, fp));
+
+		assert.deepStrictEqual(
+			hits(srcRoot, '.ts', /from\s+["']vscode["']/),
+			[],
+			'这些源文件还在 import vscode —— 会把网页服务端一起拖垮（那里没有 vscode 模块）',
+		);
+		assert.deepStrictEqual(
+			hits(outRoot, '.js', /require\(["']vscode["']\)/),
+			[],
+			'这些编译产物还在 require vscode —— 检查是不是漏了 import type，或新加了直接调用',
+		);
 	});
 });

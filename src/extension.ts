@@ -12,6 +12,7 @@ import { order1688Tool } from "./tools/order1688Tool/index.js";
 import {
   clearConfigImageDir,
   configScope,
+  initImageDirConfig,
   isValidImageDir,
   setConfigImageDir,
 } from "./tools/shopTool/imageDir.js";
@@ -199,6 +200,38 @@ function registerStorageDirCommands(context: vscode.ExtensionContext): void {
 
 export function activate(context: vscode.ExtensionContext) {
   console.log("✅========Cherysis 插件已经activate激活========");
+
+  // 把「本机设置」的读写方式注入给 imageDir.ts（那个文件刻意不 import vscode，
+  // 这样整条 handler 导入链将来能在网页服务端复用）。VS Code 这一侧写的是用户级设置，
+  // 工作区级覆盖仍然优先。
+  initImageDirConfig({
+    read: () => readConfigImageDir(),
+    scope: () => {
+      const info = vscode.workspace
+        .getConfiguration(IMAGE_DIR_SECTION)
+        .inspect<string>(IMAGE_DIR_KEY);
+      if (!info) {
+        return "default";
+      }
+      if (info.workspaceFolderValue !== undefined || info.workspaceValue !== undefined) {
+        return "workspace";
+      }
+      if (info.globalValue !== undefined) {
+        return "user";
+      }
+      return "default";
+    },
+    write: async (dir) => {
+      await vscode.workspace
+        .getConfiguration(IMAGE_DIR_SECTION)
+        .update(IMAGE_DIR_KEY, dir, vscode.ConfigurationTarget.Global);
+    },
+    clear: async () => {
+      await vscode.workspace
+        .getConfiguration(IMAGE_DIR_SECTION)
+        .update(IMAGE_DIR_KEY, undefined, vscode.ConfigurationTarget.Global);
+    },
+  });
 
   toolRegistry.register(imageBatchTool);
   toolRegistry.register(nineGridTool);

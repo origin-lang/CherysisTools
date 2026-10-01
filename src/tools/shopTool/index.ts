@@ -1,7 +1,8 @@
-import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
-import { ToolDefinition } from "../../core/toolRegistry.js";
+// 只导入类型：`ToolDefinition` 来自 toolRegistry，而那个文件 import 了 vscode。
+// 写成 import type 后编译期就被抹掉，这条导入链才能在没有 vscode 的 Node 进程里加载（网页版的前提）。
+import type { ToolDefinition } from "../../core/toolRegistry.js";
 import { getDB, initDB, ShopDB, ShopDBSnapshot } from "./db.js";
 import { canonicalCode, fileStamp, todayStr } from "./pricing.js";
 import { pruneCodeThumbs, pruneOldThumbs, pruneThumbRoot, sharedThumbRoot } from "./images.js";

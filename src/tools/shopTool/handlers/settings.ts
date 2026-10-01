@@ -1,4 +1,3 @@
-import * as vscode from "vscode";
 import { Handler, HandlerCtx } from "./types.js";
 
 // 设置域：保存设置项、全量刷新
@@ -60,7 +59,7 @@ export function settingsHandlers(h: HandlerCtx): Record<string, Handler> {
     // （见 extension.ts 的 Cherysis.setStorageDir），这里一行都不重复实现。
     async pickStorageDir() {
       try {
-        await vscode.commands.executeCommand("Cherysis.setStorageDir");
+        await h.ctx.pickStorageDir();
       } catch (err: any) {
         log(`❌打开目录选择失败：${err?.message ?? err}`);
       }

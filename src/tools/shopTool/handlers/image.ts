@@ -1,4 +1,3 @@
-import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
@@ -311,12 +310,12 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
     return root ? { root, writable: !h.readOnly() } : undefined;
   };
 
-  // 大图优先给 webview 资源 URI：原图动辄几 MB，转 base64 再 postMessage 一次就是几十 MB 流量，
-  // 而且每次点开放大都要重来一遍。URI 由浏览器自己流式解码，0 拷贝、100% 原图、放大不糊。
-  // 前提是该文件在面板的 localResourceRoots 白名单里（面板创建时按当时的图片根目录收集），
+  // 大图优先给宿主提供的图片 URL（VS Code 是 webview 资源 URI）：原图动辄几 MB，
+  // 转 base64 再 postMessage 一次就是几十 MB 流量，而且每次点开放大都要重来一遍。
+  // URI 由浏览器自己流式解码，0 拷贝、100% 原图、放大不糊。
+  // VS Code 侧的前提是该文件在面板的 localResourceRoots 白名单里；
   // 加载不出来时前端 onerror 回退请求 base64 通道。
-  const webviewUri = (fp: string): string =>
-    ctx.panel.webview.asWebviewUri(vscode.Uri.file(fp)).toString();
+  const webviewUri = (fp: string): string => ctx.imageUrl(fp);
 
   /** 批量日志里报编号只列前几个：勾 200 个商品全列出来，日志面板直接没法看了 */
   const sampleCodes = (codes: string[]): string =>
@@ -687,7 +686,7 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       // 保持只读（不 mkdir）：共享盘上要不要建这个目录，不该由一次右键菜单替用户决定。
       const target = fs.existsSync(folder) ? folder : dir;
       try {
-        await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(target));
+        await ctx.revealInOS(target);
         if (target !== folder) {
           log(`📂${code} 还没有图片文件夹，已打开图片根目录（图放进 ${code} 子夹即可，或在灯箱里点上传）`);
         }

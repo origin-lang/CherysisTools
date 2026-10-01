@@ -1,4 +1,3 @@
-import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
 import sharp from "sharp";
@@ -377,7 +376,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
           }
         }
         try {
-          await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(outDir));
+          await ctx.revealInOS(outDir);
         } catch {
           /* 忽略打开失败 */
         }
@@ -506,7 +505,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
         return;
       }
       try {
-        await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(outDir));
+        await ctx.revealInOS(outDir);
       } catch {
         /* 忽略打开失败 */
       }
@@ -514,7 +513,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       post({ type: "starOverviewDone", dir: outDir, count: files.length });
     },
 
-    openStarOutDir(msg) {
+    async openStarOutDir(msg) {
       const dir =
         String(msg?.dir || "").trim() ||
         String(h.getSetting("live_out_dir") || "").trim();
@@ -523,7 +522,8 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
         return;
       }
       try {
-        vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(dir));
+        // 改成 await：原来没 await，catch 只盖得住同步抛出，异步失败会变成未处理拒绝
+        await ctx.revealInOS(dir);
       } catch {
         /* 忽略打开失败 */
       }
