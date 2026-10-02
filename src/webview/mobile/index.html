@@ -136,6 +136,8 @@
           <!-- 刚录入时手边就有实物：直接拍照，建完自动挂到这个编号下 -->
           <button id="btnNewPick" class="wide" type="button">📷 拍照 / 选图</button>
           <input id="newFilePick" type="file" accept="image/*" capture="environment" multiple hidden />
+          <!-- 拍完当场就看见：点小图看大效果，✕ 删掉重拍 -->
+          <div id="newShots" class="strip" style="display: none"></div>
           <p id="newPickInfo" class="muted small"></p>
           <p id="ruleHint" class="muted small"></p>
         </div>
@@ -186,6 +188,7 @@
       <img id="viewerImg" alt="" />
       <button id="viewerClose" class="viewer-x">✕</button>
       <button id="viewerDel" class="viewer-del">🗑 删除这张</button>
+      <button id="viewerRetake" class="viewer-retake" style="display: none">🔄 重拍</button>
     </div>
 
     <!-- 底部条：只剩一个「日志」入口。结果一律走上面的提示浮层，这里不再滚动日志文字

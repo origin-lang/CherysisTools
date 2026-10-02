@@ -1447,10 +1447,39 @@
     $("viewerImg").src = imgUrl(code, name, "full");
     // 封面（name 为空）不是具体某张文件，删它等于删整个夹，不给这个按钮
     $("viewerDel").style.display = name ? "" : "none";
+    $("viewerRetake").style.display = "none"; // 已上传的图没有「重拍」一说
     $("viewer").classList.add("show");
   }
 
-  var viewerImg = null; // 灯箱当前这张：{ code, name }
+  /** 新建页看刚拍的照片：还没上传，所以给「重拍」而不是「删除这张」 */
+  function openLocalViewer(i) {
+    var s = pendingNewShots[i];
+    if (!s) {
+      return;
+    }
+    viewerImg = { local: true, shot: i };
+    $("viewerImg").src = s.url;
+    $("viewerDel").style.display = "none";
+    $("viewerRetake").style.display = "";
+    $("viewer").classList.add("show");
+  }
+
+  /** 重拍 = 丢掉这张 + 把相机重新调起来（省一步「先删再点拍照」） */
+  function retakeShot() {
+    var v = viewerImg;
+    if (!v || !v.local) {
+      return;
+    }
+    var i = v.shot;
+    $("viewer").classList.remove("show");
+    $("viewerImg").src = "";
+    $("viewerRetake").style.display = "none";
+    viewerImg = null;
+    removeNewShot(i);
+    $("newFilePick").click();
+  }
+
+  var viewerImg = null; // 灯箱当前这张：{ code, name } 或 { local, shot }
   /** 灯箱里删当前这张：后端走 deleteImageFile（按文件名删，不按序号，避免删错） */
   function deleteViewerImage() {
     var v = viewerImg;
@@ -1646,8 +1675,74 @@
     return owner;
   }
 
-  // 新建页先选好照片，保存成功后再传（没编号就传不了，图片挂在编号目录下）
-  var pendingNewFiles = [];
+  // 新建页先选好照片，保存成功后再传（没编号就传不了，图片挂在编号目录下）。
+  // 每项 { file, url }：url 是本地预览用的 objectURL —— 拍完当场就能看见效果、能删能重拍，
+  // 不用等上传完才知道拍糊了。移除或上传完必须 revoke，否则那张原图一直占着内存。
+  var pendingNewShots = [];
+
+  function revokeShots(list) {
+    (list || []).forEach(function (s) {
+      if (s && s.url) {
+        URL.revokeObjectURL(s.url);
+      }
+    });
+  }
+
+  /** 追加一批照片（不是替换：拍完还能接着加） */
+  function addNewShots(files) {
+    var added = 0;
+    Array.prototype.forEach.call(files || [], function (f) {
+      pendingNewShots.push({ file: f, url: URL.createObjectURL(f) });
+      added++;
+    });
+    renderNewShots();
+    return added;
+  }
+
+  function removeNewShot(i) {
+    var s = pendingNewShots[i];
+    if (!s) {
+      return;
+    }
+    revokeShots([s]);
+    pendingNewShots.splice(i, 1);
+    renderNewShots();
+  }
+
+  /** 拍完立刻能看到的那一排小图：点图看大效果，✕ 删掉 */
+  function renderNewShots() {
+    var box = $("newShots");
+    if (!box) {
+      return;
+    }
+    box.innerHTML = pendingNewShots
+      .map(function (s, i) {
+        return (
+          '<span class="thumbw">' +
+          '<img class="shot" src="' +
+          s.url +
+          '" alt="" data-shot="' +
+          i +
+          '" />' +
+          '<button class="thumb-x" type="button" data-rm="' +
+          i +
+          '" title="删掉这张">✕</button>' +
+          "</span>"
+        );
+      })
+      .join("");
+    box.style.display = pendingNewShots.length ? "" : "none";
+    var pick = $("btnNewPick");
+    if (pick) {
+      pick.textContent = pendingNewShots.length ? "📷 再拍 / 加图" : "📷 拍照 / 选图";
+    }
+    var el = $("newPickInfo");
+    if (el) {
+      el.textContent = pendingNewShots.length
+        ? "已选 " + pendingNewShots.length + " 张，保存后自动上传。点小图看效果，✕ 删掉重拍。"
+        : "可以先拍照，建成后自动上传（也可以建成后再去详情页传）。";
+    }
+  }
 
   function createProduct() {
     var code = $("nCode").value.trim();
@@ -1685,15 +1780,18 @@
         toast(why ? String(why).replace(/^❌/, "") : "没建成，看看日志里的原因", true);
         return;
       }
-      var files = pendingNewFiles;
-      pendingNewFiles = [];
+      var files = pendingNewShots.map(function (s) {
+        return s.file;
+      });
+      revokeShots(pendingNewShots); // 预览用的 objectURL 到此为止，别一直占着内存
+      pendingNewShots = [];
       $("nCode").value = "";
       $("nName").value = "";
       $("nCost").value = "";
       $("nSale").value = "";
       $("nStock").value = "0";
       checkNewCode(); // 清掉编号框下面那行红字
-      renderNewPickInfo();
+      renderNewShots();
       state.imgStatsLoaded = false; // 新商品还没图，之前统计的不算数
       toast("已新建 " + code);
       show("screen-list");
@@ -1704,17 +1802,6 @@
         }
       });
     });
-  }
-
-  /** 新建页选完照片后那一行的说明：告诉用户照片什么时候会被传走 */
-  function renderNewPickInfo() {
-    var el = $("newPickInfo");
-    if (!el) {
-      return;
-    }
-    el.textContent = pendingNewFiles.length
-      ? "已选 " + pendingNewFiles.length + " 张，点「保存」建成商品后自动上传。"
-      : "可以先拍照，建成后自动上传（也可以建成后再去详情页传）。";
   }
 
   // ---------- 上传（手机拍照 / 相册） ----------
@@ -2179,9 +2266,11 @@
     $("viewerClose").onclick = function () {
       $("viewer").classList.remove("show");
       $("viewerImg").src = "";
+      $("viewerRetake").style.display = "none";
       viewerImg = null;
     };
     $("viewerDel").onclick = deleteViewerImage;
+    $("viewerRetake").onclick = retakeShot;
     $("btnUpload").onclick = function () {
       $("filePick").click();
     };
@@ -2208,13 +2297,25 @@
       $("newFilePick").click();
     };
     $("newFilePick").onchange = function () {
-      pendingNewFiles = Array.prototype.slice.call($("newFilePick").files || []);
-      renderNewPickInfo();
-      if (pendingNewFiles.length) {
-        toast("已选 " + pendingNewFiles.length + " 张，保存后上传");
+      var n = addNewShots($("newFilePick").files);
+      $("newFilePick").value = ""; // 不清的话再选同一张照片不会触发 change
+      if (n) {
+        toast("加了 " + n + " 张，保存后上传");
       }
     };
-    renderNewPickInfo();
+    // 小图那一排：点图看大效果，✕ 删掉
+    $("newShots").onclick = function (e) {
+      var rm = e.target.closest("[data-rm]");
+      if (rm) {
+        removeNewShot(num(rm.dataset.rm));
+        return;
+      }
+      var img = e.target.closest("[data-shot]");
+      if (img) {
+        openLocalViewer(num(img.dataset.shot));
+      }
+    };
+    renderNewShots();
   }
 
   // 记住上次的大小：手机上表格字号是要反复调的东西，每次进来都回到 100% 很烦

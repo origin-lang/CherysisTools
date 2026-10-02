@@ -684,6 +684,20 @@ input.bad {
   border-color: transparent;
   color: #fff;
 }
+/* 新建页刚拍的照片：拍完当场看得见，才知道拍糊没糊 */
+#newShots {
+  margin-top: 8px;
+}
+/* 灯箱里的「重拍」：只在看本地未上传的照片时出现，放左下角跟右下角的「删除」分开 */
+.viewer-retake {
+  position: absolute;
+  left: 10px;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  background: rgba(255, 255, 255, 0.16);
+  border-color: transparent;
+  color: #fff;
+}
+
 /* 灯箱里的「删除这张」：放在右下角，远离左上角那张图，误触不到 */
 .viewer-del {
   position: absolute;
