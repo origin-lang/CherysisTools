@@ -34,3 +34,12 @@ src/test/**
 # AI 工具的工作数据：不是扩展的一部分，且可能夹带本机绝对路径与项目内部笔记
 .workbuddy/**
 .agents/**
+
+# 本机的东西，都不该进包：
+#  - tmp-web-test/ 是网页版的演示/测试数据（18MB，还夹着一个演示 shop.db）
+#  - logs/ 是运行日志
+#  - cherysis-server.config*.json 里是**这台机器**的真实路径（将来还可能带口令）
+tmp-web-test/**
+logs/**
+cherysis-server.config.json
+cherysis-server.config.demo.json

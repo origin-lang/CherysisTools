@@ -6,6 +6,40 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.0.19] - 2026-10-02
+
+**插件本身的行为一条没变**：这个版本带的是"同一套业务内核的另一层皮"——shopTool 网页版（手机 + 客机浏览器），
+以及为它挖出来的两个宿主接缝。VS Code 面板照旧用，装完不会看到任何界面变化。
+
+- **新增网页版（`src/server/` + `src/webview/mobile/`）**：一个极薄的 HTTP 服务，把浏览器请求包成 handler 认的 `ctx`，
+  再把 handler 原本 `postToWebview` / `log` 出去的东西收成 JSON 返回 —— **业务逻辑一行没重写**（`db.ts` / `images.ts` /
+  `liveGrid.ts` / `pricing.ts` 与各 handler 的业务部分都没动）。手机能翻画册/列表、改值、看详情与图、传图、新建商品；
+  电脑浏览器上宽屏（≥820px）时详情/新建/设置/筛选都从**右侧抽屉**滑出，列表留在左边。
+  设计与取舍见 `docs/网页版方案-设计.md`；怎么启动、怎么排查见 `docs/网页版-上手与自测.md` 与 `docs/网页版-使用与运维.md`。
+- **实时推送（SSE `/api/events`）**：网页版之间"别人改了我这边自动变"，靠服务端把每次请求期间的回推与日志**同时**
+  投给所有连着的页面（按浏览器生成的 clientId 跳过发起人自己，避免同一件事应用两遍）。三个纯模块单拎出来、可脱离
+  http 单测：`events.ts`（编号 / 环形缓冲 / 扇出 / 断线续传）、`serialQueue.ts`（串行队列）、`taskQueue.ts`（重活排队）。
+  实测踩到并修掉一个真 bug：请求回完之后必须把事件的 origin 清空，否则**点了按钮的那台手机反而收不到自己触发的进度**。
+- **VS Code 那边的写不会被广播**（它是另一个进程），所以服务端每 3 秒巡检一次 `PRAGMA data_version`（它只在**别的连接**
+  提交过时才变），一变就推 `changed` → 手机上亮「🔄 有改动」。这是"多机一起用"时唯一能感知电脑版改动的通道。
+- **写请求串行化 + rev**：服务端把自己收到的写请求排成一条队（同一时刻只有一个进 `handleMessage`），并且只认
+  **库文件指纹真变了**才算一次改动（`rev` 才 +1）——实测同值重写、改不存在的商品都不会乱报。跨进程（电脑版也开着）
+  仍靠 SQLite 文件锁 + `busy_timeout=10s` + `withRetry` 兜底。**字段级冲突拦截刻意不做**（本期定论）：后写覆盖先写，但有提示。
+- **`longTask` 宿主接缝（`ToolContext` 可选方法 + `handlers/types.ts` 的 `runLongTask`）**：生成共享缩略图 / 生成九宫格
+  这类长活儿的"什么时机跑"交给宿主决定 —— VS Code 立刻跑（**与原行为一字不差**），网页版进服务端队列（同一时刻只跑一个，
+  排队状态走 SSE）。传的是**工厂**而不是已经开始的 Promise，所以排队期间一个字节都不读共享盘。顺带修掉网页版上的一个隐患：
+  `generateLiveGrid` 原来是被 await 的，几十张原图渲染下来 `/api/invoke` 会挂几分钟。
+- **网页版的启动与运维**：根目录 `启动网页版.cmd`（双击即用）+ `设置开机自启.cmd` / `取消开机自启.cmd`
+  （计划任务，**登录时**触发器 —— 数据在共享盘映射盘上，而映射盘只在登录会话里存在）。启动器带**启动前体检**：
+  数据目录读不到、或目录里没有 `shop.db` 就**拒绝启动**（避免服务在一个空路径上"成功"建出一个空库），
+  出错时窗口停住等你看完。配置读取容忍 UTF-8 BOM（记事本另存为会写 BOM）。
+- **闸门**：新增 `scripts/check-server-units.cjs`（34 组纯模块用例 + 源码级接线断言）、`check-mobile-wiring.cjs`
+  （手机版 DOM id 与 SSE 事件名前后端对齐、宽屏抽屉断点前后端一致）、`check-longtask-handlers.cjs`
+  （用假 ctx 直接调真 handler，守 VS Code 侧"不 await 直接开跑"与"返回 Promise 能被 await"两条老语义），
+  以及三个对着真服务跑的端到端脚本 `e2e-web-{realtime,fingerprint,tasks}.cjs`（都带"拒绝指向正式库"的安全闸）。
+- **打包**：`.vscodeignore` 补上 `tmp-web-test/**`（18MB 演示数据 + 一个演示 shop.db）、`logs/**`、
+  `cherysis-server.config*.json`（本机真实路径，将来可能带口令）——不补的话这个版本会把演示数据一起打进去。
+
 ## [0.0.18] - 2026-10-01
 
 客机翻商品不再现拉原图（图走两级缩略图缓存），搜索与画册按手改，以及九宫格 / 星标总览生成时并发读原图。
