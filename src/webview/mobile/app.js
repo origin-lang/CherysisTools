@@ -5,7 +5,6 @@
   "use strict";
 
   var TOKEN_KEY = "cherysis_token";
-  var CLIENT_KEY = "cherysis_client"; // 这台设备的随机身份，见下面「与后端的通道」里的 clientId
   var state = {
     products: [],
     rules: [],
@@ -155,28 +154,19 @@
   })();
 
   /**
-   * 这台设备的身份：存在 localStorage 里，一次生成、一直用。
+   * 这个**页面**的身份：每次打开页面现算一个随机串，不落盘。
    *
    * 干什么用：实时推送是"广播给所有连着的页面"的，而我自己那次操作的结果已经随
    * `/api/invoke` 的响应回来了 —— 服务端按这个身份把我自己发的事件跳过，避免同一件事
    * 被应用两遍（比如刚改完的售价又被广播回来覆盖一次正在编辑的格子）。
    *
-   * 隐私模式写不了 localStorage：那就每次算个新的 —— 代价只是"自己发的事件也会收到一遍"，
-   * 而 handlePost 本来就是幂等的（同一个商品整条覆盖），不会坏。
+   * 为什么**故意不存 localStorage**（早先存过，是个坑）：存了就是"一台设备一个身份"，
+   * 于是同一个浏览器开两个标签页 = 两个连接同一个身份 → 我自己发的广播把**另一个标签页
+   * 也跳过了**，看起来就是"另一个窗口不跟着变"（而那正是要测的跨端同步）。
+   * 每次打开算新的才是对的：身份只需要在**这一个页面的生命周期**里稳定，
+   * 不该跨页面、更不该跨标签页。顺带也不用管隐私模式写不了 storage 这件事。
    */
-  var clientId = (function () {
-    var v = "";
-    try {
-      v = localStorage.getItem(CLIENT_KEY) || "";
-      if (!v) {
-        v = "c" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-        localStorage.setItem(CLIENT_KEY, v);
-      }
-    } catch (e) {
-      v = "c" + Math.random().toString(36).slice(2, 10);
-    }
-    return v;
-  })();
+  var clientId = "c" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
   /** 一条消息 = 一次 POST；回包里的 posts 按序喂给 handlePost，logs 进底部状态条 */
   function invoke(type, payload) {

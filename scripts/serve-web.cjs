@@ -45,6 +45,25 @@ if (!fs.existsSync(entry)) {
 
 // 直接用 node 跑服务，stdio 全继承：日志、Ctrl+C、关窗口都跟直接跑一样。
 // --config 给绝对路径：配置文件是按**当前目录**找的，写死绝对路径才不会因为从别处启动而找不到。
+console.log(`配置文件：${configFile}`);
+// 一眼看出"我现在动的是不是正式库" —— 这是最要命的一件事，不能靠猜
+try {
+  const cfg = JSON.parse(fs.readFileSync(configFile, "utf8"));
+  const store = String(cfg.storageDir || "");
+  if (/tmp-web-test|cherysis-demo/i.test(store)) {
+    console.log("");
+    console.log("⚠️ 注意：这份配置指向的是**演示/测试数据**（tmp-web-test），不是正式商品库。");
+    console.log("   想先用假数据把功能点走一遍：就这样用，什么都别改。");
+    console.log("   想换成你自己的库：把 cherysis-server.config.json 里的 storageDir / imageDir");
+    console.log("   改成真实路径再重启（详见 docs/网页版-上手与自测.md 第四节）。");
+    console.log("");
+  } else if (store) {
+    console.log(`数据目录：${store}  ← 请确认这是你的正式库`);
+  }
+} catch {
+  /* 配置文件刚才是能读到的（上面检查过），这里只是提示，读不动就算了 */
+}
+
 const child = spawn(process.execPath, [entry, `--config=${configFile}`], {
   cwd: root,
   stdio: "inherit",
