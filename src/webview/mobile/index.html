@@ -15,7 +15,8 @@
           <button id="viewGallery" class="on">画册</button>
           <button id="viewList">列表</button>
         </div>
-        <!-- 漏斗图标 + 文字：原来那个 🔻 看着像"收起/折叠"，不像"筛选" -->
+        <!-- 漏斗图标 + 条数徽标：不写「筛选」两个字了 —— 图标本身够认得，
+             省下的宽度给按钮（用户要的"扁一点、宽一点"）。有筛选条件时旁边显示条数 -->
         <button id="btnFilter" class="icon" title="筛选：品类/系列/等级/状态/数值范围/有图无图">
           <svg class="ico" viewBox="0 0 16 16" aria-hidden="true">
             <path
@@ -25,7 +26,7 @@
               stroke-width="1.5"
               stroke-linejoin="round"
             />
-          </svg><span id="btnFilterText">筛选</span>
+          </svg><span id="btnFilterText"></span>
         </button>
         <button id="btnSettings" class="icon" title="等级规则与设置">⚙</button>
         <button id="btnNew" class="primary">＋ 新建</button>

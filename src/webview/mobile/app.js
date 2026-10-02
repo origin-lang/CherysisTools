@@ -1003,7 +1003,17 @@
     $("fsTitle").textContent = (FIELD_LABEL[field] || field) + "　" + p.code + "　" + (p.name || "");
     $("fsBody").innerHTML =
       field === "grade"
-        ? '<select id="fsInput" class="big">' + gradeOptions(cur, p) + "</select>"
+        ? // 等级：**不用原生 <select>**，改成一列可点的选项。
+          // 踩过两次的坑：手机上进编辑弹的是底部 sheet，原生下拉被我们 focus 过之后
+          // 会出现"点了没反应"（Android 上 focus 一个 select 会立刻弹选择器，和刚结束的
+          // 触摸序列打架；focus 也可能在触摸结束时被收回，于是它就一直不响应）。
+          // 一列 48px 高的按钮没有这个问题，手机上还比原生选择器好点得多。
+          // 仍然留一个隐藏的 #fsInput 存当前值 —— commitEdit 那条路一个字都不用改。
+          '<div class="opts">' +
+          gradeOptionButtons(cur, p) +
+          '</div><input id="fsInput" type="hidden" value="' +
+          esc(String(cur)) +
+          '" />'
         : '<input id="fsInput" class="big" type="text"' +
           // 名称不该弹数字键盘；数字列要小数键盘（inputmode 在手机上决定了键盘长什么样）
           (isTxt ? "" : ' inputmode="decimal"') +
@@ -1012,10 +1022,11 @@
           '" />';
     $("fsHint").textContent = FIELD_HINT[field] || "";
     $("fieldSheet").classList.add("show");
-    var input = $("fsInput");
-    // 必须在这一个 click 里同步 focus：放到下一拍 iOS 就不弹键盘了
-    input.focus();
-    if (input.tagName !== "SELECT") {
+    // 等级那条路没有输入框可聚焦（也不该聚焦：手机上一聚焦就可能弹键盘/选择器）
+    if (field !== "grade") {
+      var input = $("fsInput");
+      // 必须在这一个 click 里同步 focus：放到下一拍 iOS 就不弹键盘了
+      input.focus();
       input.select();
     }
   }
@@ -1026,18 +1037,42 @@
     $("fsBody").innerHTML = "";
   }
 
-  /** 等级下拉的选项；「自定义」是否选中看 price_manual —— 与电脑版同一口径 */
-  function gradeOptions(cur, p) {
+  /**
+   * 等级的可点选项（一列按钮）。当前那一项给 .on 高亮。
+   * 口径与下拉时代一致：「自定义」看 price_manual；商品挂着一个"规则已经没了"的等级时
+   * 也把它列出来（不列的话用户会以为等级丢了、或者一改就换成别的）。
+   */
+  function gradeOptionButtons(cur, p) {
     var manual = num(p.price_manual) === 1;
-    var opts =
-      '<option value="0"' + (manual || num(cur) === 0 ? " selected" : "") + ">自定义</option>" +
-      state.rules
-        .map(function (r) {
-          var sel = !manual && num(r.grade) === num(cur) ? " selected" : "";
-          return '<option value="' + r.grade + '"' + sel + ">" + esc(gradeLabel(r.grade)) + "</option>";
-        })
-        .join("");
-    return opts;
+    var now = manual ? 0 : num(cur);
+    var items = [{ v: 0, label: "自定义（售价手动定）" }];
+    if (num(cur) > 0 && !manual) {
+      var known = false;
+      for (var i = 0; i < state.rules.length; i++) {
+        if (num(state.rules[i].grade) === num(cur)) {
+          known = true;
+        }
+      }
+      if (!known) {
+        items.push({ v: num(cur), label: "等级 " + num(cur) + "（没有规则，售价不会被自动算）" });
+      }
+    }
+    state.rules.forEach(function (r) {
+      items.push({ v: num(r.grade), label: gradeLabel(num(r.grade)) });
+    });
+    return items
+      .map(function (it) {
+        return (
+          '<button type="button" class="opt' +
+          (num(it.v) === now ? " on" : "") +
+          '" data-v="' +
+          it.v +
+          '">' +
+          esc(it.label) +
+          "</button>"
+        );
+      })
+      .join("");
   }
 
   /** submit=false 就是放弃这次改动；值没变则什么都不发（避免误点一下也写库） */
@@ -1237,9 +1272,11 @@
 
   function renderActive() {
     var pills = activePills();
-    // 面板收起时也要知道「现在筛着几条」，所以计数挂在按钮上
-    // （按钮里现在是"图标 + 文字"两段，只能改文字那一段：整块 textContent 会把图标抹掉）
-    $("btnFilterText").textContent = "筛选" + (pills.length ? " " + pills.length : "");
+    // 面板收起时也要知道「现在筛着几条」，所以计数挂在按钮上。
+    // 按钮里现在是"漏斗图标 + 一个空 span"：有条数就显示条数（当徽标用），没有就纯图标 ——
+    // 这样它和旁边的 ⚙ 一样大（用户要的），有筛选时又能一眼看出来
+    $("btnFilterText").textContent = pills.length ? String(pills.length) : "";
+    $("btnFilter").classList.toggle("has", pills.length > 0);
     var bar = $("activeBar");
     if (!pills.length && state.sort === "code") {
       bar.innerHTML = "";
@@ -2385,22 +2422,31 @@
         openDetail(id);
       }
     };
-    // 输入框是每次重建的，事件走 sheet 这一层的委托
+    // 改值的 sheet：输入框是每次重建的，事件走 sheet 这一层的委托。
+    // 等级那一列选项点了就定（写进隐藏的 #fsInput 再走 commitEdit，与输入框同一条路）
+    $("fieldSheet").addEventListener("click", function (e) {
+      var opt = e.target && e.target.closest ? e.target.closest(".opt") : null;
+      if (!opt) {
+        return;
+      }
+      var input = $("fsInput");
+      if (input) {
+        input.value = String(opt.dataset.v);
+      }
+      commitEdit(true);
+    });
     $("fieldSheet").addEventListener("keydown", function (e) {
+      // Esc 什么时候都能放弃（等级那条路没有输入框可聚焦，所以不能只看 e.target）
+      if (e.key === "Escape") {
+        e.preventDefault();
+        commitEdit(false);
+        return;
+      }
       if (!e.target || e.target.id !== "fsInput") {
         return;
       }
       if (e.key === "Enter") {
         e.preventDefault();
-        commitEdit(true);
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        commitEdit(false);
-      }
-    });
-    // 等级是下拉，选完就定（没有回车可敲）
-    $("fieldSheet").addEventListener("change", function (e) {
-      if (e.target && e.target.id === "fsInput" && e.target.tagName === "SELECT") {
         commitEdit(true);
       }
     });
