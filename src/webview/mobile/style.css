@@ -11,6 +11,8 @@
   --danger: #d64545;
   --accent: #1b64f2; /* 生效条件的 pill 用这个蓝，跟品牌绿区分开 */
   --tap: 44px; /* 触控目标下限，手指点得准 */
+  --pad: 12px; /* 屏幕左右留白：这一版统一提到 12，之前 10 太贴边 */
+  --gap: 10px; /* 一行里相邻元素（按钮之间、输入框之间）的间距 */
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -45,8 +47,8 @@ body {
   flex-direction: column;
   height: 100dvh;
   /* 底部那条是 fixed 的：统一在屏幕底部留出它的高度，否则分页条会被压在它下面。
-     26px = 细条 22px 按钮 + 上下 2px padding，跟着 .status 一起改 */
-  padding-bottom: calc(26px + env(safe-area-inset-bottom));
+     30px = 细条里的按钮 22px + 上下各 3px padding + 1px 上边框，跟着 .status 一起改 */
+  padding-bottom: calc(30px + env(safe-area-inset-bottom));
 }
 .screen.show {
   display: flex;
@@ -56,8 +58,8 @@ body {
 .bar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: var(--gap);
+  padding: 10px var(--pad);
   background: var(--card);
   border-bottom: 1px solid var(--line);
   position: sticky;
@@ -115,7 +117,7 @@ button.mini {
 }
 button.wide {
   width: 100%;
-  margin-top: 10px;
+  margin-top: 14px;
 }
 button.toggle.off {
   color: var(--danger);
@@ -139,8 +141,8 @@ select {
 .searchbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: var(--gap);
+  padding: 10px var(--pad);
   background: var(--card);
   border-bottom: 1px solid var(--line);
 }
@@ -158,8 +160,8 @@ select {
 .pills {
   display: none;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 6px 10px;
+  gap: 8px;
+  padding: 8px var(--pad);
   background: var(--card);
   border-bottom: 1px solid var(--line);
 }
@@ -204,7 +206,7 @@ select {
   display: none;
   max-height: 52vh;
   overflow-y: auto;
-  padding: 8px 10px;
+  padding: var(--pad);
   background: var(--bg);
   border-bottom: 1px solid var(--line);
   -webkit-overflow-scrolling: touch;
@@ -219,7 +221,7 @@ select {
      「上一个/下一个」那排就跟着滚走了。写了 0 才是「这块自己滚、上面不动」。 */
   min-height: 0;
   overflow-y: auto;
-  padding: 10px;
+  padding: var(--pad);
   -webkit-overflow-scrolling: touch;
   /* 显示大小：只有这个容器里的东西（表格 / 画册）跟着 --zoom 变。
      顶栏、搜索行、筛选区、分页条、状态条都是它的兄弟节点，天然不会被缩放带跑。 */
@@ -242,7 +244,7 @@ select {
   touch-action: pan-y;
   /* 列宽跟着 --zoom：放大时格子变大、每行少放几个，而不是把图撑糊 */
   grid-template-columns: repeat(auto-fill, minmax(calc(150px * var(--zoom)), 1fr));
-  gap: calc(10px * var(--zoom));
+  gap: calc(12px * var(--zoom));
 }
 .card {
   background: var(--card);
@@ -322,7 +324,7 @@ select {
 }
 .tbl th,
 .tbl td {
-  padding: calc(10px * var(--zoom)) calc(8px * var(--zoom));
+  padding: calc(11px * var(--zoom)) calc(10px * var(--zoom));
   border-bottom: 1px solid var(--line);
   /* 竖线：比横线更浅一档（--grid），只要「能看出是一格一格」，不抢数字的注意力 */
   border-right: 1px solid var(--grid);
@@ -390,16 +392,16 @@ select {
 .ftitle {
   font-size: 12px;
   color: var(--muted);
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 .chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 .chip {
-  min-height: 36px;
-  padding: 6px 10px;
+  min-height: 38px;
+  padding: 8px 12px;
   font-size: 13px;
   border-radius: 999px;
 }
@@ -465,8 +467,8 @@ input.inline.wide {
 .pager {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: var(--gap);
+  padding: 10px var(--pad);
   background: var(--card);
   border-top: 1px solid var(--line);
 }
@@ -486,8 +488,8 @@ input.inline.wide {
 .detailnav {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: var(--gap);
+  padding: 8px var(--pad);
   background: var(--card);
   border-bottom: 1px solid var(--line);
 }
@@ -520,7 +522,7 @@ input.bad {
   border: 1px solid var(--line);
   border-radius: 10px;
   overflow: hidden;
-  margin-bottom: 10px;
+  margin-bottom: var(--pad);
   /* 锁死比例：每张图的长宽比不一样，不锁的话翻「上一个/下一个」时这块会忽大忽小，
      图片加载完成前高度还是 0，整页也会跟着跳一下 */
   aspect-ratio: 1 / 1;
@@ -535,7 +537,7 @@ input.bad {
 }
 .strip {
   display: flex;
-  gap: 8px;
+  gap: var(--gap);
   overflow-x: auto;
   padding-bottom: 10px;
 }
@@ -576,20 +578,42 @@ input.bad {
   background: var(--danger);
   border-color: var(--danger);
 }
+/* 表单类卡片（详情 / 新建 / 设置 / 筛选区）要有内边距：框和按钮贴着卡片边就是「黏着」的来源。
+   画册那张 .card 不加 —— 它里面是满宽图，加了 padding 图就缩进去一圈。 */
+#screen-detail .card,
+#screen-new .card,
+#screen-settings .card,
+.filterpanel .card {
+  padding: 14px;
+}
+/* 设置屏几张卡片上下叠着：卡与卡之间要喘口气 */
+#screen-settings .card + .card,
+#screen-detail .card + .card,
+#screen-new .card + .card {
+  margin-top: var(--pad);
+}
 .card label {
   display: block;
-  margin-bottom: 10px;
+  margin-bottom: 14px; /* 10px 太挤：字段之间要有明显的分组感 */
   font-size: 12px;
   color: var(--muted);
 }
 .card label input,
 .card label select {
-  margin-top: 4px;
+  margin-top: 6px;
   color: var(--fg);
+}
+/* 卡片里的说明文字：浏览器默认 p 是上下 1em，太散；统一成「上面贴着上一项、下面留一点」 */
+.card p {
+  margin: 0 0 10px;
+}
+.card p:last-child {
+  margin-bottom: 0;
 }
 .row2 {
   display: flex;
-  gap: 10px;
+  align-items: flex-end; /* 「编号 + 用下一个空号」这种组合：底边齐平才不像歪的 */
+  gap: var(--gap);
 }
 .row2 > * {
   flex: 1;
@@ -686,7 +710,7 @@ input.bad {
 }
 /* 新建页刚拍的照片：拍完当场看得见，才知道拍糊没糊 */
 #newShots {
-  margin-top: 8px;
+  margin-top: var(--gap);
 }
 /* 灯箱里的「重拍」：只在看本地未上传的照片时出现，放左下角跟右下角的「删除」分开 */
 .viewer-retake {
@@ -714,7 +738,7 @@ input.bad {
   position: fixed;
   left: 12px;
   right: 12px;
-  bottom: calc(34px + env(safe-area-inset-bottom)); /* 让开底部那条细条 */
+  bottom: calc(38px + env(safe-area-inset-bottom)); /* 让开底部那条细条 */
   z-index: 70;
   padding: 10px 14px;
   border-radius: 10px;
@@ -759,7 +783,7 @@ input.bad {
   display: flex;
   justify-content: flex-start; /* 按钮靠左：右下角是拇指区，容易误碰 */
   align-items: center;
-  padding: 2px 8px calc(2px + env(safe-area-inset-bottom));
+  padding: 3px var(--pad) calc(3px + env(safe-area-inset-bottom));
   background: var(--card);
   border-top: 1px solid var(--line);
   z-index: 6;
