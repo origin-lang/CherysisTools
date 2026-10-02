@@ -46,8 +46,14 @@
       </div>
       <!-- 生效中的条件：每条一个 pill，点 ✕ 撤这一条；末尾「清除全部」一键回到全表 -->
       <div id="activeBar" class="pills"></div>
-      <!-- 筛选展开区：在当前屏内展开，改的时候列表一直在下面，能看着它变 -->
+      <!-- 筛选展开区：手机上在当前屏内展开，改的时候列表一直在下面，能看着它变；
+           宽屏（≥820px）则从右边滑出来（见 style.css 的 body.filterdrawer）。
+           这个标题栏只在宽屏抽屉模式下显示（手机上是内联展开，不需要它） -->
       <div id="filterPanel" class="filterpanel">
+        <div class="panelhead">
+          <span class="ptitle">筛选</span>
+          <button id="btnFilterClose" class="mini" type="button">关闭</button>
+        </div>
         <div id="filterBody"></div>
         <div class="card">
           <label>排序

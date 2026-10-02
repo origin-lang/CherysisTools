@@ -2210,6 +2210,10 @@
     // 宽屏看详情/新建时列表**不关**：面板从右边滑出来，左边那份列表还在
     // （挑下一件、边看边建都不用退出去）
     var keepList = (id === "screen-detail" || id === "screen-new") && isWide();
+    // 筛选抽屉和它们抢同一块地方，不并存
+    if (keepList && state.panelOpen) {
+      setFilterOpen(false);
+    }
     ["screen-list", "screen-detail", "screen-new", "screen-settings"].forEach(function (s) {
       $(s).classList.toggle("show", s === id || (s === "screen-list" && keepList));
     });
@@ -2239,6 +2243,10 @@
       if (document.body.classList.contains("drawer") || state.detail) {
         show($("screen-new").classList.contains("show") ? "screen-new" : "screen-detail");
       }
+      // 筛选：宽→窄要退回"内联展开"，窄→宽要变成右侧抽屉
+      if (state.panelOpen) {
+        document.body.classList.toggle("filterdrawer", isWide());
+      }
     };
     if (mq.addEventListener) {
       mq.addEventListener("change", onChange);
@@ -2247,14 +2255,24 @@
     }
   })();
 
-  /** 开/收筛选面板。抽出来是因为现在有两个入口：顶栏那个按钮，和"点面板外面自动收起" */
+  /**
+   * 开/收筛选面板。三个入口共用：顶栏那个漏斗按钮、"点面板外面自动收起"、抽屉上的「关闭」。
+   *
+   * 宽屏（≥820px）时它也从**右边**滑出来（跟详情/新建一个套路）：列表留在左边，
+   * 改条件时能看着列表实时变；手机仍然是"在当前屏内展开"（那种更合用，见定论 §十二·补）。
+   */
   function setFilterOpen(open) {
     state.panelOpen = open;
     $("filterPanel").classList.toggle("show", open);
     $("btnFilter").classList.toggle("on", open);
+    document.body.classList.toggle("filterdrawer", open && isWide());
     if (open) {
       renderFilter();
       requestImgStats(); // 一打开就把「无图 N / 有图 M」数出来，省得用户自己猜
+      // 宽屏下筛选与详情/新建都占右边那一块，不并存：先把那个收起来
+      if (document.body.classList.contains("drawer")) {
+        show("screen-list");
+      }
     }
   }
 
@@ -2284,6 +2302,10 @@
     // 筛选不再另起一屏：就在列表页里展开，改的时候下面那张表一直看得见
     $("btnFilter").onclick = function () {
       setFilterOpen(!state.panelOpen);
+    };
+    // 宽屏抽屉上的「关闭」（手机上这个标题栏是隐藏的）
+    $("btnFilterClose").onclick = function () {
+      setFilterOpen(false);
     };
     // 点面板外面就收起来：面板一展开会占掉半屏，看完/点完条件想收起来时
     // 不该再要求用户回顶栏点一次那个按钮（手机上拇指够不着）
@@ -2755,8 +2777,13 @@
       if (e.key !== "Escape") {
         return;
       }
-      // 改值的 sheet 开着时 Esc 归它（放弃这次改动），别顺手把抽屉也关了
+      // 改值的 sheet 开着时 Esc 归它（放弃这次改动），别顺手把别的也关了
       if ($("fieldSheet").classList.contains("show")) {
+        return;
+      }
+      // 筛选抽屉 → 详情/新建抽屉（一次只关一层）
+      if (state.panelOpen) {
+        setFilterOpen(false);
         return;
       }
       if (document.body.classList.contains("drawer")) {

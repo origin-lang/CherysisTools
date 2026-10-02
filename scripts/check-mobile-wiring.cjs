@@ -101,6 +101,17 @@ if (jsBreak && cssBreak && jsBreak[1] === cssBreak[1]) {
       fails.push(`style.css 里缺少 "${need}"：抽屉会盖住那一块（分页按钮/状态条/提示浮层）`);
     }
   }
+  // 筛选抽屉（宽屏时也从右边出）同样必须让位，否则分页按钮/状态条会被压住
+  for (const need of [
+    "body.filterdrawer #screen-list",
+    "body.filterdrawer #status",
+    "body.filterdrawer #toast",
+    "body.filterdrawer #filterPanel",
+  ]) {
+    if (!css.includes(need)) {
+      fails.push(`style.css 里缺少 "${need}"：宽屏筛选抽屉会盖住那一块或整屏铺开`);
+    }
+  }
   // 抽屉样式必须**同时**覆盖详情与新建两屏：JS 的 keepList 里两个都有，
   // CSS 少一个就是"列表留在下面、面板整屏盖上去"的半坏界面
   if (!/#screen-detail,\s*#screen-new\s*\{/.test(css)) {

@@ -988,6 +988,40 @@ input.bad {
     flex-direction: column;
     align-items: stretch;
   }
+  /* 筛选也走右边（用户要的）：宽屏下点漏斗 → 从右侧滑出，列表留在左边看着实时变。
+     手机仍然是"在当前屏内展开"，这一整段都在宽屏媒体查询里，碰不到手机。 */
+  body.filterdrawer #screen-list {
+    width: calc(100% - var(--drawer));
+  }
+  body.filterdrawer #status {
+    right: var(--drawer);
+  }
+  body.filterdrawer #toast {
+    right: calc(var(--drawer) + 12px);
+  }
+  body.filterdrawer #filterPanel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: auto;
+    width: var(--drawer);
+    max-height: none; /* 成了整条右侧栏，不再限 52vh */
+    border-left: 1px solid var(--line);
+    border-bottom: 0;
+    box-shadow: -10px 0 26px rgba(0, 0, 0, 0.16);
+    z-index: 40;
+    animation: drawerin 0.16s ease-out;
+    padding-bottom: calc(var(--pad) + env(safe-area-inset-bottom));
+  }
+  /* 抽屉里才需要那一条"筛选 + 关闭" */
+  body.filterdrawer #filterPanel .panelhead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--gap);
+    margin-bottom: 10px;
+  }
 }
 @keyframes drawerin {
   from {
@@ -996,6 +1030,15 @@ input.bad {
   to {
     transform: translateX(0);
   }
+}
+
+/* 筛选面板头上的那一条（标题 + 关闭）：只在宽屏抽屉模式下显示 ——
+   手机是"在当前屏内展开"，顶栏那个漏斗按钮就能收，不需要这一条 */
+.panelhead {
+  display: none;
+}
+.panelhead .ptitle {
+  font-weight: 700;
 }
 
 /* 底部只剩一条 26px 高的细条：原来 12px 字 + 44px 按钮，把分页条顶得只剩半个 */
