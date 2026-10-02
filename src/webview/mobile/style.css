@@ -776,3 +776,41 @@ input.bad {
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+/* ---------- 详情页对不同手机的适配（只动详情页） ----------
+   整站尺寸都是写死的 px，而双指缩放已经关掉了，用户没有手动补偿的余地，
+   所以详情页自己得扛住「小屏塞不下、大屏显空」：
+   ① 封面按屏高的 42% 封顶（1:1 时大屏上会吃掉半屏，表单被推到看不见的地方）；
+   ② 数字字段放大加粗 —— 进价/售价/库存是这一页真正要看的东西，名称之类是次要的；
+   ③ 行距、输入框高度放宽到 48px，手指更好点；
+   ④ 窄屏（<360px）两列改单列：320px 屏上两列各只剩 145px，数字都写不开。
+   只作用于 #screen-detail，列表 / 画册 / 新建页一律不动。 */
+#screen-detail .cover {
+  width: min(100%, 42vh);
+  margin-left: auto;
+  margin-right: auto;
+}
+#screen-detail .card label {
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+#screen-detail .card input,
+#screen-detail .card select {
+  min-height: 48px;
+}
+/* 主角是数字：进价 / 售价 / 库存放大加粗，扫一眼就有数 */
+#screen-detail #fCost,
+#screen-detail #fSale,
+#screen-detail #fStock {
+  font-size: 18px;
+  font-weight: 700;
+}
+#screen-detail #fName {
+  font-size: 16px;
+}
+@media (max-width: 359px) {
+  #screen-detail .row2 {
+    flex-direction: column;
+    gap: 0;
+  }
+}
