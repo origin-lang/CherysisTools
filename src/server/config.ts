@@ -48,7 +48,10 @@ function readConfigFile(fp: string): RawArgs {
     return {};
   }
   try {
-    const j = JSON.parse(fs.readFileSync(fp, "utf-8")) as Record<string, unknown>;
+    // 去掉 BOM：Windows 记事本"另存为 UTF-8"会写 BOM，JSON.parse 会因此直接报错，
+    // 而这个文件里通常有中文路径（z:\测试商品…），用户很可能就是用记事本改的
+    const text = fs.readFileSync(fp, "utf-8").replace(/^\uFEFF/, "");
+    const j = JSON.parse(text) as Record<string, unknown>;
     const out: RawArgs = {};
     for (const [k, v] of Object.entries(j)) {
       if (v !== undefined && v !== null) {
