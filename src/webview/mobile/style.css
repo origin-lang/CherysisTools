@@ -111,7 +111,9 @@ button.icon {
   padding: 8px 10px;
 }
 button.mini {
-  min-height: 38px;
+  /* 跟主按钮同高（只有底部细条里的「日志」是例外，那个见 .logbtn）。
+     原先 38px 混在 44px 的按钮里显得矮一截 */
+  min-height: var(--tap);
   font-size: 13px;
   white-space: nowrap;
 }
@@ -372,8 +374,26 @@ select {
   outline-offset: -2px;
   border-radius: 4px;
 }
-.inlinehint {
-  margin: 0 0 8px;
+/* 列表页：一排里的按钮必须一样高。之前 seg 36 / scope 38 / 分页 mini 38 / 顶栏按钮 44，
+   混在一排里看着就是「一个大一个小」。统一到 --tap(44)，跟输入框同高。
+   - seg 的 1px 边框在外层容器上，里头的 button 少 2px 才和旁边齐平
+   - 跳页下拉（.pagejump）要收回 width:auto，否则基础 select 的 width:100% 会把它拉爆
+   - 条件 pill 不在这里：它是「标签」不是按钮，故意小一号 */
+#screen-list .seg button,
+#screen-list .bar button,
+#screen-list .scope,
+#screen-list .pager button,
+#screen-list .pager select,
+#screen-list .chip {
+  min-height: var(--tap);
+}
+#screen-list .seg button {
+  min-height: calc(var(--tap) - 2px);
+}
+#screen-list .pager select {
+  width: auto;
+  flex: none;
+  padding: 6px 8px;
 }
 
 /* 「搜哪一列」下拉：不跟着输入框撑满 */

@@ -669,7 +669,6 @@
       // 真表格：进价 / 售价 / 等级 / 库存 / 状态各占一列（手机上横向可滑，不再挤成一行）
       $("content").innerHTML =
         warn +
-        '<p class="muted small inlinehint">点一下<b>选中</b>这一格，再点一下才弹输入框；<b>状态</b>点一下直接切；点<b>编号</b>进详情看图、传图。顶部 pill 是正在生效的筛选，点 ✕ 撤一条。</p>' +
         '<div class="tblwrap"><table class="tbl"><thead><tr>' +
         "<th>编号</th><th>名称</th><th>进价</th><th>售价</th><th>等级</th><th>库存</th><th>状态</th>" +
         "</tr></thead><tbody>" +
@@ -1292,16 +1291,9 @@
       })
       .join("");
     sel.innerHTML = opts + '<option value="0">自定义（售价手动定）</option>';
-    // 默认落在第一个真实等级上：停在「自定义」意味着售价不按规则算，那是少数情况，
-    // 而新建时九成是要按规则定价的（之前默认停在自定义，等于每次都得手动改一次）
-    var first = null;
-    for (var i = 0; i < state.rules.length; i++) {
-      if (num(state.rules[i].grade) > 0) {
-        first = state.rules[i].grade;
-        break;
-      }
-    }
-    sel.value = String(first === null ? 0 : first);
+    // 默认「自定义」：售价就按手填的走，不会被规则悄悄改掉。新建时多数是已经知道卖多少，
+    // 让它按规则算反而每次都要确认「算出来的对不对」；要用规则定价时自己选等级即可。
+    sel.value = "0";
     updateRuleHint();
   }
 
