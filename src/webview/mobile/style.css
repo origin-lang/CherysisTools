@@ -717,6 +717,21 @@ input.bad {
 .toast.bad {
   background: rgba(214, 69, 69, 0.94);
 }
+/* 双指缩放整站关掉（Chrome/安卓只吃 CSS 这一套，JS 的 preventDefault 拦不住合成器）：
+   所有滚动区都只给 pan-*，不含 pinch-zoom。
+   - 列表内容区：表格要横向滑，给 pan-x pan-y（横向滚动不被禁）
+   - 详情 / 新建 / 设置 / 大图：只上下滚，给 pan-y
+   iOS Safari 不吃 touch-action，那边由 app.js 在 document 上拦 gesturestart。 */
+#content {
+  touch-action: pan-x pan-y;
+}
+#screen-detail main.content,
+#screen-new main.content,
+#screen-settings main.content,
+.viewer {
+  touch-action: pan-y;
+}
+
 /* 底部只剩一条 26px 高的细条：原来 12px 字 + 44px 按钮，把分页条顶得只剩半个 */
 .status {
   position: fixed;

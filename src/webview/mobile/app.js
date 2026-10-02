@@ -1876,10 +1876,11 @@
         pinch = null;
       }
     });
-    // iOS Safari 的双指缩放走的是 gesture 事件（不听 touchmove 的 preventDefault），单独拦掉。
-    // 画册同样拦：这是 iOS 上唯一能挡住捏合的办法（touch-action 在 Safari 上不管用）
+    // iOS Safari 的双指缩放走的是 gesture 事件（不听 touchmove 的 preventDefault、也不听
+    // touch-action），只能靠这里拦。挂在 document 上：详情页、新建页、设置页、大图都不给捏，
+    // 全站一致 —— 只有表格用自己的缩放（且是改 --zoom，不是整页放大）。
     ["gesturestart", "gesturechange", "gestureend"].forEach(function (n) {
-      contentEl.addEventListener(
+      document.addEventListener(
         n,
         function (e) {
           if (!pageZoomed()) {
