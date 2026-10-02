@@ -32,6 +32,11 @@ export interface ToolDefinition {
   handleMessage(msg: any, ctx: ToolContext): Promise<void> | void;
   /** 额外允许 webview 加载资源的本地目录（如商品图片目录），面板创建时收集 */
   resourceRoots?(storageDir: string): string[];
+  /**
+   * 「别人改了库」的巡检器：由 registry 在面板打开/切换工具时起来、关面板时停掉。
+   * 只有需要盯自己那张库的工具才实现它（目前只有 shopTool）。
+   */
+  watchExternalChanges?(storageDir: string, seconds: number, onChange: () => void): () => void;
 }
 
 export interface ToolMeta {
@@ -42,6 +47,7 @@ export interface ToolMeta {
   fragmentPath?: string;
   clientScriptPath?: string | string[];
   resourceRoots?: (storageDir: string) => string[];
+  watchExternalChanges?: (storageDir: string, seconds: number, onChange: () => void) => () => void;
 }
 
 class ToolRegistry {
@@ -52,6 +58,8 @@ class ToolRegistry {
   private lastToolName = "home";
   private extensionUri: vscode.Uri | undefined;
   private panelContext: vscode.ExtensionContext | undefined;
+  /** 当前工具的「别人改了库」巡检器停止函数；换工具/关面板时必须停掉（不占着定时器） */
+  private stopChangeWatch: (() => void) | undefined;
 
   /** 侧边栏树视图等外部入口要读取的全部工具元信息 */
   get toolList(): ReadonlyArray<ToolMeta> {
@@ -67,7 +75,50 @@ class ToolRegistry {
       fragmentPath: tool.fragmentPath,
       clientScriptPath: tool.clientScriptPath,
       resourceRoots: tool.resourceRoots,
+      watchExternalChanges: tool.watchExternalChanges,
     });
+  }
+
+  /**
+   * 起/停「别人改了库」的巡检器：只给当前显示的这个工具装一个。
+   *
+   * 间隔来自 `cherysis.autoRefreshSeconds`（填 0 = 关，回到手动点 🔄）。
+   * 回调只往面板发一条 `externalChanged`，**由面板自己决定要不要立刻重读** ——
+   * 它最清楚自己是不是正在格子里输入；后台不替用户做这个决定。
+   */
+  private syncChangeWatch(meta?: ToolMeta) {
+    if (this.stopChangeWatch) {
+      this.stopChangeWatch();
+      this.stopChangeWatch = undefined;
+    }
+    const panel = this.toolPanel;
+    if (!panel || !meta || !meta.watchExternalChanges || !this.panelContext) {
+      return;
+    }
+    const seconds = vscode.workspace
+      .getConfiguration("cherysis")
+      .get<number>("autoRefreshSeconds", 3);
+    if (!(seconds > 0)) {
+      panel.webview.postMessage({
+        type: "log",
+        text: "ℹ️自动刷新已关闭（cherysis.autoRefreshSeconds = 0）：别人改了数据要自己点 🔄",
+      });
+      return;
+    }
+    try {
+      this.stopChangeWatch = meta.watchExternalChanges(
+        resolveStorageDir(this.panelContext),
+        seconds,
+        () => panel.webview.postMessage({ type: "externalChanged" }),
+      );
+      // 说一声：这条日志是"有没有在盯"的唯一凭据，没有它出问题只能靠猜
+      panel.webview.postMessage({
+        type: "log",
+        text: `👀自动刷新已开启：每 ${seconds} 秒检查一次「别人有没有改库」`,
+      });
+    } catch {
+      this.stopChangeWatch = undefined; // 巡检器起不来不该连累面板本身
+    }
   }
 
   private resolveSrc(rel?: string): vscode.Uri | undefined {
@@ -107,6 +158,8 @@ class ToolRegistry {
           }
         : undefined,
     });
+    // 换工具了：巡检器跟着换（只有当前工具需要盯自己的库）
+    this.syncChangeWatch(meta);
   }
 
   /** 侧边栏树视图/命令入口：打开面板并切换到指定工具；面板不存在时等 webview 就绪后自动恢复 */
@@ -240,6 +293,8 @@ class ToolRegistry {
     });
 
     panel.onDidDispose(() => {
+      this.stopChangeWatch?.();
+      this.stopChangeWatch = undefined;
       this.toolPanel = undefined;
     });
   }

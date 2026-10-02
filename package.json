@@ -70,6 +70,13 @@
           "default": "",
           "description": "数据存储目录（商品/采购/订单等库文件存放位置）。留空则使用 VS Code 全局存储目录（%APPDATA%\\Code\\User\\globalStorage\\Faye.Cherysis）。多人共享同一份数据时，所有人的这个值要指向同一个共享目录（如 Z:\\CherysisData）。推荐在工具面板「规则与设置 → 数据库备份/恢复」那一行点「📁 更换…」，或执行命令「Cherysis:设置商品数据库目录」来选文件夹（VS Code 设置界面本身没有文件夹选择器）；也可以直接在这里填写绝对路径。改完需重开工具面板。"
         },
+        "cherysis.autoRefreshSeconds": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "scope": "window",
+          "description": "商品面板每隔多少秒检查一次「别人有没有改库」（别的电脑的插件 / 网页版），有变化就自动重读。填 0 = 关闭自动刷新，别人改了要自己点 🔄。改成 0 或调大间隔可以减轻共享盘上的读取压力。"
+        },
         "cherysis.shopTool.imageDir": {
           "type": "string",
           "default": "",

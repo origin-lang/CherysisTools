@@ -807,8 +807,70 @@ function scheduleProductsRerender() {
   }, 300);
 }
 
+/**
+ * 焦点是不是停在「有未保存文本」的控件上。
+ *
+ * ⚠️ **千万别把 `<select>` 算进去**：这个仓库里焦点会一直赖在下拉框上（等级、筛选那一堆），
+ * 把 select 算成"正在编辑"，自动刷新就会被**永远**按在等待里 —— 现象是"别人改了数据不刷新，
+ * 必须手点 🔄"，人会以为自动刷新根本没做。下拉框没有"没保存的文本"，重读不会丢东西。
+ */
+function isTypingText() {
+  const el = document.activeElement;
+  if (!el) {
+    return false;
+  }
+  if (el.isContentEditable === true) {
+    return true;
+  }
+  const tag = (el.tagName || "").toLowerCase();
+  if (tag === "textarea") {
+    return true;
+  }
+  if (tag !== "input") {
+    return false;
+  }
+  const type = (el.getAttribute("type") || "text").toLowerCase();
+  return ["text", "number", "search", "tel", "url", "password", "email"].indexOf(type) >= 0;
+}
+
+function onFocusOutOnce(fn) {
+  document.addEventListener("focusout", fn, { once: true });
+}
+
+let externalRefreshPending = false;
+let externalRefreshWaiting = false;
+
+function runExternalRefresh() {
+  if (!externalRefreshPending) {
+    return;
+  }
+  if (isTypingText()) {
+    // 正在打字：先不重读（硬刷会把填了一半的表单冲掉），但**要让人知道有事在等** ——
+    // 否则用户看到的就是"别人改了没反应"
+    if (!externalRefreshWaiting) {
+      externalRefreshWaiting = true;
+      toast("🔄 有更新：你正在输入，离开输入框后自动刷新");
+      onFocusOutOnce(function () {
+        externalRefreshWaiting = false;
+        runExternalRefresh();
+      });
+    }
+    return;
+  }
+  externalRefreshPending = false;
+  toast("🔄 别人改了数据，已自动刷新");
+  post({ type: "loadAll" });
+}
+
 function onMessage(msg) {
   switch (msg.type) {
+    case "externalChanged": {
+      // 扩展巡检 data_version 发现「别的连接提交过」（别的电脑的插件 / 网页版服务端）。
+      // 自己写不会走到这里：data_version 的语义就是"只有别人提交过才变"。
+      externalRefreshPending = true;
+      runExternalRefresh();
+      break;
+    }
     case "productsLoaded": {
       state.products = msg.products || [];
       state.settings.stock_alert = msg.stockAlert || 0;

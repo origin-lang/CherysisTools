@@ -391,6 +391,53 @@ export function resetShopUndoRedo(): void {
   redoStack.length = 0;
 }
 
+// 「别人改了库」的巡检器状态：只有一个（面板用的就是当前这一个），所以放文件级
+let watchTimer: NodeJS.Timeout | undefined;
+let watchLastDv = -1;
+
+/**
+ * 定时检查「别的连接有没有提交过」，有就回调（用于面板自动刷新）。
+ *
+ * 判据用 SQLite 的 `PRAGMA data_version`：它的语义是**别的连接提交过才变**，
+ * 所以自己写的那些操作不会触发误刷新 —— 这一点很关键，否则每次自己保存都会白刷一次。
+ * "别人" = 另一台电脑的插件，或者网页版服务端那个连接。
+ *
+ * 第一枪只取基准不回调：面板打开之前发生的改动不算"新变化"，否则一开面板就白刷一次。
+ */
+export function watchExternalChanges(
+  storageDir: string,
+  seconds: number,
+  onChange: () => void,
+): () => void {
+  const period = Math.max(1, Math.floor(seconds)) * 1000;
+  watchLastDv = -1;
+  const tick = (): void => {
+    let dv = -1;
+    try {
+      initDB(storageDir);
+      dv = getDB().dataVersion();
+    } catch {
+      return; // 库还没就绪 / 暂时读不到：这一轮跳过，下一轮再来，不打扰用户
+    }
+    if (watchLastDv < 0) {
+      watchLastDv = dv; // 第一枪只取基准
+      return;
+    }
+    if (dv !== watchLastDv) {
+      watchLastDv = dv;
+      onChange();
+    }
+  };
+  tick();
+  watchTimer = setInterval(tick, period);
+  return () => {
+    if (watchTimer) {
+      clearInterval(watchTimer);
+      watchTimer = undefined;
+    }
+  };
+}
+
 export const shopTool: ToolDefinition = {
   toolName: "shopTool",
   category: "system",
@@ -404,6 +451,8 @@ export const shopTool: ToolDefinition = {
     "tools/shopTool/client-live.js",
     "tools/shopTool/client-main.js",
   ],
+
+  watchExternalChanges,
 
   resourceRoots(storageDir) {
     try {
