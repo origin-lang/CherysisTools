@@ -445,22 +445,39 @@ select {
 #screen-list .seg button {
   min-height: calc(var(--tap) - 2px);
 }
-/* 顶栏那一排「画册/列表 筛选 ⚙ ＋新建」：手机上 5 个挤一行，宽度比高度更紧张。
-   高度仍是 --tap(44px)（手指点得准），只收左右内边距和最小宽度，行间距也从 10 收到 6。
-   44px 的最小宽度对带字的按钮本来就多余 —— 那点宽度靠 padding 给，够点。 */
+/* 顶栏那一排「画册/列表 筛选 ⚙ ＋新建」：要**扁一点、宽一点** ——
+   上下别占那么多（44 → 36，顶栏整体从 ~64px 收到 ~48px，列表能多露出一行），
+   左右给足内边距（8 → 12，图标按钮最小宽 38 → 46），手指横着点更准、一行也更好排。
+   注意这不是推翻定论 §十二·补 第 8 条"列表页按钮统一 44px"：那条讲的是**同一排里别混高度**
+   （曾经 36/38/44 混着显得一大一小）。这一排现在统一 36，分页条/筛选面板那些仍然是 44。
+   手机上如果嫌挤：可以把「筛选」那两个字去掉只留漏斗，或再把 gap 收到 2px（一句话的事）。 */
 #screen-list .bar {
-  gap: 6px;
-}
-#screen-list .bar button {
+  gap: 4px;
+  padding-top: 6px;
+  padding-bottom: 6px;
   padding-left: 8px;
   padding-right: 8px;
 }
-#screen-list .bar button.icon {
-  min-width: 38px;
+#screen-list .bar button {
+  min-height: 36px;
+  padding: 0 12px;
 }
+/* 只有一个图标的那个（⚙）：左右撑开一点，不再是个小方块 */
+#screen-list .bar button.icon {
+  min-width: 46px;
+}
+/* seg（画册/列表）外层自带 1px 边框，里头的按钮少 2px 才跟旁边齐平 */
 #screen-list .seg button {
-  padding-left: 9px;
-  padding-right: 9px;
+  min-height: 34px;
+  padding: 0 12px;
+}
+/* 窄机（≤379px，360 那一档）：按钮加宽之后顶栏就没地方放标题了。
+   列表页那个标题（🏪 商品）本来也没多少信息量 —— 让位给按钮，
+   总比被省略号截成"🏪…"强。≥380px（主流机型 390/412）照常显示。 */
+@media (max-width: 379px) {
+  #screen-list .bar .title {
+    display: none;
+  }
 }
 #screen-list .pager select {
   width: auto;
