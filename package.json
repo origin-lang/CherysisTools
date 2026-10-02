@@ -97,13 +97,14 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "pnpm run compile && pnpm run check:parity && pnpm run check:server",
+    "vscode:prepublish": "pnpm run compile && pnpm run check:parity && pnpm run check:server && pnpm run check:mobile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "pnpm run compile && pnpm run lint && pnpm run check:parity && pnpm run check:server",
+    "pretest": "pnpm run compile && pnpm run lint && pnpm run check:parity && pnpm run check:server && pnpm run check:mobile",
     "lint": "eslint src",
     "check:parity": "node scripts/check-shopTool-parity.cjs",
     "check:server": "node scripts/check-server-units.cjs",
+    "check:mobile": "node scripts/check-mobile-wiring.cjs",
     "test": "vscode-test",
     "package": "vsce-pnpm package",
     "serve": "node out/server/index.js"

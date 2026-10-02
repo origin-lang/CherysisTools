@@ -815,6 +815,38 @@ input.bad {
   line-height: 1.4;
   border-radius: 6px;
 }
+/* 两个按钮之间留一点缝（原来只有一个按钮，没这个需要） */
+.status .logbtn + .logbtn {
+  margin-left: 6px;
+}
+/* 「有改动」按钮：跟「日志」同一个尺寸，但描边用品牌绿 —— 一眼能看出它是要按的 */
+.status #btnStale {
+  color: var(--brand);
+  border-color: var(--brand);
+}
+/* 实时连接指示灯：靠右、纯展示，不占触控目标（底部条右侧就是拇指常驻区，不能再放能按的东西）。
+   三档——绿=连着、灰=重连中、红=断了。 */
+.status .conn {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.status .conn i {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.status .conn.on i {
+  background: var(--brand);
+}
+.status .conn.down i {
+  background: var(--danger);
+}
 .logpanel {
   display: none;
   position: fixed;

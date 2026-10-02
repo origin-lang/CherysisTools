@@ -191,10 +191,23 @@
       <button id="viewerRetake" class="viewer-retake" style="display: none">🔄 重拍</button>
     </div>
 
-    <!-- 底部条：只剩一个「日志」入口。结果一律走上面的提示浮层，这里不再滚动日志文字
-         （挡翻页、也没人看）；按钮贴左边，避开右下角（右手持机时那是拇指常驻区） -->
+    <!-- 底部条：左边「日志」入口 + 「有改动」时冒出来的刷新按钮，右边一个实时连接指示灯。
+         整条不可点（会挡翻页），只有这两个明确的按钮能按；指示灯是纯展示，不占触控目标。
+         「有改动」用 .logbtn 的尺寸（22px）——底部细条是那条约 44px 规则的唯一例外。 -->
     <div id="status" class="status">
       <button id="btnLog" class="logbtn" type="button">日志</button>
+      <button
+        id="btnStale"
+        class="logbtn"
+        type="button"
+        style="display: none"
+        title="别人（或电脑版）改过数据了，点一下重新读一遍"
+      >
+        🔄 有改动
+      </button>
+      <span id="conn" class="conn" title="与服务的实时连接">
+        <i></i><span id="connText">连接中…</span>
+      </span>
     </div>
     <!-- 给用户看的提示（日志是排查用的，不该要求人人去读） -->
     <div id="toast" class="toast"></div>

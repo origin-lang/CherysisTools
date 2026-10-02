@@ -3,9 +3,10 @@ import * as http from "http";
 import * as path from "path";
 import { loadConfig, lanUrls, type ServerConfig } from "./config.js";
 import { createHttpHost, makeRequestSink, PrefsStore } from "./httpHost.js";
-import { EventHub, type SseSink } from "./events.js";
-import { shopTool } from "../tools/shopTool/index.js";
-import { initDB, closeDB, getDB } from "../tools/shopTool/db.js";
+import { EventHub, shouldAnnounceChange, type SseSink } from "./events.js";
+import { SerialQueue } from "./serialQueue.js";
+import { shopTool, isWriteAction } from "../tools/shopTool/index.js";
+import { initDB, closeDB, getDB, getDBPath } from "../tools/shopTool/db.js";
 import { effectiveImageDir, initImageDirConfig, resolveImageDir } from "../tools/shopTool/imageDir.js";
 import { listImageFiles, sharedThumbRoot, thumbToCachedBase64 } from "../tools/shopTool/images.js";
 
@@ -32,6 +33,20 @@ const MIME: Record<string, string> = {
   ".webp": "image/webp",
   ".bmp": "image/bmp",
   ".gif": "image/gif",
+};
+
+/**
+ * 一次 `/api/invoke` 的结果。
+ * `posts`/`logs` 是本次请求期间的回推与日志（前端照旧逐条喂给 onMessage）；
+ * `rev` 是库的版本号 —— 现在前端只把它记下来备用，留着做"字段级冲突拦截"那一步
+ * （本期明确不做，见 docs/网页版方案-设计.md §M2 的取舍）。
+ */
+type InvokeResult = {
+  ok: boolean;
+  posts: any[];
+  logs: string[];
+  error?: string;
+  rev: { seq: number; at: string };
 };
 
 /** 单段名字（编号/文件名）：不许路径分隔符、不许以点开头 —— 与服务端图片路由的第一道校验 */
@@ -94,9 +109,63 @@ async function main(): Promise<void> {
   // 实时推送中枢（SSE /api/events）：整个进程一个，后台任务也往里投
   const hub = new EventHub();
 
+  // 写请求排队：同一时刻只有一个写进 handleMessage。理由见 src/server/serialQueue.ts
+  const writeLock = new SerialQueue("写请求");
+
+  /** 库的版本号：每次**真的写成功**（库文件指纹变了）才 +1，随响应和 changed 事件下发 */
+  const rev = { seq: 0, at: "" };
+
+  /**
+   * 库文件指纹：`大小:毫秒时间戳`。
+   * 用它判断"这次写到底动没动库"，比看 handler 有没有报错准 —— handleMessage 把业务错误
+   * 吞在内部（只记日志），抛不抛异常跟写没写成功是两回事。
+   */
+  const dbFingerprint = (): string => {
+    try {
+      const st = fs.statSync(getDBPath());
+      return `${st.size}:${Math.round(st.mtimeMs)}`;
+    } catch {
+      return "";
+    }
+  };
+
+  /**
+   * 告诉所有人"数据有更新了"，让他们把「🔄 有改动」亮起来。
+   * `by` 是发起人：中枢按它跳过发起人自己（他手上已经是最新的了）。
+   * `by` 为空串 = 服务端自己发现的（电脑版直接写了同一个库，见下面的巡检）。
+   */
+  const publishChanged = (by: string): void => {
+    hub.publish({ event: "changed", data: { seq: rev.seq, at: rev.at, by }, origin: by });
+  };
+
   /** 请求带来的 clientId（浏览器 localStorage 里生成的一个随机串）：用来做「跳过自己」的去重 */
   const clientOf = (req: http.IncomingMessage): string =>
     String((req.headers["x-cherysis-client"] as string) || "").slice(0, 64);
+
+  /**
+   * 别人**不经过这个服务**改了库（电脑版 VS Code 直接写同一个 shop.db）时，服务端收不到任何
+   * 消息，只能自己巡检。用 SQLite 的 `data_version`：它的语义是"**别的连接**提交过就变"，
+   * 自己写的不会动自己 —— 正好就是我们要的"外面有人改过"。
+   *
+   * 3 秒一次、每次一个 pragma（本地读，几微秒）。撞上别人的排他锁会抛 SQLITE_BUSY，
+   * 那就跳过这一轮（下一轮再看），不能把定时器弄挂。
+   */
+  let lastDv = 0;
+  const readDataVersion = (): number => {
+    try {
+      return getDB().dataVersion();
+    } catch {
+      return lastDv;
+    }
+  };
+  lastDv = readDataVersion();
+  const dvTimer = setInterval(() => {
+    const dv = readDataVersion();
+    if (dv !== lastDv) {
+      lastDv = dv;
+      publishChanged(""); // by 为空 = 服务端自己发现的，广播给所有人（含发起不了的那种"别人"）
+    }
+  }, 3000);
 
   const resolveImgDir = (): string =>
     effectiveImageDir(resolveImageDir(String(getDB().getSetting("image_dir") || "")));
@@ -109,21 +178,43 @@ async function main(): Promise<void> {
    * 请求回完立刻 `detached = true`：后台任务后面那些日志只走推送，
    * 否则它们会一直往一个没人再读的数组里堆。
    */
-  async function invoke(
-    msg: any,
-    clientId: string,
-  ): Promise<{ ok: boolean; posts: any[]; logs: string[]; error?: string }> {
-    const sink = makeRequestSink(clientId, (e) => hub.publish(e));
-    const host = createHttpHost(cfg, sink, prefs);
-    let out: { ok: boolean; posts: any[]; logs: string[]; error?: string };
-    try {
-      await shopTool.handleMessage(msg, host);
-      out = { ok: true, posts: sink.posts, logs: sink.logs };
-    } catch (err: any) {
-      out = { ok: false, posts: sink.posts, logs: sink.logs, error: String(err?.message ?? err) };
-    }
-    sink.detached = true;
-    return out;
+  async function invoke(msg: any, clientId: string): Promise<InvokeResult> {
+    const type = String(msg?.type ?? "");
+    // 「哪些消息算写」这份清单只有一处（shopTool/index.ts 的 WRITE_ACTIONS，只读模式用的也是它），
+    // 这里只是照着它决定要不要排队 —— 不复制清单，免得两处对不上。
+    const isWrite = isWriteAction(type);
+    const run = async (): Promise<InvokeResult> => {
+      const before = isWrite ? dbFingerprint() : "";
+      const sink = makeRequestSink(clientId, (e) => hub.publish(e));
+      const host = createHttpHost(cfg, sink, prefs);
+      let out: InvokeResult;
+      try {
+        await shopTool.handleMessage(msg, host);
+        out = { ok: true, posts: sink.posts, logs: sink.logs, rev: { seq: rev.seq, at: rev.at } };
+      } catch (err: any) {
+        out = {
+          ok: false,
+          posts: sink.posts,
+          logs: sink.logs,
+          error: String(err?.message ?? err),
+          rev: { seq: rev.seq, at: rev.at },
+        };
+      }
+      sink.detached = true;
+
+      if (isWrite && dbFingerprint() !== before) {
+        rev.seq++;
+        rev.at = new Date().toISOString();
+        // 别人要不要被提醒，只看"这次写有没有顺手回推"：理由写在 shouldAnnounceChange 上
+        if (shouldAnnounceChange(true, sink.posts.length)) {
+          publishChanged(clientId);
+        }
+      }
+      out.rev = { seq: rev.seq, at: rev.at };
+      return out;
+    };
+    // 写请求排队（并发=1）：两个人同时保存时不再交错着进 handleMessage
+    return isWrite ? writeLock.run(run) : run();
   }
 
   /**
@@ -277,6 +368,12 @@ async function main(): Promise<void> {
           tokenRequired: !!cfg.token,
           // 连着的实时连接数：排查「手机到底连上没有」（0 = 一个都没连，先看手机端报什么错）
           eventClients: hub.clientCount,
+          // 库的版本号 + 写队列深度：排查「是不是有人在排队 / 是不是别人刚写过」
+          rev: { seq: rev.seq, at: rev.at },
+          writeQueue: writeLock.depth,
+          // 巡检看到的 SQLite data_version：别人（电脑版）直接写同一个库时它会变。
+          // 排查「外面改了但手机没提示」时先看这个：它不动 = 巡检压根没看见变化。
+          dataVersion: lastDv,
         });
         return;
       }
@@ -351,7 +448,8 @@ async function main(): Promise<void> {
   });
 
   const bye = (): void => {
-    hub.closeAll(); // 先把 SSE 连接收干净：不然手机要一直等到超时才发现服务停了
+    clearInterval(dvTimer); // 巡检定时器先停，别在关库之后再碰库
+    hub.closeAll(); // 再把 SSE 连接收干净：不然手机要一直等到超时才发现服务停了
     try {
       closeDB();
     } catch {

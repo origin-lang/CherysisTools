@@ -41,6 +41,24 @@ export type SseFrame = {
 const DEFAULT_KEEP = 200;
 
 /**
+ * 这次写完了，该不该给所有人发一条 `changed`（让界面把「🔄 有改动」亮起来）？
+ *
+ * 规则只有一句：**看这次写有没有顺手回推给别人**。
+ * - 有（`productsDelta` / `productsLoaded` 这类）→ 别人那边靠这条回推已经自动同步了，
+ *   再发 changed 只会让人没事就看到「有改动」，久了就没人信那个角标了；
+ * - 没有 → 别人毫无知觉，必须提醒，否则他会拿着一份过期的数据继续改。
+ *
+ * 而"到底写进库没有"由库文件指纹判定（见 index.ts 的 dbFingerprint）：handler 内部把
+ * 业务错误吞掉只记日志，"没抛异常"和"写了"是两回事 —— 比如改了不存在的商品。
+ *
+ * 单独拎出来是因为这段判断**测不到就别扭**：真机上要凑出"写成功且一条回推都没有"的场景
+ * 得翻遍所有 handler，而它错了的后果（悄悄不提示）又几乎不可能被发现。
+ */
+export function shouldAnnounceChange(wrote: boolean, postCount: number): boolean {
+  return wrote && postCount === 0;
+}
+
+/**
  * 按 SSE 线格式编帧。
  * `data:` 是**按行**的协议：JSON 里带换行的字符串必须一行一个 `data:`，
  * 否则浏览器按第一个换行截断，前端拿到的就是半个 JSON。

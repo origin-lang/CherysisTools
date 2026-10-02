@@ -5,6 +5,7 @@
   "use strict";
 
   var TOKEN_KEY = "cherysis_token";
+  var CLIENT_KEY = "cherysis_client"; // 这台设备的随机身份，见下面「与后端的通道」里的 clientId
   var state = {
     products: [],
     rules: [],
@@ -153,13 +154,40 @@
     }
   })();
 
+  /**
+   * 这台设备的身份：存在 localStorage 里，一次生成、一直用。
+   *
+   * 干什么用：实时推送是"广播给所有连着的页面"的，而我自己那次操作的结果已经随
+   * `/api/invoke` 的响应回来了 —— 服务端按这个身份把我自己发的事件跳过，避免同一件事
+   * 被应用两遍（比如刚改完的售价又被广播回来覆盖一次正在编辑的格子）。
+   *
+   * 隐私模式写不了 localStorage：那就每次算个新的 —— 代价只是"自己发的事件也会收到一遍"，
+   * 而 handlePost 本来就是幂等的（同一个商品整条覆盖），不会坏。
+   */
+  var clientId = (function () {
+    var v = "";
+    try {
+      v = localStorage.getItem(CLIENT_KEY) || "";
+      if (!v) {
+        v = "c" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+        localStorage.setItem(CLIENT_KEY, v);
+      }
+    } catch (e) {
+      v = "c" + Math.random().toString(36).slice(2, 10);
+    }
+    return v;
+  })();
+
   /** 一条消息 = 一次 POST；回包里的 posts 按序喂给 handlePost，logs 进底部状态条 */
   function invoke(type, payload) {
     var msg = Object.assign({ type: type }, payload || {});
     return fetch("/api/invoke", {
       method: "POST",
       headers: Object.assign(
-        { "Content-Type": "application/json" },
+        {
+          "Content-Type": "application/json",
+          "x-cherysis-client": clientId,
+        },
         token ? { "x-cherysis-token": token } : {},
       ),
       body: JSON.stringify(msg),
@@ -207,6 +235,103 @@
     return u;
   }
 
+  // ---------- 实时推送（SSE，设计稿 §4.2） ----------
+  // 为什么要有它：`/api/invoke` 是"一问一答"。别人（或电脑版）改了数据、或者服务端那边
+  // 有个要跑几分钟的后台任务在报进度，这些事都不会出现在**我这次请求**的响应里。
+  //
+  // 这里只做"接线"，一行业务判断都不加：
+  //   post   → 直接喂给**已有的** handlePost（和响应里那些 posts 走同一条路，所以零改动）
+  //   log    → 进日志区（排查时才看）
+  //   changed→ 别人改过数据了：冒一个「🔄 有改动」按钮，不自动刷新（正在填表时被冲掉更糟）
+  //   reset  → 断线太久、中间那段补不齐了：整表重读一次，免得拿着一份缺一段的数据继续用
+  //
+  // 断线重连**不用自己写**：EventSource 自带重试，而且重连时会带 Last-Event-ID，
+  // 服务端按环形缓冲把断点之后的事件补发过来。所以这里只负责把状态显示出来。
+  var es = null;
+  var stale = false; // 「别人改过」角标：亮着就一直亮，直到用户自己重读一遍
+
+  /** 底部那盏灯：on=连着、""=重连中、down=断了 */
+  function setConn(kind) {
+    var el = $("conn");
+    if (!el) {
+      return;
+    }
+    el.className = "conn" + (kind ? " " + kind : "");
+    var t = $("connText");
+    if (t) {
+      t.textContent = kind === "on" ? "已连接" : kind === "down" ? "已断开" : "重连中…";
+    }
+  }
+
+  /** 有改动：只亮按钮，不动数据（用户正在填的那一格不能被别人的广播冲掉） */
+  function markStale() {
+    if (stale) {
+      return;
+    }
+    stale = true;
+    var b = $("btnStale");
+    if (b) {
+      b.style.display = "";
+    }
+  }
+
+  /** 用户点了「🔄 有改动」（或自己点了别处的重读）→ 角标收起来 */
+  function clearStale() {
+    stale = false;
+    var b = $("btnStale");
+    if (b) {
+      b.style.display = "none";
+    }
+  }
+
+  function connectEvents() {
+    if (typeof EventSource === "undefined") {
+      // 老浏览器：退回"手动刷新"那套，功能不少，只是别人改了不会提示
+      setConn("");
+      pushLog("ℹ️这个浏览器不支持实时推送：别人改了数据，点「🔄 重新从数据库读一遍」");
+      return;
+    }
+    var url =
+      "/api/events?client=" +
+      encodeURIComponent(clientId) +
+      (token ? "&token=" + encodeURIComponent(token) : "");
+    es = new EventSource(url);
+    es.addEventListener("open", function () {
+      setConn("on");
+    });
+    es.addEventListener("error", function () {
+      // 断线（EventSource 自己会重连）；它彻底放弃时 readyState 是 CLOSED，
+      // 那种情况基本只有两种：服务停了、token 不对。
+      var dead = es && es.readyState === 2;
+      setConn(dead ? "down" : "");
+      if (dead) {
+        pushLog(
+          "❌实时推送连不上了（服务停了？地址里的 token 不对？）。别人改了数据不会自动提示，" +
+            "点「🔄 重新从数据库读一遍」手动拿最新。",
+        );
+      }
+    });
+    es.addEventListener("post", function (e) {
+      var m = null;
+      try {
+        m = JSON.parse(e.data);
+      } catch (err) {
+        return; // 半截 JSON：丢掉这一条，不值得把页面弄崩
+      }
+      handlePost(m);
+    });
+    es.addEventListener("log", function (e) {
+      pushLog(e.data);
+    });
+    es.addEventListener("changed", function () {
+      markStale();
+    });
+    es.addEventListener("reset", function () {
+      pushLog("ℹ️断线太久，中间的变化补不齐了，重新整表读一遍");
+      invoke("loadAll");
+    });
+  }
+
   // ---------- 收到的消息 ----------
   function handlePost(m) {
     if (!m || !m.type) {
@@ -218,6 +343,9 @@
       renderList();
       resyncDetailPos(); // 正在看详情时，翻页按钮的位置和边界要跟着新数据重算
       fillCategoryList();
+      // 手里已经是全表最新的一份了，「有改动」角标就该收起来。
+      // 不管是"我自己点的重读"还是"别人重读时广播给我的" —— 两种情况数据都新了。
+      clearStale();
     } else if (m.type === "productsDelta") {
       // 后端改完一条只回传这一条（不是整表），详情页失焦即存就靠它同步售价 ——
       // 改进价/等级时后端会按规则重算售价，但不会告诉前端算成了多少，
@@ -1882,6 +2010,8 @@
       invoke("loadAll");
     };
     $("btnReload2").onclick = reload;
+    // 「有改动」那个角标本身就是个按钮：点它 = 重读一遍（角标在 productsLoaded 里收起来）
+    $("btnStale").onclick = reload;
     // 筛选不再另起一屏：就在列表页里展开，改的时候下面那张表一直看得见
     $("btnFilter").onclick = function () {
       state.panelOpen = !state.panelOpen;
@@ -2321,6 +2451,8 @@
   }
   applyZoom(); // 无论有没有存过：按当前视图决定这三个按钮在不在
   bind();
+  // 实时推送在读完第一遍之后再连：先让页面有数据可看，连不上也不耽误用
+  connectEvents();
   pushLog("⏳读取商品…");
   invoke("loadAll").catch(function () {
     $("content").innerHTML =

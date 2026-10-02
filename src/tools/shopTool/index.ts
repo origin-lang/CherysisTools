@@ -370,6 +370,18 @@ const WRITE_ACTIONS = new Set([
 ]);
 
 /**
+ * 这条消息会不会写库（或写共享盘）。
+ *
+ * 给网页版服务端用：它要在 `handleMessage` 外面把写请求**排队**（见
+ * src/server/serialQueue.ts 与 docs/网页版方案-设计.md §M2），而"哪些算写"
+ * 这份清单只能有一处 —— 就是上面那个 WRITE_ACTIONS（只读模式用的也是它）。
+ * 所以这里只做一个转发导出，不复制清单。
+ */
+export function isWriteAction(type: string): boolean {
+  return WRITE_ACTIONS.has(type);
+}
+
+/**
  * 丢弃撤销/重做快照。换数据库目录时必须调：快照是「整库 SELECT 出来的行」，
  * 里面存的是旧库的行 id / 主键值，restoreAll 会照着写回当时的表——库换了以后
  * 这些 id 指向的是新库里毫不相干的商品，一撤销就把新库写烂了。

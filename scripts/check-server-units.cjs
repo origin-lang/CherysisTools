@@ -5,6 +5,7 @@
 // 断线续传）全在这里钉死，改坏了立刻非零退出，不用等真机上"手机怎么不刷新"才发现。
 //
 // 用法：node scripts/check-server-units.cjs     （跑的是编译产物 out/，所以要先 pnpm run compile）
+const fs = require("fs");
 const path = require("path");
 
 const root = path.join(__dirname, "..");
@@ -62,6 +63,8 @@ function parseFrames(text) {
 }
 
 // ---------------------------------------------------------------- 用例
+// 里面有 await（排队那几组要真等），所以整段包在 async 里跑；汇总放在最后。
+(async () => {
 
 // 1) 编号单调递增
 {
@@ -248,6 +251,113 @@ let reqCases = 0;
   ok(sink2.logs[0] === "第一行\n第二行", "数组里也应是原文一行（前端自己拆）");
 }
 
+// ------------------------------------------------ 写串行化 / 重活排队（serialQueue.ts）
+let queueCases = 0;
+{
+  const { SerialQueue } = require(path.join(root, "out", "server", "serialQueue.js"));
+
+  // 15) 并发=1：同时丢 5 个进去，任何时刻在跑的都不超过 1 个
+  queueCases++;
+  const q = new SerialQueue("测试");
+  let running = 0;
+  let maxRunning = 0;
+  const order = [];
+  const mk = (i) =>
+    q.run(async () => {
+      running++;
+      maxRunning = Math.max(maxRunning, running);
+      await new Promise((r) => setTimeout(r, 5));
+      order.push(i);
+      running--;
+      return i;
+    });
+  const results = await Promise.all([1, 2, 3, 4, 5].map(mk));
+  ok(maxRunning === 1, `同一时刻最多只能有 1 个在跑，实际峰值 ${maxRunning}`);
+  ok(JSON.stringify(order) === "[1,2,3,4,5]", `应按进队顺序跑完，实际 ${JSON.stringify(order)}`);
+  ok(JSON.stringify(results) === "[1,2,3,4,5]", "每个调用的返回值应是它自己任务的结果");
+  ok(q.depth === 0 && !q.busy, `跑完后队列应为空，实际 depth=${q.depth}`);
+
+  // 16) depth 能看到"前面还有几个"（排队时不能是 0，否则界面没法显示"你是第 N 位"）
+  queueCases++;
+  const q2 = new SerialQueue("测试2");
+  let seenDepth = 0;
+  const slow = q2.run(async () => {
+    await new Promise((r) => setTimeout(r, 20));
+  });
+  const waiting = q2.run(async () => {
+    seenDepth = q2.depth; // 这个任务开始跑时，前面那个还没跑完
+  });
+  ok(q2.depth === 2, `两个任务在队里时 depth 应为 2，实际 ${q2.depth}`);
+  await Promise.all([slow, waiting]);
+  ok(seenDepth === 1, `轮到自己时应该只剩自己在跑，实际 depth=${seenDepth}`);
+
+  // 17) 一个任务抛错：错误沿它自己的 Promise 出去，后面排队的照跑
+  //     （这条最要紧：一个用户输入出错不能把别人的保存卡死）
+  queueCases++;
+  const q3 = new SerialQueue("测试3");
+  const bad = q3.run(() => {
+    throw new Error("故意失败");
+  });
+  let caught = "";
+  try {
+    await bad;
+  } catch (err) {
+    caught = err.message;
+  }
+  ok(caught === "故意失败", `失败任务的错误应原样抛给调用方，实际 "${caught}"`);
+  const after = await q3.run(() => "后面这个照样跑");
+  ok(after === "后面这个照样跑", "前一个失败后，后面排队的必须照跑");
+  ok(q3.depth === 0, "失败也不该把队列卡住");
+}
+
+// ------------------------------------------------ 接线断言（源码级）
+// 串行化依赖两件事同时成立：① shopTool 导出 isWriteAction（清单只有一处）；
+// ② 服务端的 invoke 真的用它决定排队。少任何一条，这个功能就静默失效了
+// （表现是"偶尔丢一次写"，最难查的那种），所以用源码断言钉住。
+let wiringCases = 0;
+{
+  const shopIndex = fs.readFileSync(path.join(root, "src", "tools", "shopTool", "index.ts"), "utf8");
+  const serverIndex = fs.readFileSync(path.join(root, "src", "server", "index.ts"), "utf8");
+
+  wiringCases++;
+  ok(
+    /export function isWriteAction\(type: string\): boolean \{\s*return WRITE_ACTIONS\.has\(type\)/.test(
+      shopIndex,
+    ),
+    "shopTool/index.ts 里应导出 isWriteAction，且直接转发 WRITE_ACTIONS（不许另抄一份清单）",
+  );
+
+  wiringCases++;
+  ok(
+    /isWriteAction\(type\)/.test(serverIndex) && /writeLock\.run\(run\)/.test(serverIndex),
+    "服务端 invoke 必须用 isWriteAction 判断、并让写请求走 writeLock.run（串行化）",
+  );
+
+  wiringCases++;
+  ok(
+    /event: "changed"/.test(serverIndex),
+    "服务端应发 changed 事件（没它前端不会提示「有改动」）",
+  );
+}
+
+// ------------------------------------------------ 「该不该发 changed」（events.shouldAnnounceChange）
+let changeCases = 0;
+{
+  const { shouldAnnounceChange } = require(path.join(root, "out", "server", "events.js"));
+
+  // 18) 写成功 + 一条回推都没有 → 必须提醒（别人毫无知觉）
+  changeCases++;
+  ok(shouldAnnounceChange(true, 0) === true, "写成功但没回推 → 应该发 changed");
+
+  // 19) 写成功 + 有回推 → 别再打扰（别人靠回推已经同步了）
+  changeCases++;
+  ok(shouldAnnounceChange(true, 3) === false, "写成功且有回推 → 不该再发 changed（会没事就亮角标）");
+
+  // 20) 没写进库（改了不存在的商品 / 校验没过）→ 什么都不该发
+  changeCases++;
+  ok(shouldAnnounceChange(false, 0) === false, "没真写进库 → 不该发 changed");
+}
+
 // ---------------------------------------------------------------- 汇总
 if (fails.length > 0) {
   console.error(`❌ check-server-units：${fails.length} 项不通过`);
@@ -257,5 +367,12 @@ if (fails.length > 0) {
   process.exit(1);
 }
 console.log(
-  `✅ check-server-units：EventHub 语义 11 组 + 请求收集器 3 组用例全通过（共 ${11 + reqCases} 组）`,
+  `✅ check-server-units：EventHub 11 组 + 请求收集器 ${reqCases} 组 + 串行队列 ${queueCases} 组` +
+    ` + changed 判定 ${changeCases} 组 + 接线断言 ${wiringCases} 组，` +
+    `共 ${11 + reqCases + queueCases + changeCases + wiringCases} 组用例全通过`,
 );
+})().catch((err) => {
+  // 用例本身崩了（不是断言失败）也要非零退出，否则 CI 会把它当通过
+  console.error(`❌ check-server-units 跑挂了：${err && err.stack ? err.stack : err}`);
+  process.exit(1);
+});
