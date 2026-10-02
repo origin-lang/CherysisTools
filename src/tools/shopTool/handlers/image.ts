@@ -5,6 +5,7 @@ import { Handler, HandlerCtx } from "./types.js";
 import { readImageToBase64 } from "../../../core/utils.js";
 import {
   UPLOAD_FILTER,
+  IMAGE_EXTS,
   listImageFiles,
   thumbToCachedBase64,
   drainInflightThumbs,
@@ -35,6 +36,26 @@ const isPlainImageName = (n: string): boolean =>
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/** 扫目录的并发数：与读原图同一套取舍（IMG_READ_CONCURRENCY=3），这里目录小得多，可以放宽到 8 */
+const DIR_SCAN_CONCURRENCY = 8;
+
+/** 并发跑但**结果按输入下标归位**，调用方依赖位置对应（拼图那类逻辑就靠这个） */
+async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T, i: number) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) {
+        return;
+      }
+      out[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
 /**
  * Windows/SMB 上「文件正被占用」常是瞬时的：杀软扫一下、缩略图生成器、上一条命令的
  * 句柄还没回收，都会让 unlink 报 EBUSY/EPERM/EACCES，隔一下重试就好。
@@ -52,8 +73,8 @@ export const RETRYABLE_UNLINK = new Set(["EBUSY", "EPERM", "EACCES"]);
 export async function unlinkWithRetry(
 	fp: string,
 	unlink: (p: string) => void = (p) => fs.unlinkSync(p),
+	waits: number[] = [0, 150, 400, 1000],
 ): Promise<void> {
-	const waits = [0, 150, 400, 1000];
 	let last: NodeJS.ErrnoException | null = null;
 	for (const w of waits) {
 		if (w) {
@@ -95,6 +116,37 @@ function probeLock(fp: string): { locked: boolean; detail: string } {
     // 改走了却没能改回来：文件没丢，只是名字变了。如实说出来，别默默吞掉。
     return { locked: false, detail: `没能改回原名，现在叫 ${probe}（${err?.code || err}）` };
   }
+}
+
+/**
+ * 删图专用的「等后台读完 → 再删」。
+ *
+ * 为什么要比 clearImages 那套更耐心：夹里**第一张 = 封面**，列表 / 画册 / 详情页每翻一页
+ * 都在读它，本进程自己刚读完、句柄还没回收的概率远高于后面几张 —— 表现就是
+ * 「第一张总是删不掉，删第二张反而一次成功」。所以第一轮先等 8 秒（原来统一只等 3 秒，
+ * 后台一张缩略图在共享盘上就要 1~3 秒，3 秒根本等不完）；等完再失败说明期间又有新的
+ * 后台任务把它读上了，再等一轮短的。两轮都失败才认输。
+ *
+ * 只等**进入这一刻**已在飞的任务（drainInflightThumbs 的语义），期间新起的不等，
+ * 所以不会被人一直翻页无限拖住。
+ */
+const DELETE_DRAIN_MS = [8000, 3000];
+
+async function unlinkForDelete(fp: string, unlink: (p: string) => void): Promise<void> {
+  let last: any = null;
+  for (const maxMs of DELETE_DRAIN_MS) {
+    await drainInflightThumbs(maxMs);
+    try {
+      await unlinkWithRetry(fp, unlink, [0, 250, 800, 1500]);
+      return;
+    } catch (err: any) {
+      if (!RETRYABLE_UNLINK.has(err?.code)) {
+        throw err;
+      }
+      last = err;
+    }
+  }
+  throw last ?? new Error(`删除失败：${fp}`);
 }
 
 /** 占用类报错的统一话术：说清是「被占用」而不是把 EBUSY 甩给用户 */
@@ -460,6 +512,33 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       await reloadImages(code);
     },
 
+    /**
+     * 统计每个编号有几张图（给「筛出还没传图的商品」用）。
+     *
+     * 为什么不塞进 loadAll：图片是**按编号文件夹**放在 imageDir 里的，不在数据库里，
+     * 要知道有没有图就得读目录。共享盘上一次 readdir 就是一趟 SMB 往返，
+     * 而 loadAll 是每次刷新、每次改完数据都要走的 —— 128 个编号扫一遍会明显拖慢日常操作。
+     * 所以做成独立消息：只有前端真的要用这个筛选时才来要一次，算完自己缓存。
+     *
+     * 并发数与 images.ts 读原图同理：瓶颈是往返不是 CPU，串行在共享盘上要等死。
+     */
+    async loadImageStats(msg) {
+      const dir = imageDir();
+      const codes: string[] = Array.isArray(msg.codes) ? (msg.codes as unknown[]).map((c) => String(c)) : [];
+      const stats: Record<string, number> = {};
+      if (dir && codes.length) {
+        await mapLimited(codes, DIR_SCAN_CONCURRENCY, async (code) => {
+          try {
+            const files = await fs.promises.readdir(path.join(dir, code));
+            stats[code] = files.filter((f) => IMAGE_EXTS.has(path.extname(f).toLowerCase())).length;
+          } catch {
+            stats[code] = 0; // 没这个夹、或读不到，都按「没图」算 —— 这正是要找出来补图的
+          }
+        });
+      }
+      post({ type: "imageStatsLoaded", stats });
+    },
+
     async getFullImage(msg) {
       const code = String(msg.code ?? "");
       const dir = imageDir();
@@ -718,12 +797,10 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       // 刻意不 preOpBackup：删图只动文件系统、一个字节都不写数据库，
       // 备份出来的库跟操作前一模一样，纯白等一次共享盘整库拷贝（实测 4 秒）。
       // 本机的备份也不留——真要找回误删的图，去共享盘上的图片夹里翻原件。
-      // 先把后台缩缩略图的活儿等完：星标总览预览会往后台扔十几个「读原图」的任务，
-      // 不等就删的话正好撞上人家在读（libvips 读输入期间源文件是锁着的），这就是
-      // 「谁跑过星标总览谁就删不掉」的成因。上限 3 秒，断连的共享盘拖不死删除。
-      await drainInflightThumbs();
+      // 删图前先把后台读原图的活儿等完（详见 unlinkForDelete：夹里第一张是封面，
+      // 被读得最多，锁也最久，这里的等待是按删图单独放宽过的）
       try {
-        await unlinkWithRetry(fp, unlinkFile);
+        await unlinkForDelete(fp, unlinkFile);
       } catch (err: any) {
         // 失败也要把磁盘的真实情况推回前端，否则列表/图库停在「还在」的状态，
         // 用户分不清到底删掉没有
@@ -762,10 +839,9 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
         return;
       }
       const fp = path.join(folder, files[0]);
-      // 同 deleteImageFile：星标总览可能正在后台读这些原图，不等就删会撞上文件锁
-      await drainInflightThumbs();
+      // 封面就是夹里第一张，同 deleteImageFile：等后台读完再删（这里同样放宽了等待）
       try {
-        await unlinkWithRetry(fp, unlinkFile);
+        await unlinkForDelete(fp, unlinkFile);
       } catch (err: any) {
         // 失败也把磁盘现状推回去，否则列表/画册停在「还有图」的状态，用户分不清删掉没有
         log(busyHint(`删不掉 ${code} 的封面图`, err, fp));

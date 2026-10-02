@@ -28,16 +28,8 @@
           <option value="category">品类</option>
           <option value="series">系列</option>
         </select>
+        <!-- 搜索行只管「凭印象找一行」（子串匹配）；编号范围 L1~L33 是条件不是搜索，放在展开的筛选区里 -->
         <input id="q" class="grow2" type="search" placeholder="🔍 搜…" autocomplete="off" />
-        <!-- 编号范围高频，常驻在搜索行：不用展开筛选也能敲 -->
-        <input
-          id="codeQ"
-          class="grow1 codeq"
-          type="search"
-          placeholder="编号 L1~L33"
-          autocomplete="off"
-          title="编号范围：L1~L33、1~33、多段用逗号（A1~A33,L1~L22）；单写一个 L1 是精确匹配 L001"
-        />
         <span id="count" class="muted"></span>
       </div>
       <!-- 生效中的条件：每条一个 pill，点 ✕ 撤这一条；末尾「清除全部」一键回到全表 -->
@@ -54,15 +46,26 @@
               <option value="new">最近新建</option>
             </select>
           </label>
+          <label>表格的大小
+            <div id="zoomRow" class="rng">
+              <button id="zoomOut" class="mini" type="button" title="缩小">A−</button>
+              <button id="zoomReset" class="mini" type="button" title="回到 100%"><span id="zoomLabel">100%</span></button>
+              <button id="zoomIn" class="mini" type="button" title="放大">A＋</button>
+            </div>
+          </label>
           <button id="btnReload2" class="wide">🔄 重新从数据库读一遍</button>
-          <p class="muted small">筛选是「勾一批出来」，顶部搜索是「凭印象找一行」，两者叠加（AND）。</p>
+          <p class="muted small">放大只作用于表格，顶栏、筛选、分页条都不跟着变（也可以直接在表格上双指捏）。画册和商品详情不套这一层：详情页用浏览器自己的双指缩放捏着看。筛选是「勾一批出来」，顶部搜索是「凭印象找一行」，两者叠加（AND）。</p>
         </div>
       </div>
       <main id="content" class="content"></main>
       <div class="pager">
+        <button id="pageFirst" class="mini" title="第一页">«</button>
         <button id="pagePrev" class="mini">‹ 上一页</button>
+        <!-- 手机上弹数字键盘输页码很难受，跳页用下拉 -->
+        <select id="pageJump" class="pagejump" title="跳到第几页"></select>
         <span id="pageInfo" class="pi muted"></span>
         <button id="pageNext" class="mini">下一页 ›</button>
+        <button id="pageLast" class="mini" title="最后一页">»</button>
       </div>
     </section>
 
@@ -98,8 +101,7 @@
             <label>品类<input id="fCategory" type="text" list="catList" /></label>
             <label>系列<input id="fSeries" type="text" /></label>
           </div>
-          <button id="btnSave" class="primary wide">保存修改</button>
-          <p class="muted small">改完点保存；库存这一格就是"实际清点数"，直接写进去（与电脑版双击库存列同一口径）。</p>
+          <p class="muted small">改完自动保存（离开这一格就存，不用点按钮）。上下架点一下立刻生效。库存这一格就是"实际清点数"，直接写进去（与电脑版双击库存列同一口径）。</p>
         </div>
       </main>
     </section>
@@ -119,6 +121,7 @@
               <button id="btnNextCode" class="mini">用下一个空号</button>
             </div>
           </label>
+          <p id="nCodeHint" class="warn" style="display: none"></p>
           <label>名称<input id="nName" type="text" placeholder="例如 铜合金锆石手链" /></label>
           <div class="row2">
             <label>品类<input id="nCategory" type="text" list="catList" /></label>
@@ -130,6 +133,10 @@
             <label>售价<input id="nSale" type="number" inputmode="decimal" step="0.01" placeholder="留空按规则" /></label>
           </div>
           <label>期初库存<input id="nStock" type="number" inputmode="numeric" step="1" value="0" /></label>
+          <!-- 刚录入时手边就有实物：直接拍照，建完自动挂到这个编号下 -->
+          <button id="btnNewPick" class="wide" type="button">📷 拍照 / 选图</button>
+          <input id="newFilePick" type="file" accept="image/*" capture="environment" multiple hidden />
+          <p id="newPickInfo" class="muted small"></p>
           <p id="ruleHint" class="muted small"></p>
         </div>
       </main>
@@ -158,14 +165,36 @@
       </main>
     </section>
 
+    <!-- 改一个值：从底部弹上来的 sheet。输入框 ≥16px（iOS 聚焦小于 16px 的框会把整页放大） -->
+    <div id="fieldSheet" class="sheetbg">
+      <div class="sheet">
+        <div class="sheetbar">
+          <span id="fsTitle" class="sheet-title"></span>
+          <button id="fsDetail" class="mini" type="button">详情 ›</button>
+        </div>
+        <div id="fsBody"></div>
+        <p id="fsHint" class="muted small"></p>
+        <div class="sheetbts">
+          <button id="fsCancel" type="button">取消</button>
+          <button id="fsSave" class="primary" type="button">保存</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 大图查看 -->
     <div id="viewer" class="viewer">
       <img id="viewerImg" alt="" />
       <button id="viewerClose" class="viewer-x">✕</button>
+      <button id="viewerDel" class="viewer-del">🗑 删除这张</button>
     </div>
 
-    <!-- 底部状态条：最近一条日志；点开看全部 -->
-    <div id="status" class="status"><span id="statusText" class="muted">准备中…</span></div>
+    <!-- 底部条：只剩一个「日志」入口。结果一律走上面的提示浮层，这里不再滚动日志文字
+         （挡翻页、也没人看）；按钮贴左边，避开右下角（右手持机时那是拇指常驻区） -->
+    <div id="status" class="status">
+      <button id="btnLog" class="logbtn" type="button">日志</button>
+    </div>
+    <!-- 给用户看的提示（日志是排查用的，不该要求人人去读） -->
+    <div id="toast" class="toast"></div>
     <div id="logPanel" class="logpanel"><div id="logList"></div><button id="logClose" class="primary wide">关闭</button></div>
 
     <datalist id="catList"></datalist>

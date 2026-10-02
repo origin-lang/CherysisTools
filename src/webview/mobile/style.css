@@ -5,6 +5,8 @@
   --muted: #8a9099;
   --card: #ffffff;
   --line: #e3e6ea;
+  --grid: #eaedf1; /* 表格竖线：比 --line 淡一档，只勾出格子，不抢数字 */
+  --soft: #fafbfc; /* 表头底：极浅的一层灰，让表头和数据行分开 */
   --brand: #23a884;
   --danger: #d64545;
   --accent: #1b64f2; /* 生效条件的 pill 用这个蓝，跟品牌绿区分开 */
@@ -17,6 +19,8 @@
     --muted: #9aa0a6;
     --card: #1e2126;
     --line: #2c3037;
+    --grid: #24272d;
+    --soft: #212428;
     --accent: #6f9bff;
   }
 }
@@ -40,8 +44,9 @@ body {
   display: none;
   flex-direction: column;
   height: 100dvh;
-  /* 底部状态条是 fixed 的：统一在屏幕底部留出它的高度，否则分页条会被压在它下面 */
-  padding-bottom: calc(34px + env(safe-area-inset-bottom));
+  /* 底部那条是 fixed 的：统一在屏幕底部留出它的高度，否则分页条会被压在它下面。
+     26px = 细条 22px 按钮 + 上下 2px padding，跟着 .status 一起改 */
+  padding-bottom: calc(26px + env(safe-area-inset-bottom));
 }
 .screen.show {
   display: flex;
@@ -119,6 +124,10 @@ button.toggle.off {
 input,
 select {
   font: inherit;
+  /* 16px 是硬要求不是审美：iOS 聚焦到 font-size < 16px 的输入框时会自动把**整页**放大，
+     放大之后再想缩回来就很别扭（尤其我们还为了「只缩内容区」拦了系统手势）。
+     所有输入框一律 ≥16px，谁要改小先想清楚这个后果。 */
+  font-size: 16px;
   color: var(--fg);
   background: var(--bg);
   border: 1px solid var(--line);
@@ -139,26 +148,10 @@ select {
   font-size: 12px;
   white-space: nowrap;
 }
-/* 搜索行：关键词吃 2 份宽，编号范围吃 1 份（手机上也不至于被挤没） */
+/* 搜索行现在只有「搜哪一列 + 关键词」，编号范围移进筛选区了 */
 .searchbar .grow2 {
-  flex: 2 1 90px;
-  min-width: 90px;
-}
-.searchbar .grow1 {
-  flex: 1 1 84px;
-  min-width: 84px;
-}
-.searchbar input.codeq {
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px 10px;
-  min-height: 36px;
-  color: var(--fg);
-}
-.searchbar input.bad {
-  border-color: var(--danger);
-  color: var(--danger);
+  flex: 2 1 120px;
+  min-width: 120px;
 }
 
 /* 生效中的条件：一条一个 pill，✕ 撤这一条 */
@@ -224,6 +217,9 @@ select {
   overflow-y: auto;
   padding: 10px;
   -webkit-overflow-scrolling: touch;
+  /* 显示大小：只有这个容器里的东西（表格 / 画册）跟着 --zoom 变。
+     顶栏、搜索行、筛选区、分页条、状态条都是它的兄弟节点，天然不会被缩放带跑。 */
+  --zoom: 1;
 }
 .muted {
   color: var(--muted);
@@ -235,8 +231,14 @@ select {
 /* 画册：窄屏两列，宽屏自动更多列 */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 10px;
+  /* 画册不给缩放（用户明确要求）。双指捏合在 Chrome/安卓上只听 CSS 的 touch-action：
+     不含 pinch-zoom 就不许捏（JS 里 preventDefault 拦不住它，那是合成器直接干的事）。
+     纵向滚动照旧。iOS Safari 不吃这一套，那边靠 app.js 拦 gesturestart。
+     只加在画册上：表格要横向滑，pan-y 会把横向滚动一起禁掉。 */
+  touch-action: pan-y;
+  /* 列宽跟着 --zoom：放大时格子变大、每行少放几个，而不是把图撑糊 */
+  grid-template-columns: repeat(auto-fill, minmax(calc(150px * var(--zoom)), 1fr));
+  gap: calc(10px * var(--zoom));
 }
 .card {
   background: var(--card);
@@ -262,10 +264,23 @@ select {
 }
 .card .body {
   padding: 8px 10px 10px;
-  font-size: 13px;
+  font-size: calc(13px * var(--zoom));
 }
 .card .code {
   font-weight: 700;
+}
+/* 画册里的进价：陪衬信息，压成灰色，别跟售价抢视线 */
+.card .cost {
+  color: var(--muted);
+}
+/* 库存单独一行：字号再小一档，卡片上「价」是主角，「量」是注脚 */
+.card .stk {
+  font-size: calc(12px * var(--zoom));
+  color: var(--muted);
+}
+/* 库存见底要红：.card .stk 比 .low 更具体，会把灰色压回去，这里补一条 */
+.card .stk.low {
+  color: var(--danger);
 }
 .card.off {
   opacity: 0.55;
@@ -295,20 +310,34 @@ select {
 .tbl {
   border-collapse: collapse;
   width: 100%;
-  font-size: 13px;
-  min-width: 540px; /* 低于这个宽度宁可横滑，也别把七列压成一团 */
+  /* 字号和最小宽度都跟着 --zoom：放大后列变宽、更早开始横滑，但字是真的大了 */
+  font-size: calc(13px * var(--zoom));
+  min-width: calc(540px * var(--zoom)); /* 低于这个宽度宁可横滑，也别把七列压成一团 */
+  /* 双击进详情：touch-action 一并关掉双击缩放，否则手机上双击会先放大页面 */
+  touch-action: manipulation;
 }
 .tbl th,
 .tbl td {
-  padding: 10px 8px;
+  padding: calc(10px * var(--zoom)) calc(8px * var(--zoom));
   border-bottom: 1px solid var(--line);
+  /* 竖线：比横线更浅一档（--grid），只要「能看出是一格一格」，不抢数字的注意力 */
+  border-right: 1px solid var(--grid);
   text-align: left;
   white-space: nowrap;
+  /* 双击不该选中单元格里的文字（会蓝一片）；输入框里仍然可以正常选 */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.tbl th:last-child,
+.tbl td:last-child {
+  border-right: 0;
 }
 .tbl th {
   font-size: 12px;
   font-weight: 400;
   color: var(--muted);
+  background: var(--soft);
+  border-bottom-color: var(--line);
 }
 .tbl tbody tr:last-child td {
   border-bottom: 0;
@@ -320,39 +349,22 @@ select {
   opacity: 0.55;
 }
 .tbl td.nm {
-  max-width: 150px;
+  max-width: calc(150px * var(--zoom));
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
-/* 可就地改的格子：虚下划线 = 「这一格能点」 */
+/* 能改的格子：虚下划线 = 「这一格能点」 */
 .tbl td.ed {
   cursor: pointer;
   border-bottom: 1px dashed var(--muted);
 }
-.tbl td.editing {
-  border-bottom: 0;
-  padding: 4px;
-}
-.editbox {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.editbox input.inline {
-  width: 4.8em;
-  min-height: 34px;
-  padding: 4px 6px;
-}
-.editbox button {
-  min-height: 34px;
-  padding: 4px 8px;
-  font-size: 13px;
-}
-.editbox .ok {
-  background: var(--brand);
-  border-color: var(--brand);
-  color: #fff;
+/* 选中态：点第一下只是选中，点第二下才弹输入框。
+   用 outline 不用 border —— border 会把格子撑大，整张表的列宽跟着抖一下 */
+.tbl td.sel {
+  background: rgba(35, 168, 132, 0.14);
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+  border-radius: 4px;
 }
 .inlinehint {
   margin: 0 0 8px;
@@ -364,7 +376,7 @@ select {
   flex: none;
   min-height: 38px;
   padding: 6px 8px;
-  font-size: 13px;
+  /* 不写小字号：下拉聚焦也会触发 iOS 的整页自动放大（见 input/select 那条注释） */
 }
 
 /* 漏斗筛选面板 */
@@ -400,6 +412,11 @@ select {
 .rng input.inline {
   flex: 1;
   min-width: 0;
+}
+/* 缩放那排 A− / 100% / A＋：三个平分一行，别缩在左边 */
+.rng > button {
+  flex: 1;
+  padding: 6px 4px;
 }
 input.inline.wide {
   width: 100%;
@@ -500,16 +517,29 @@ input.bad {
   border-radius: 10px;
   overflow: hidden;
   margin-bottom: 10px;
+  /* 锁死比例：每张图的长宽比不一样，不锁的话翻「上一个/下一个」时这块会忽大忽小，
+     图片加载完成前高度还是 0，整页也会跟着跳一下 */
+  aspect-ratio: 1 / 1;
+  max-height: 46vh;
 }
 .cover img {
   width: 100%;
+  height: 100%;
   display: block;
+  object-fit: contain; /* 详情页看图要看到整张，不能裁 */
+  background: var(--bg);
 }
 .strip {
   display: flex;
   gap: 8px;
   overflow-x: auto;
   padding-bottom: 10px;
+}
+/* 缩略图条的每一格（类名避开 .thumb —— 画册卡片那张图已经是 .thumb） */
+.thumbw {
+  position: relative; /* × 相对缩略图定位 */
+  flex: none;
+  line-height: 0;
 }
 .strip img {
   width: 78px;
@@ -518,6 +548,29 @@ input.bad {
   border-radius: 8px;
   border: 1px solid var(--line);
   flex: none;
+}
+/* 缩略图右上角 ×：手指能点到的最小尺寸（28px），半透明底保证浅色图上也看得见 */
+.thumb-x {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 20, 20, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+}
+.thumb-x:active {
+  background: var(--danger);
+  border-color: var(--danger);
 }
 .card label {
   display: block;
@@ -537,6 +590,69 @@ input.bad {
 .row2 > * {
   flex: 1;
   min-width: 0;
+}
+
+/* 改一个值：从底部弹上来的 sheet（不是居中弹窗：手机上底部这一块离拇指最近，
+   而且键盘刚好顶在它下面，不会盖住正在填的输入框） */
+.sheetbg {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: rgba(0, 0, 0, 0.4);
+  align-items: flex-end; /* 贴着底边 */
+  /* --kb 由 JS 按键盘高度填（iOS 不会自动把 fixed 元素顶起来，不垫就被键盘压住） */
+  padding-bottom: var(--kb, 0px);
+}
+.sheetbg.show {
+  display: flex;
+}
+.sheet {
+  width: 100%;
+  background: var(--card);
+  border-radius: 14px 14px 0 0;
+  padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
+  animation: sheetup 0.16s ease-out;
+}
+@keyframes sheetup {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+.sheetbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.sheet-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* sheet 里的输入控件：48px 高、字 16px 起 —— 手指好点，iOS 也不会自动放大页面 */
+.sheet input.big,
+.sheet select.big {
+  min-height: 48px;
+  font-size: 16px;
+}
+.sheet p {
+  margin: 8px 0 12px;
+}
+.sheetbts {
+  display: flex;
+  gap: 10px;
+}
+.sheetbts button {
+  flex: 1;
+  min-height: 48px;
 }
 
 /* 大图查看 */
@@ -564,21 +680,63 @@ input.bad {
   border-color: transparent;
   color: #fff;
 }
+/* 灯箱里的「删除这张」：放在右下角，远离左上角那张图，误触不到 */
+.viewer-del {
+  position: absolute;
+  right: 10px;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  background: rgba(214, 69, 69, 0.9);
+  border-color: transparent;
+  color: #fff;
+}
 
 /* 底部状态条 + 日志面板 */
+/* 浮层提示：操作结果给用户看的地方（日志留给排查） */
+.toast {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(34px + env(safe-area-inset-bottom)); /* 让开底部那条细条 */
+  z-index: 70;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(31, 35, 41, 0.92);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: center;
+  pointer-events: none; /* 纯提示，别挡住下面的按钮 */
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.18s, transform 0.18s;
+}
+.toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+.toast.bad {
+  background: rgba(214, 69, 69, 0.94);
+}
+/* 底部只剩一条 26px 高的细条：原来 12px 字 + 44px 按钮，把分页条顶得只剩半个 */
 .status {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+  display: flex;
+  justify-content: flex-start; /* 按钮靠左：右下角是拇指区，容易误碰 */
+  align-items: center;
+  padding: 2px 8px calc(2px + env(safe-area-inset-bottom));
   background: var(--card);
   border-top: 1px solid var(--line);
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   z-index: 6;
+}
+.status .logbtn {
+  min-height: 22px;
+  padding: 2px 10px;
+  font-size: 11px;
+  line-height: 1.4;
+  border-radius: 6px;
 }
 .logpanel {
   display: none;

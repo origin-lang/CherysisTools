@@ -17,12 +17,88 @@
     sort: "code",
     panelOpen: false, // 筛选展开区是否展开（在当前屏内展开，不切屏）
     // 漏斗筛选：enum 是「勾哪几个看哪几个」，num 是数值区间。空 = 不筛
-    filters: { enum: { category: {}, series: {}, grade: {}, status: {} }, num: {} },
+    filters: { enum: { category: {}, series: {}, grade: {}, status: {}, img: {} }, num: {} },
+    // 每个编号有几张图（后端扫目录得来，按需要一次）。图片不在数据库里，只能这么知道
+    imgStats: {},
+    imgStatsLoaded: false,
+    imgStatsBusy: false,
     settings: {},
     detail: null, // { id, code, idx, orig: {...}, status: 0 }
     logs: [],
   };
   var PAGE_SIZE = 50;
+  // ---------- 显示大小（只放大表格） ----------
+  // 浏览器自带的双指缩放是**整页**缩放：顶栏、筛选、分页条会跟着一起缩小，那不是要的效果。
+  // 所以表格里自己接管双指手势，缩放写成一个 CSS 变量 `--zoom`，只挂在 #content 上 ——
+  // 顶栏、筛选、分页条、底部状态条都不在这个容器里，天然不会被带到。
+  // 画册和详情页都不做这一套：画册里卡片本来就是图，缩放没意义；详情页交还给浏览器自己的
+  // 双指缩放（那里就是想让人捏着看）。
+  var ZOOM_KEY = "cherysis_zoom";
+  var ZOOMS = [0.75, 0.85, 1, 1.15, 1.3, 1.5]; // 走档位：连续缩放会让整张表每帧重排，手机上很卡
+  var zoom = 1;
+
+  /** 缩放是否作用在当前视图上：只有表格吃这一套 */
+  function zoomActive() {
+    return state.view === "list";
+  }
+  // 画册不给缩放按钮，卡片大小固定：取最小档（一屏放得最多，卡片上就编号 + 图 + 一行价，
+  // 小一点也够认）。要改回来只动这一个常量。
+  var GALLERY_ZOOM = ZOOMS[0];
+
+  /** 把 zoom 落到 DOM 上。画册里用固定档，否则切过去卡片会跟着表格的档位莫名变大变小 */
+  function applyZoom() {
+    var c = $("content");
+    if (c) {
+      c.style.setProperty("--zoom", String(zoomActive() ? zoom : GALLERY_ZOOM));
+    }
+    var lab = $("zoomLabel"); // 筛选区里那个按钮上的百分比，展开时才在 DOM 里
+    if (lab) {
+      lab.textContent = Math.round(zoom * 100) + "%";
+    }
+    var row = $("zoomRow");
+    if (row) {
+      // 画册里这三个按钮点了也不会变，留着只会让人以为坏了
+      row.style.display = zoomActive() ? "" : "none";
+    }
+  }
+
+  function setZoom(z) {
+    z = Math.min(ZOOMS[ZOOMS.length - 1], Math.max(ZOOMS[0], z));
+    zoom = z;
+    applyZoom();
+    try {
+      localStorage.setItem(ZOOM_KEY, String(z));
+    } catch (e) {
+      /* 隐私模式下写不了就算了，不影响用 */
+    }
+  }
+  // 捏合算出来的是连续值：吸附到最近档位，跨档才变，否则手指一抖就重排一次
+  function snapZoom(z) {
+    var best = ZOOMS[2];
+    var bd = Infinity;
+    for (var i = 0; i < ZOOMS.length; i++) {
+      var d = Math.abs(ZOOMS[i] - z);
+      if (d < bd) {
+        bd = d;
+        best = ZOOMS[i];
+      }
+    }
+    return best;
+  }
+  function stepZoom(dir) {
+    var i = ZOOMS.indexOf(zoom);
+    if (i < 0) {
+      i = ZOOMS.indexOf(snapZoom(zoom));
+    }
+    if (i < 0) {
+      i = 2;
+    }
+    i += dir;
+    if (i < 0 || i >= ZOOMS.length) {
+      return;
+    }
+    setZoom(ZOOMS[i]);
+  }
   // 顶部搜索「全部」时扫这几列（与电脑版 KEYWORD_FIELDS 同一份清单）
   var KEYWORD_FIELDS = ["code", "name", "category", "series"];
   // 离散值列 → 勾选；数值列 → 区间。status 只有两种取值，勾选比写表达式顺手
@@ -110,8 +186,18 @@
       });
   }
 
+  // 图片缓存版本号：删图/传图后 +1，让 imgUrl 变出新 URL 绕开浏览器 5 分钟的图片缓存
+  var imgVer = 0;
+  function bumpImg() {
+    imgVer++;
+  }
+
   function imgUrl(code, name, size) {
-    var u = "/api/image?code=" + encodeURIComponent(code) + "&size=" + (size || "thumb");
+    // /api/image 带 Cache-Control: private, max-age=300 —— 删掉一张图后如果还用同一个 URL，
+    // 浏览器直接拿缓存里的旧图显示出来，看着就像「点了 × 没反应」。所以 URL 上挂一个版本号，
+    // 删图/传图后 bumpImg() 让它 +1，URL 变了浏览器才会真去问服务器（那张已经 404 了）。
+    var u =
+      "/api/image?code=" + encodeURIComponent(code) + "&size=" + (size || "thumb") + "&v=" + imgVer;
     if (name) {
       u += "&name=" + encodeURIComponent(name);
     }
@@ -132,6 +218,18 @@
       renderList();
       resyncDetailPos(); // 正在看详情时，翻页按钮的位置和边界要跟着新数据重算
       fillCategoryList();
+    } else if (m.type === "productsDelta") {
+      // 后端改完一条只回传这一条（不是整表），详情页失焦即存就靠它同步售价 ——
+      // 改进价/等级时后端会按规则重算售价，但不会告诉前端算成了多少，
+      // 只有这个 delta 里带。没有它就得整表 loadAll 回读，那会把用户正在填的其它格子冲掉。
+      applyDelta(m.products || [], m.removed || []);
+    } else if (m.type === "imageStatsLoaded") {
+      state.imgStats = m.stats || {};
+      state.imgStatsLoaded = true;
+      if (state.panelOpen) {
+        renderFilter(); // 把「无图 N / 有图 M」填进圆片
+      }
+      renderList(); // 已经勾了「无图」的话，这一下才筛得出来
     } else if (m.type === "rulesLoaded") {
       state.rules = m.rules || [];
       fillGradeSelect();
@@ -148,6 +246,75 @@
     }
   }
 
+  /** 把后端回传的单条改动并进 state.products，不整表重拉 */
+  function applyDelta(products, removed) {
+    (removed || []).forEach(function (id) {
+      state.products = state.products.filter(function (p) {
+        return num(p.id) !== num(id);
+      });
+    });
+    (products || []).forEach(function (up) {
+      var hit = false;
+      for (var i = 0; i < state.products.length; i++) {
+        if (num(state.products[i].id) === num(up.id)) {
+          state.products[i] = up;
+          hit = true;
+          break;
+        }
+      }
+      if (!hit) {
+        state.products.push(up);
+      }
+    });
+    renderList();
+    resyncDetailPos();
+    syncDetailFromDelta(products);
+  }
+
+  // 详情页表单 ↔ 商品字段的对应表：[输入框 id, 字段名, 文本/数字/整数]
+  var DETAIL_FIELDS = [
+    ["fName", "name", "text"],
+    ["fCost", "cost_price", "num"],
+    ["fSale", "sale_price", "num"],
+    ["fStock", "stockTotal", "int"],
+    ["fCategory", "category", "text"],
+    ["fSeries", "series", "text"],
+  ];
+
+  /**
+   * delta 回来后把详情页表单同步一遍。
+   * 正在编辑的那一格跳过（document.activeElement）—— 否则打字打到一半会被回读冲掉。
+   */
+  function syncDetailFromDelta(products) {
+    var d = state.detail;
+    if (!d) {
+      return;
+    }
+    var up = null;
+    products.forEach(function (p) {
+      if (num(p.id) === num(d.id)) {
+        up = p;
+      }
+    });
+    if (!up) {
+      return;
+    }
+    DETAIL_FIELDS.forEach(function (f) {
+      var el = $(f[0]);
+      if (!el || document.activeElement === el) {
+        return;
+      }
+      var isText = f[2] === "text";
+      var v = isText ? String(up[f[1]] === undefined || up[f[1]] === null ? "" : up[f[1]]) : String(num(up[f[1]]));
+      if (el.value !== v) {
+        el.value = v;
+      }
+      d.orig[f[1]] = isText ? v : num(up[f[1]]);
+    });
+    d.status = num(up.status) === 1 ? 1 : 0;
+    syncStatusBtn();
+  }
+
   function pushLog(text) {
     var t = String(text === undefined || text === null ? "" : text);
     // 带换行的多行日志按行拆开，底部条只显示最后一行
@@ -159,13 +326,30 @@
     if (state.logs.length > 300) {
       state.logs.splice(0, state.logs.length - 300);
     }
-    var last = state.logs[state.logs.length - 1] || "";
-    $("statusText").textContent = last;
-    $("statusText").className = /^[❌⚠]/.test(last) ? "low" : "muted";
+    // 底部不再滚日志文字：结果统一走提示浮层，日志是排查时才点开看的东西
     var panel = $("logPanel");
     if (panel.classList.contains("show")) {
       renderLogs();
     }
+  }
+
+  // ---------- 给用户看的提示 ----------
+  // 日志是排查用的，不该要求普通用户去读它：操作结果（成功/失败/编号重复）一律走这个
+  // 浮层，日志照旧写满（想看的人点底部那个「日志」按钮）。
+  var toastTimer = null;
+  function toast(text, bad) {
+    var el = $("toast");
+    if (!el) {
+      return;
+    }
+    el.textContent = String(text === undefined || text === null ? "" : text);
+    el.className = "toast show" + (bad ? " bad" : "");
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+    }
+    toastTimer = setTimeout(function () {
+      el.className = "toast";
+    }, 2800);
   }
 
   function renderLogs() {
@@ -299,6 +483,11 @@
     if (field === "status") {
       return num(p.status) === 1 ? "off" : "on";
     }
+    if (field === "img") {
+      var c = state.imgStats[p.code];
+      // 还没统计过就返回空串：这时「无图」不该把人筛掉（否则一开筛选就空表，看着像坏了）
+      return c === undefined ? "" : num(c) > 0 ? "1" : "0";
+    }
     return String(p[field] === undefined || p[field] === null ? "" : p[field]);
   }
 
@@ -405,6 +594,9 @@
   }
 
   function renderList() {
+    // innerHTML 一换，滚动位置就没了。页面没变时把位置还回去 —— 列表里改一个值就会收到
+    // productsDelta → renderList，不还原的话改完一行列表直接跳回顶部（很像是「界面不稳定」）
+    var keepScroll = $("content").scrollTop;
     var all = filtered();
     var cq = codeQuery();
     // 一次只渲一页：手机上 DOM 一多就明显卡，画册尤其（每张一张图）
@@ -417,7 +609,11 @@
     }
     var list = all.slice(state.page * PAGE_SIZE, state.page * PAGE_SIZE + PAGE_SIZE);
     $("count").textContent = all.length + " / " + state.products.length;
-    $("codeQ").classList.toggle("bad", !!(cq && cq.bad));
+    // 编号框在筛选展开区里（动态生成），面板没打开时它不在 DOM 中
+    var cqEl = $("codeQ");
+    if (cqEl) {
+      cqEl.classList.toggle("bad", !!(cq && cq.bad));
+    }
     renderActive(); // 条件 pill 条：每次筛选变化都重画，列表页上永远看得见「现在筛了什么」
     renderPager(all.length, pages);
     // 编号表达式写错要明确说出来，不能只给一张空表（与电脑版一致）
@@ -451,13 +647,19 @@
               "<div>" +
               esc(p.name) +
               "</div>" +
+              // 第一行只放两个价（进多少、卖多少），库存单独一行：挤在一行时小卡片上
+              // 三个数会连成一团，库存是另外一件事，换行更好扫
               "<div>" +
+              '<span class="cost">进 ' +
+              money(p.cost_price) +
+              "</span> → " +
               money(p.sale_price) +
-              ' · <span class="' +
-              (isLow(p) ? "low" : "") +
+              "</div>" +
+              '<div class="stk' +
+              (isLow(p) ? " low" : "") +
               '">库存 ' +
               num(p.stockTotal) +
-              "</span></div>" +
+              "</div>" +
               "</div></div>"
             );
           })
@@ -467,7 +669,7 @@
       // 真表格：进价 / 售价 / 等级 / 库存 / 状态各占一列（手机上横向可滑，不再挤成一行）
       $("content").innerHTML =
         warn +
-        '<p class="muted small inlinehint">点进价 / 售价 / 库存 / 等级 / 状态可直接改；点<b>编号</b>进详情页（看图、传图）。顶部 pill 是正在生效的筛选，点 ✕ 撤一条。</p>' +
+        '<p class="muted small inlinehint">点一下<b>选中</b>这一格，再点一下才弹输入框；<b>状态</b>点一下直接切；点<b>编号</b>进详情看图、传图。顶部 pill 是正在生效的筛选，点 ✕ 撤一条。</p>' +
         '<div class="tblwrap"><table class="tbl"><thead><tr>' +
         "<th>编号</th><th>名称</th><th>进价</th><th>售价</th><th>等级</th><th>库存</th><th>状态</th>" +
         "</tr></thead><tbody>" +
@@ -476,12 +678,30 @@
           .join("") +
         "</tbody></table></div>";
     }
+    $("content").scrollTop = keepScroll;
   }
 
   /**
-   * 表格一行。可编辑的格子带 data-ed：进价 / 售价 / 库存 / 状态。
-   * 其余格（编号、名称、等级）点了是进详情或只读 —— 列分语义，否则「想看详情该点哪」就没有答案了。
+   * 表格一行。可编辑的格子带 data-ed：名称 / 进价 / 售价 / 库存 / 状态 / 等级。
+   * 名称是文本（不走数字那条路），进价售价等是数字 —— 两类都在这一个属性下，靠 TEXT_FIELDS 区分。
+   * 编号列不参与改值：它是「进详情」的入口。
    */
+  // 点一下 = 选中这一格，再点一下才弹输入框 —— 手机上误触一下就顶出键盘太烦，中间加一拍确认。
+  // 选中态按 {id, field} 记着，表格重画时照它把框补回去（改完一个值整行会重画，框不能丢）。
+  var selected = null; // { id, field }
+
+  function selClass(p, field) {
+    return selected && num(selected.id) === num(p.id) && selected.field === field ? " sel" : "";
+  }
+
+  function clearSelected() {
+    var old = $("content").querySelector("td.sel");
+    if (old) {
+      old.classList.remove("sel");
+    }
+    selected = null;
+  }
+
   function rowHtml(p) {
     var off = p.status === 1;
     return (
@@ -490,31 +710,37 @@
       '"' +
       (off ? ' class="off"' : "") +
       ">" +
-      // 只有编号列进详情：名称列误触率高，点它什么都不做（列头那行提示里写清楚了）
       '<td class="open" data-open="1">' +
       esc(p.code) +
       "</td>" +
-      '<td class="nm">' +
+      '<td class="nm ed' + selClass(p, "name") + '" data-ed="name" title="点一下选中，再点一下改名称">' +
       esc(p.name) +
       "</td>" +
-      '<td class="num ed" data-ed="cost_price" title="点一下改进价">' +
+      '<td class="num ed' +
+      selClass(p, "cost_price") +
+      '" data-ed="cost_price" title="点一下选中，再点一下改进价">' +
       money(p.cost_price) +
       "</td>" +
-      '<td class="num ed" data-ed="sale_price" title="点一下改售价">' +
+      '<td class="num ed' +
+      selClass(p, "sale_price") +
+      '" data-ed="sale_price" title="点一下选中，再点一下改售价">' +
       money(p.sale_price) +
       "</td>" +
       // 等级可改：后端改等级会按新规则重算售价（product.ts 的 grade 分支），所以这里改了就生效
-      '<td class="num ed" data-ed="grade" title="点一下改等级 → 售价按新等级规则重算">' +
+      '<td class="num ed' +
+      selClass(p, "grade") +
+      '" data-ed="grade" title="点一下选中，再点一下改等级 → 售价按新等级规则重算">' +
       (num(p.grade) > 0 ? num(p.grade) : "自定义") +
       "</td>" +
       '<td class="num ed' +
       (isLow(p) ? " low" : "") +
-      '" data-ed="stock" title="点一下改库存（= 实际清点数）">' +
+      selClass(p, "stock") +
+      '" data-ed="stock" title="点一下选中，再点一下改库存（= 实际清点数）">' +
       num(p.stockTotal) +
       "</td>" +
       '<td class="ed' +
       (off ? " low" : "") +
-      '" data-ed="status" title="点一下切换上/下架">' +
+      '" data-ed="status" title="点一下直接切换上/下架">' +
       (off ? "已下架" : "在售") +
       "</td>" +
       "</tr>"
@@ -530,46 +756,84 @@
     return null;
   }
 
-  // ---------- 表格里就地改（不跳详情页） ----------
-  // 只做四个短字段：改一个数不该让人跳一页。写库走的就是详情页那一套消息
-  // （updateProductField / setStockQty / setStatus），业务口径一处没动。
-  var editing = null; // { row, field, id, orig }
+  // ---------- 表格里改一个值：从底部弹出的 sheet ----------
+  // 之前是内联（点一下格子就地变成输入框），手机上有两个绕不过去的坑：
+  // ① iOS 的规矩是「聚焦到 font-size < 16px 的输入框就把整页放大」，格子里那个 13px 的框
+  //    一聚焦整页就放大；② 我们为了「只缩内容区」在内容区拦了系统缩放手势，于是放大之后捏不回来。
+  // 改成底部 sheet：输入框做到 ≥16px（iOS 不再自动放大），键盘正好顶在 sheet 下面、不遮输入框，
+  // 顺带解决格子只有 150px、长名称改着憋屈的老问题。
+  // 同类以后要加文本列（品类/系列）就往 TEXT_FIELDS 里加，数字列不用登记。
+  var TEXT_FIELDS = { name: 1 };
+  var FIELD_LABEL = {
+    name: "名称",
+    cost_price: "进价",
+    sale_price: "售价",
+    grade: "等级",
+    stock: "库存",
+    status: "状态",
+  };
+  // sheet 里那句话：说清楚这一格写的是什么、改了会连带什么（写在格子里没地方放）
+  var FIELD_HINT = {
+    name: "商品名称，随便写。",
+    cost_price: "进价。改完售价会按等级规则重算（自己手填过售价的不动）。",
+    sale_price: "售价。填了就固定按这个卖，不再跟着等级规则变。",
+    grade: "等级。改完售价按新等级的规则重算。",
+    stock: "库存 = 实际清点出来的数，直接写。",
+  };
 
-  function startEdit(row, cell) {
+  // 只做几个常用字段：改一个值不该让人跳一页。写库走的就是详情页那一套消息
+  // （updateProductField / setStockQty / setStatus），业务口径一处没动。
+  var editing = null; // { row, field, id, orig, txt } —— 由 sheet 填写
+
+  /** 按 id 重画一行。比拿着 row 引用稳：提交后可能整表重画过，那个引用早就是孤儿了 */
+  function refreshRow(id) {
+    var p = findProduct(id);
+    var r = $("content").querySelector('tr[data-id="' + id + '"]');
+    if (p && r) {
+      r.outerHTML = rowHtml(p);
+    }
+  }
+
+  function openFieldSheet(row, cell) {
     var p = findProduct(num(row.dataset.id));
     if (!p) {
       return;
     }
     var field = cell.dataset.ed;
-    if (field === "status") {
-      toggleStatus(p, row);
-      return;
+    if (editing) {
+      commitEdit(true); // 换一格改：先结算上一格（值没变等于没改）
     }
-    var cur = field === "stock" ? num(p.stockTotal) : num(p[field]);
-    editing = { row: row, field: field, id: p.id, orig: cur };
-    cell.classList.add("editing");
-    var inner =
+    var isTxt = !!TEXT_FIELDS[field];
+    var cur = isTxt
+      ? String(p[field] === undefined || p[field] === null ? "" : p[field])
+      : field === "stock"
+        ? num(p.stockTotal)
+        : num(p[field]);
+    editing = { row: row, field: field, id: p.id, orig: cur, txt: isTxt };
+    $("fsTitle").textContent = (FIELD_LABEL[field] || field) + "　" + p.code + "　" + (p.name || "");
+    $("fsBody").innerHTML =
       field === "grade"
-        ? "<select class=\"inline\">" + gradeOptions(cur, p) + "</select>"
-        : '<input class="inline" type="text" inputmode="decimal" value="' + esc(String(cur)) + '" />';
-    cell.innerHTML =
-      '<span class="editbox">' +
-      inner +
-      '<button class="ok" type="button">✓</button><button class="no" type="button">✕</button></span>';
-    var input = cell.querySelector(".inline");
+        ? '<select id="fsInput" class="big">' + gradeOptions(cur, p) + "</select>"
+        : '<input id="fsInput" class="big" type="text"' +
+          // 名称不该弹数字键盘；数字列要小数键盘（inputmode 在手机上决定了键盘长什么样）
+          (isTxt ? "" : ' inputmode="decimal"') +
+          ' value="' +
+          esc(String(cur)) +
+          '" />';
+    $("fsHint").textContent = FIELD_HINT[field] || "";
+    $("fieldSheet").classList.add("show");
+    var input = $("fsInput");
+    // 必须在这一个 click 里同步 focus：放到下一拍 iOS 就不弹键盘了
     input.focus();
     if (input.tagName !== "SELECT") {
       input.select();
-      input.onkeydown = function (ev) {
-        if (ev.key === "Enter") {
-          ev.preventDefault();
-          commitEdit(true);
-        } else if (ev.key === "Escape") {
-          ev.preventDefault();
-          commitEdit(false);
-        }
-      };
     }
+  }
+
+  function closeFieldSheet() {
+    editing = null;
+    $("fieldSheet").classList.remove("show");
+    $("fsBody").innerHTML = "";
   }
 
   /** 等级下拉的选项；「自定义」是否选中看 price_manual —— 与电脑版同一口径 */
@@ -595,27 +859,39 @@
     editing = null;
     var p = findProduct(ed.id);
     if (!p) {
+      closeFieldSheet();
       renderList(); // 编辑期间这条被别人删了：没有可还原的行，整表重画
       return;
     }
-    var input = ed.row.querySelector(".inline"); // input 或 select（等级是下拉）
+    var input = $("fsInput"); // sheet 里的输入框（等级是下拉）
     var raw = input ? String(input.value || "").trim() : "";
-    var v = Number(raw);
-    var changed = submit && p && raw !== "" && Number.isFinite(v) && v !== num(ed.orig);
-    if (!changed) {
-      if (submit && p && raw !== "" && !Number.isFinite(v)) {
+    var v;
+    var changed;
+    if (ed.txt) {
+      // 文本列（名称）：按字符串比较。留空当作「没改」—— 空名称在列表里就是一行没有名字，
+      // 找不回来，宁可退回原值
+      v = raw;
+      changed = submit && raw !== "" && v !== String(ed.orig);
+      if (submit && raw === "") {
+        pushLog("⚠️名称不能是空的，没改");
+      }
+    } else {
+      v = Number(raw);
+      changed = submit && raw !== "" && Number.isFinite(v) && v !== num(ed.orig);
+      if (submit && raw !== "" && !Number.isFinite(v)) {
         pushLog("⚠️「" + raw + "」不是一个数字，没改");
       }
-      if (p) {
-        ed.row.outerHTML = rowHtml(p);
-      }
+    }
+    closeFieldSheet(); // 值已经读出来了，先把 sheet 收掉（里面那个输入框马上要被清空）
+    if (!changed) {
+      refreshRow(ed.id);
       return;
     }
     var isStock = ed.field === "stock";
     var before = isStock ? num(p.stockTotal) : num(p[ed.field]);
     // 乐观更新：先让格子显示新值，请求失败再回滚（列表里改一个数还要等网络会显得很卡）
     applyLocal(p, ed.field, v);
-    ed.row.outerHTML = rowHtml(p);
+    refreshRow(ed.id);
     // 刻意不 reload：改的就是这一个字段，本地值已经是权威值；整表重绘会让列表闪一下、
     // 滚动位置也可能丢 —— 就地改的意义就是「不跳、不闪」。失败时回滚（下面 catch）
     var msg = isStock ? "setStockQty" : "updateProductField";
@@ -630,10 +906,7 @@
       })
       .catch(function () {
         applyLocal(p, ed.field, before);
-        var r = $("content").querySelector('tr[data-id="' + p.id + '"]');
-        if (r) {
-          r.outerHTML = rowHtml(p);
-        }
+        refreshRow(p.id);
       });
   }
 
@@ -708,6 +981,9 @@
     if (field === "status") {
       return v === "off" ? "已下架" : "在售";
     }
+    if (field === "img") {
+      return v === "0" ? "无图" : "有图";
+    }
     return v === "" ? "（空）" : v;
   }
 
@@ -720,7 +996,7 @@
     if (state.codeQ.trim()) {
       out.push({ c: "code", t: "编号 " + state.codeQ.trim() });
     }
-    ENUM_COLS.forEach(function (c) {
+    ENUM_COLS.concat([["img", "图片"]]).forEach(function (c) {
       var set = state.filters.enum[c[0]];
       Object.keys(set).forEach(function (v) {
         out.push({ c: "enum:" + c[0] + ":" + v, t: c[1] + "：" + enumLabel(c[0], v) });
@@ -771,20 +1047,28 @@
     bar.innerHTML = html;
   }
 
+  /** 编号框在展开区里动态生成，面板关着时不存在 —— 统一走这里，别直接 $("codeQ").value = */
+  function setCodeQ(v) {
+    var el = $("codeQ");
+    if (el) {
+      el.value = v;
+    }
+  }
+
   /** 撤掉一个条件。改完要把输入框/圆片同步回去，不然界面和 state 会各说各话 */
   function clearOne(code) {
     if (code === "all") {
-      state.filters = { enum: { category: {}, series: {}, grade: {}, status: {} }, num: {} };
+      state.filters = { enum: { category: {}, series: {}, grade: {}, status: {}, img: {} }, num: {} };
       state.q = "";
       state.codeQ = "";
       $("q").value = "";
-      $("codeQ").value = "";
+      setCodeQ("");
     } else if (code === "q") {
       state.q = "";
       $("q").value = "";
     } else if (code === "code") {
       state.codeQ = "";
-      $("codeQ").value = "";
+      setCodeQ("");
     } else if (code === "sort") {
       state.sort = "code";
     } else if (code.indexOf("enum:") === 0) {
@@ -802,9 +1086,35 @@
     renderList();
   }
 
+  /**
+   * 问后端「每个编号有几张图」。图片存在 imageDir 的编号文件夹里、不在数据库里，
+   * 要知道有没有图只能扫目录 —— 所以只在这里要一次，不塞进每次的 loadAll。
+   */
+  function requestImgStats() {
+    if (state.imgStatsLoaded || state.imgStatsBusy || !state.products.length) {
+      return;
+    }
+    state.imgStatsBusy = true;
+    var codes = state.products.map(function (p) {
+      return p.code;
+    });
+    invoke("loadImageStats", { codes: codes })
+      .catch(function () {
+        pushLog("⚠️统计图片数量失败，「有无图片」筛不了");
+      })
+      .then(function () {
+        state.imgStatsBusy = false;
+      });
+  }
+
   function renderFilter() {
-    // 编号范围那一格常驻在搜索行（高频，不该藏进展开区），这里只管离散列和数值区间
-    var html = "";
+    // 编号范围是一组条件（L1~L33），不是搜索关键词，所以跟其它筛选放在一起
+    var html =
+      '<div class="fgroup"><div class="ftitle" data-label="编号范围">编号范围</div>' +
+      '<input id="codeQ" class="inline wide" type="search" placeholder="L1~L33 / 1~33 / L1" value="' +
+      esc(state.codeQ) +
+      '" /><p class="muted small">L1~L33 是区间；单写一个 L1 = 精确匹配 L001；多段用逗号：A1~A33,L1~L22。' +
+      "想按编号子串找（比如 L007）用顶部搜索框，左边下拉选「编号」。</p></div>";
     ENUM_COLS.forEach(function (c) {
       var field = c[0];
       var set = state.filters.enum[field];
@@ -835,6 +1145,36 @@
         (chips || '<span class="muted small">（没有可选值）</span>') +
         "</div></div>";
     });
+    // 「图片」：有图 / 无图 互斥，用来找还没传图的商品去补图。
+    // 数量要后端扫目录才知道，扫完之前只给两个不带数字的圆片。
+    var imgSet = state.filters.enum.img || {};
+    var n0 = 0;
+    var n1 = 0;
+    if (state.imgStatsLoaded) {
+      state.products.forEach(function (p) {
+        if (num(state.imgStats[p.code]) > 0) {
+          n1++;
+        } else {
+          n0++;
+        }
+      });
+    }
+    html +=
+      '<div class="fgroup"><div class="ftitle" data-label="图片">图片</div><div class="chips">' +
+      '<button type="button" class="chip' +
+      (imgSet["0"] ? " on" : "") +
+      '" data-field="img" data-v="0">无图' +
+      (state.imgStatsLoaded ? " " + n0 : "") +
+      "</button>" +
+      '<button type="button" class="chip' +
+      (imgSet["1"] ? " on" : "") +
+      '" data-field="img" data-v="1">有图' +
+      (state.imgStatsLoaded ? " " + n1 : "") +
+      "</button>" +
+      (state.imgStatsLoaded
+        ? ""
+        : '<span class="muted small">（打开筛选时正在数图片…）</span>') +
+      "</div></div>";
     NUM_COLS.forEach(function (c) {
       var field = c[0];
       var r = state.filters.num[field] || { min: "", max: "" };
@@ -907,6 +1247,20 @@
         : "第 " + from + "–" + to + " 条 · 共 " + total + " 条 · " + (state.page + 1) + "/" + pages + " 页";
     $("pagePrev").disabled = state.page <= 0;
     $("pageNext").disabled = state.page >= pages - 1;
+    $("pageFirst").disabled = state.page <= 0;
+    $("pageLast").disabled = state.page >= pages - 1;
+    // 页数变了才重填下拉：每次渲染都重建会把用户刚展开的下拉收回去
+    var jump = $("pageJump");
+    if (jump.dataset.pages !== String(pages)) {
+      jump.dataset.pages = String(pages);
+      var opts = "";
+      for (var i = 0; i < pages; i++) {
+        opts += '<option value="' + i + '">第 ' + (i + 1) + " 页</option>";
+      }
+      jump.innerHTML = opts;
+    }
+    jump.value = String(state.page);
+    jump.disabled = pages <= 1;
   }
 
   function fillCategoryList() {
@@ -1065,7 +1419,21 @@
         }
         box.innerHTML = names
           .map(function (n) {
-            return '<img src="' + imgUrl(code, n, "thumb") + '" data-name="' + esc(n) + '" alt="" />';
+            return (
+              // 类名不能叫 thumb：画册卡片那张图已经是 .thumb 了，会撞样式
+              '<span class="thumbw">' +
+              '<img src="' +
+              imgUrl(code, n, "thumb") +
+              '" data-name="' +
+              esc(n) +
+              '" alt="" />' +
+              // × 跟着缩略图走：不用先点进灯箱再删。按文件名删（不按序号），
+              // 别人在这期间删掉前面一张时序号会指到别的文件上
+              '<button class="thumb-x" type="button" data-del="' +
+              esc(n) +
+              '" title="删除这张图">✕</button>' +
+              "</span>"
+            );
           })
           .join("");
       })
@@ -1075,64 +1443,151 @@
   }
 
   function openViewer(code, name) {
+    viewerImg = { code: code, name: name };
     $("viewerImg").src = imgUrl(code, name, "full");
+    // 封面（name 为空）不是具体某张文件，删它等于删整个夹，不给这个按钮
+    $("viewerDel").style.display = name ? "" : "none";
     $("viewer").classList.add("show");
   }
 
-  function saveDetail() {
+  var viewerImg = null; // 灯箱当前这张：{ code, name }
+  /** 灯箱里删当前这张：后端走 deleteImageFile（按文件名删，不按序号，避免删错） */
+  function deleteViewerImage() {
+    var v = viewerImg;
+    if (!v || !v.name) {
+      return;
+    }
+    if (!window.confirm("删除「" + v.name + "」这张图？删了就找不回来了。")) {
+      return;
+    }
+    pushLog("⏳删除 " + v.name + "…");
+    toast("删除中…");
+    invoke("deleteImageFile", { code: v.code, name: v.name })
+      .then(function (j) {
+        if (imgDeleteFailed(j)) {
+          pushLog("❌没删掉，图片还在（原因见上面一行）");
+          toast("没删掉，图片还在（多半正被占用，稍等再试）", true);
+          return;
+        }
+        toast("已删除 " + v.name);
+        $("viewer").classList.remove("show");
+        viewerImg = null;
+        state.imgStatsLoaded = false; // 图数变了，下次用「有无图片」筛选时重新统计
+        bumpImg(); // 同 deleteThumb：先换 URL 再重读，否则浏览器拿缓存里的旧图顶着
+        if (state.detail && state.detail.code === v.code) {
+          loadImages(v.code);
+          renderList();
+          $("dCover").innerHTML = '<img src="' + imgUrl(v.code, "", "full") + '" alt="" />';
+        }
+        return invoke("loadAll");
+      })
+      .catch(function () {
+        pushLog("❌删除失败（可能被别的机器占用）");
+        toast("删除失败（可能被别的机器占用）", true);
+      });
+  }
+
+  /**
+   * 后端删图失败时只打一行日志、不抛错（HTTP 照样 200），所以前端必须自己看日志判成败 ——
+   * 否则会打出「🗑已删除」而图还在那儿，看着就像「点了没反应」。
+   */
+  function imgDeleteFailed(j) {
+    var logs = (j && j.logs) || [];
+    for (var i = 0; i < logs.length; i++) {
+      var t = String(logs[i]);
+      if (t.indexOf("删不掉") >= 0 || t.indexOf("没有第") >= 0 || t.indexOf("❌") >= 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * 缩略图右上角 ×：直接删，不弹确认（用户明确要求「这样删起来更方便」）。
+   * 代价要说清楚 —— 后端 deleteImageFile 是真 unlink，不进回收站也不备份，删了就没了。
+   */
+  function deleteThumb(name) {
+    var d = state.detail;
+    if (!d || !name) {
+      return;
+    }
+    pushLog("⏳删除 " + name + "…");
+    toast("删除中…");
+    invoke("deleteImageFile", { code: d.code, name: name })
+      .then(function (j) {
+        if (imgDeleteFailed(j)) {
+          pushLog("❌没删掉，图片还在（原因见上面一行）");
+          toast("没删掉，图片还在（多半正被占用，稍等再试）", true);
+          loadImages(d.code); // 清单并没变，重画一遍确认状态
+          return;
+        }
+        pushLog("🗑已删除 " + name);
+        toast("已删除 " + name);
+        state.imgStatsLoaded = false; // 图数变了，下次用「有无图片」筛选时重新统计
+        bumpImg(); // 必须先于 imgUrl：URL 变了才会真去问服务器，否则浏览器继续显示缓存里的旧图
+        loadImages(d.code);
+        renderList(); // 列表里这张卡片的封面也用旧 URL，一起换掉（此时列表是隐藏的，图不会真去加载）
+        $("dCover").innerHTML = '<img src="' + imgUrl(d.code, "", "full") + '" alt="" />';
+      })
+      .catch(function () {
+        pushLog("❌删除失败（可能被别的机器占用）");
+        toast("删除失败（可能被别的机器占用）", true);
+      });
+  }
+
+  /**
+   * 详情页改完一格就存一格（失焦即存），不再有「保存修改」按钮。
+   * 刻意不 loadAll 整表回读：回读会重填整个表单，把用户正在改、还没保存的其它格子冲掉。
+   * 后端改完会回一条 productsDelta，售价被规则重算后的新值从那里拿（见 syncDetailFromDelta）。
+   */
+  function commitDetailField(cfg) {
     var d = state.detail;
     if (!d) {
-      return Promise.resolve();
+      return;
     }
-    var jobs = [];
-    var name = $("fName").value.trim();
-    var category = $("fCategory").value.trim();
-    var series = $("fSeries").value.trim();
-    var cost = num($("fCost").value);
-    var sale = num($("fSale").value);
-    var stock = num($("fStock").value);
-    if (name !== d.orig.name) {
-      jobs.push(["updateProductField", { id: d.id, field: "name", value: name }]);
+    var el = $(cfg[0]);
+    var key = cfg[1];
+    var kind = cfg[2];
+    var raw = String(el.value || "").trim();
+    var cur = d.orig[key];
+    var val;
+    if (kind === "text") {
+      val = raw;
+    } else {
+      val = Number(raw);
+      if (raw === "" || !Number.isFinite(val)) {
+        pushLog("⚠️「" + raw + "」不是一个数字，没改");
+        el.value = String(cur);
+        return;
+      }
+      if (kind === "int") {
+        val = Math.trunc(val);
+      }
     }
-    if (category !== d.orig.category) {
-      jobs.push(["updateProductField", { id: d.id, field: "category", value: category }]);
+    if (val === cur) {
+      return; // 值没变就不发请求
     }
-    if (series !== d.orig.series) {
-      jobs.push(["updateProductField", { id: d.id, field: "series", value: series }]);
+    d.orig[key] = val; // 乐观更新：delta 回来还会再校准一次
+    var msg = key === "stockTotal" ? "setStockQty" : "updateProductField";
+    var payload = key === "stockTotal" ? { id: d.id, qty: val } : { id: d.id, field: key, value: val };
+    invoke(msg, payload).catch(function () {
+      d.orig[key] = cur;
+      el.value = String(cur);
+      pushLog("❌保存失败，已退回原值");
+    });
+  }
+
+  /** 离开详情页前把焦点上那一格结算掉：点返回/翻上一个时，输入框的 change 不一定来得及触发 */
+  function flushDetailEdits() {
+    var a = document.activeElement;
+    if (!a || !a.id || !$("screen-detail").classList.contains("show")) {
+      return;
     }
-    if (cost !== d.orig.cost_price) {
-      jobs.push(["updateProductField", { id: d.id, field: "cost_price", value: cost }]);
-    }
-    if (sale !== d.orig.sale_price) {
-      jobs.push(["updateProductField", { id: d.id, field: "sale_price", value: sale }]);
-    }
-    if (stock !== d.orig.stockTotal) {
-      jobs.push(["setStockQty", { id: d.id, qty: stock }]);
-    }
-    var statusNow = num(
-      (function () {
-        for (var i = 0; i < state.products.length; i++) {
-          if (num(state.products[i].id) === num(d.id)) {
-            return state.products[i].status;
-          }
-        }
-        return 0;
-      })(),
-    );
-    if (statusNow !== d.status) {
-      jobs.push(["setStatus", { id: d.id, status: d.status }]);
-    }
-    if (!jobs.length) {
-      pushLog("ℹ️没有改动");
-      return Promise.resolve();
-    }
-    // 一条一条发：每条都是独立的业务动作，改动点很少，串行更好排查
-    return jobs.reduce(function (chain, job) {
-      return chain.then(function () {
-        return invoke(job[0], job[1]);
-      });
-    }, Promise.resolve()).then(function () {
-      return invoke("loadAll");
+    DETAIL_FIELDS.forEach(function (f) {
+      if (f[0] === a.id) {
+        commitDetailField(f);
+        a.blur();
+      }
     });
   }
 
@@ -1155,9 +1610,58 @@
     pushLog("❌这个前缀的编号用满了");
   }
 
+  /**
+   * 建号前先查重：后端当然也会拒（编号唯一），但那是一条日志，用户看不见。
+   * 录入到一半才被告知编号冲突很恼人，所以在这一格打完字就立刻说。
+   */
+  function findCodeOwner(code) {
+    var key = String(code || "").trim().toUpperCase();
+    if (!key) {
+      return null;
+    }
+    for (var i = 0; i < state.products.length; i++) {
+      if (String(state.products[i].code || "").trim().toUpperCase() === key) {
+        return state.products[i];
+      }
+    }
+    return null;
+  }
+
+  /** 编号框下面那行提示：占号就红字点名是谁，不占号就收起来 */
+  function checkNewCode() {
+    var el = $("nCodeHint");
+    if (!el) {
+      return null;
+    }
+    var owner = findCodeOwner($("nCode").value);
+    if (owner) {
+      var who = String(owner.name || "").trim();
+      el.textContent =
+        "⚠️编号已存在：" + String(owner.code) + (who ? "（" + who + "）" : "") + "。换一个，或点「用下一个空号」。";
+      el.style.display = "";
+    } else {
+      el.textContent = "";
+      el.style.display = "none";
+    }
+    return owner;
+  }
+
+  // 新建页先选好照片，保存成功后再传（没编号就传不了，图片挂在编号目录下）
+  var pendingNewFiles = [];
+
   function createProduct() {
+    var code = $("nCode").value.trim();
+    if (!code) {
+      toast("先填编号", true);
+      return Promise.resolve();
+    }
+    if (findCodeOwner(code)) {
+      // 输入框下面已经有红字了，这里再弹一次是因为「保存」是明确的动作，得有个回应
+      toast("编号 " + code + " 已经有了，换一个", true);
+      return Promise.resolve();
+    }
     var payload = {
-      code: $("nCode").value.trim(),
+      code: code,
       name: $("nName").value.trim(),
       category: $("nCategory").value.trim(),
       series: $("nSeries").value.trim(),
@@ -1173,21 +1677,59 @@
       var ok = (j.posts || []).some(function (m) {
         return m && m.type === "toast" && String(m.text || "").indexOf("已新建") >= 0;
       });
-      if (ok) {
-        $("nCode").value = "";
-        $("nName").value = "";
-        $("nCost").value = "";
-        $("nSale").value = "";
-        $("nStock").value = "0";
-        show("screen-list");
+      if (!ok) {
+        // 后端拒绝时只写日志（编号格式、名称为空、售价非法都在这里），挑第一条 ❌ 说给用户听
+        var why = ((j && j.logs) || []).filter(function (t) {
+          return String(t).indexOf("❌") >= 0;
+        })[0];
+        toast(why ? String(why).replace(/^❌/, "") : "没建成，看看日志里的原因", true);
+        return;
       }
+      var files = pendingNewFiles;
+      pendingNewFiles = [];
+      $("nCode").value = "";
+      $("nName").value = "";
+      $("nCost").value = "";
+      $("nSale").value = "";
+      $("nStock").value = "0";
+      checkNewCode(); // 清掉编号框下面那行红字
+      renderNewPickInfo();
+      state.imgStatsLoaded = false; // 新商品还没图，之前统计的不算数
+      toast("已新建 " + code);
+      show("screen-list");
+      // 先让表里真的有这条，否则紧接着建下一个时「编号已存在」查不到它
+      return invoke("loadAll").then(function () {
+        if (files.length) {
+          sendImages(code, files); // 新建完顺手把选好的照片传上去
+        }
+      });
     });
   }
 
+  /** 新建页选完照片后那一行的说明：告诉用户照片什么时候会被传走 */
+  function renderNewPickInfo() {
+    var el = $("newPickInfo");
+    if (!el) {
+      return;
+    }
+    el.textContent = pendingNewFiles.length
+      ? "已选 " + pendingNewFiles.length + " 张，点「保存」建成商品后自动上传。"
+      : "可以先拍照，建成后自动上传（也可以建成后再去详情页传）。";
+  }
+
   // ---------- 上传（手机拍照 / 相册） ----------
+  /** 详情页用：传当前这个商品 */
   function uploadFiles(files) {
     var d = state.detail;
-    if (!d || !files || !files.length) {
+    if (!d) {
+      return;
+    }
+    sendImages(d.code, files);
+  }
+
+  /** 真正的上传：按编号传（新建页也是这一条路，只是编号是刚建出来的） */
+  function sendImages(code, files) {
+    if (!code || !files || !files.length) {
       return;
     }
     var items = [];
@@ -1207,15 +1749,26 @@
     Promise.all(reads).then(function () {
       if (!items.length) {
         pushLog("⚠️没读到图片数据");
+        toast("没读到图片数据", true);
         return;
       }
       pushLog("⏳上传 " + items.length + " 张…");
-      invoke("receiveImageData", { code: d.code, items: items }).then(function () {
-        // 传完图片可能换了封面：把详情和大图缓存都作废再读一次
-        $("dCover").innerHTML = '<img src="' + imgUrl(d.code, "", "full") + "&t=" + Date.now() + '" alt="" />';
-        loadImages(d.code);
-        return invoke("loadAll");
-      });
+      toast("上传 " + items.length + " 张…");
+      invoke("receiveImageData", { code: code, items: items })
+        .then(function () {
+          // 传完图片可能换了封面：换 URL 版本号再重读，否则浏览器拿缓存里的旧封面顶着
+          bumpImg();
+          toast("已上传 " + items.length + " 张");
+          state.imgStatsLoaded = false; // 这个编号现在有图了，之前统计的作废
+          if (state.detail && state.detail.code === code) {
+            $("dCover").innerHTML = '<img src="' + imgUrl(code, "", "full") + '" alt="" />';
+            loadImages(code);
+          }
+          return invoke("loadAll");
+        })
+        .catch(function () {
+          toast("上传失败，请再试一次", true);
+        });
     });
   }
 
@@ -1235,12 +1788,14 @@
       state.view = "gallery";
       $("viewGallery").classList.add("on");
       $("viewList").classList.remove("on");
+      applyZoom(); // 画册固定最小档
       renderList();
     };
     $("viewList").onclick = function () {
       state.view = "list";
       $("viewList").classList.add("on");
       $("viewGallery").classList.remove("on");
+      applyZoom(); // 回到表格恢复上次的档位
       renderList();
     };
     var reload = function () {
@@ -1255,6 +1810,7 @@
       $("btnFilter").classList.toggle("on", state.panelOpen);
       if (state.panelOpen) {
         renderFilter();
+        requestImgStats(); // 一打开就把「无图 N / 有图 M」数出来，省得用户自己猜
       }
     };
     $("btnSettings").onclick = function () {
@@ -1263,6 +1819,125 @@
     };
     $("btnSetBack").onclick = function () {
       show("screen-list");
+    };
+    $("zoomOut").onclick = function () {
+      stepZoom(-1);
+    };
+    $("zoomIn").onclick = function () {
+      stepZoom(1);
+    };
+    $("zoomReset").onclick = function () {
+      setZoom(1);
+    };
+    // 双指捏合在这里一律**拦下来自己处理**：浏览器默认的是整页缩放，会把顶栏/搜索/筛选/
+    // 分页条一起缩小（那不是要的效果）。但只有表格视图真的改 --zoom；画册里拦了却不做任何
+    // 事 —— 用户明确不要画册缩放，那就让双指在画册里彻底没反应，而不是交给浏览器整页放大。
+    // 详情页是另一个 <section>，根本不在这个容器里，所以它保留浏览器自己的双指缩放。
+    var pinch = null;
+    function pinchDist(t) {
+      var dx = t[0].clientX - t[1].clientX;
+      var dy = t[0].clientY - t[1].clientY;
+      return Math.sqrt(dx * dx + dy * dy) || 1;
+    }
+    var contentEl = $("content");
+    // 保底：万一页面已经被放大了（iOS 会自动放大聚焦的输入框、或者用户在别处捏过），
+    // 就放行系统手势让他捏回来 —— 否则「只缩内容区」的拦截会把人困在放大状态里出不来。
+    function pageZoomed() {
+      return !!(window.visualViewport && window.visualViewport.scale > 1.01);
+    }
+    contentEl.addEventListener(
+      "touchstart",
+      function (e) {
+        if (e.touches.length === 2) {
+          pinch = { d: pinchDist(e.touches), z: zoom };
+        }
+      },
+      { passive: true }
+    );
+    contentEl.addEventListener(
+      "touchmove",
+      function (e) {
+        if (e.touches.length !== 2 || !pinch || pageZoomed()) {
+          return;
+        }
+        e.preventDefault(); // 单指滚动不受影响（只有两指才拦）
+        if (!zoomActive()) {
+          return; // 画册：拦下来就行，不改任何东西
+        }
+        var z = snapZoom(pinch.z * (pinchDist(e.touches) / pinch.d));
+        if (z !== zoom) {
+          setZoom(z);
+        }
+      },
+      { passive: false }
+    );
+    contentEl.addEventListener("touchend", function (e) {
+      if (e.touches.length < 2) {
+        pinch = null;
+      }
+    });
+    // iOS Safari 的双指缩放走的是 gesture 事件（不听 touchmove 的 preventDefault），单独拦掉。
+    // 画册同样拦：这是 iOS 上唯一能挡住捏合的办法（touch-action 在 Safari 上不管用）
+    ["gesturestart", "gesturechange", "gestureend"].forEach(function (n) {
+      contentEl.addEventListener(
+        n,
+        function (e) {
+          if (!pageZoomed()) {
+            e.preventDefault();
+          }
+        },
+        { passive: false }
+      );
+    });
+    // ---- 改一个值的 sheet ----
+    $("fsSave").onclick = function () {
+      commitEdit(true);
+    };
+    $("fsCancel").onclick = function () {
+      commitEdit(false);
+    };
+    $("fsDetail").onclick = function () {
+      var id = editing ? editing.id : 0;
+      commitEdit(false); // 顺手结算（值没变等于没改，不会写库）
+      if (id) {
+        openDetail(id);
+      }
+    };
+    // 输入框是每次重建的，事件走 sheet 这一层的委托
+    $("fieldSheet").addEventListener("keydown", function (e) {
+      if (!e.target || e.target.id !== "fsInput") {
+        return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        commitEdit(true);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        commitEdit(false);
+      }
+    });
+    // 等级是下拉，选完就定（没有回车可敲）
+    $("fieldSheet").addEventListener("change", function (e) {
+      if (e.target && e.target.id === "fsInput" && e.target.tagName === "SELECT") {
+        commitEdit(true);
+      }
+    });
+    // iOS 上键盘弹出时 fixed 元素不会被顶起来，底部 sheet 会被键盘整个压住 ——
+    // 用 visualViewport 量出键盘占了多少，从 sheet 下面垫上去（Android 会自己 resize，量出来是 0）
+    if (window.visualViewport) {
+      var vv = window.visualViewport;
+      var liftSheet = function () {
+        var kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+        $("fieldSheet").style.setProperty("--kb", kb + "px");
+      };
+      vv.addEventListener("resize", liftSheet);
+      vv.addEventListener("scroll", liftSheet);
+    }
+    // 点 sheet 外面那层半透明区 = 放弃（宁可没改成，也别把没看清的数写进去）
+    $("fieldSheet").onclick = function (e) {
+      if (e.target === $("fieldSheet")) {
+        commitEdit(false);
+      }
     };
     $("sortBy").onchange = function () {
       state.sort = $("sortBy").value;
@@ -1282,14 +1957,27 @@
       if (!chip) {
         return;
       }
-      var set = state.filters.enum[chip.dataset.field];
+      var field = chip.dataset.field;
+      var set = state.filters.enum[field];
       var v = chip.dataset.v;
       if (set[v]) {
         delete set[v];
       } else {
         set[v] = 1;
+        if (field === "img") {
+          // 有图 / 无图 是互斥的，别让两个都亮着（那只会筛出空表）
+          Object.keys(set).forEach(function (k) {
+            if (k !== v) {
+              delete set[k];
+            }
+          });
+        }
       }
       chip.classList.toggle("on");
+      if (field === "img") {
+        // 互斥后另一个圆片要灭掉：整块重画最省事，也顺带刷新「无图 N」那个数字
+        renderFilter();
+      }
       var g = chip.closest(".fgroup");
       var t = g && g.querySelector(".ftitle");
       if (t) {
@@ -1301,6 +1989,12 @@
     };
     $("filterBody").oninput = function (e) {
       var el = e.target;
+      if (el.id === "codeQ") {
+        state.codeQ = el.value;
+        state.page = 0;
+        renderList();
+        return;
+      }
       if (el.dataset && el.dataset.num) {
         var f = el.dataset.num;
         var r = state.filters.num[f] || { min: "", max: "" };
@@ -1320,12 +2014,7 @@
       state.page = 0; // 筛完条数变了，停在第 3 页没有意义
       renderList();
     };
-    // 编号范围是常驻输入框（在搜索行里），直接绑
-    $("codeQ").oninput = function () {
-      state.codeQ = $("codeQ").value;
-      state.page = 0;
-      renderList();
-    };
+    // 编号框在展开区里是动态生成的，事件走 filterBody 的委托，不能在这里直接绑
     $("pagePrev").onclick = function () {
       if (state.page > 0) {
         state.page--;
@@ -1338,54 +2027,72 @@
       renderList();
       $("content").scrollTop = 0;
     };
-    $("content").onclick = function (e) {
-      if (e.target.closest(".ok")) {
-        commitEdit(true);
-        return;
-      }
-      if (e.target.closest(".no")) {
-        commitEdit(false);
-        return;
-      }
-      // 行不能写死成 tr：画册是 div[data-id]，写死了画册点卡片就不进详情了
-      var row = e.target.closest("[data-id]");
-      var cell = e.target.closest("td[data-ed]");
-      // 点到别的行：当前编辑按「值变了就提交」处理（表格的常规习惯），值没变等于没点
-      if (editing && row !== editing.row) {
-        commitEdit(true);
-      }
-      if (!(cell && row)) {
-        // 只有带 data-open 的才进详情：表格里是编号列，画册里是整张卡片
-        if (e.target.closest("[data-open]")) {
-          openDetail(num(row.dataset.id));
-        }
-        return;
-      }
-      if (editing && row === editing.row) {
-        // 同一行里换一列改（改完售价接着改进价）：先结算上一格，再开新的
-        if (cell.dataset.ed !== editing.field) {
-          var id = editing.id;
-          var f = cell.dataset.ed;
-          commitEdit(true);
-          var r2 = $("content").querySelector('tr[data-id="' + id + '"]');
-          var c2 = r2 && r2.querySelector('td[data-ed="' + f + '"]');
-          if (c2) {
-            startEdit(r2, c2);
-          }
-        }
-        return; // 点的是正在编辑的那一格（输入框本身）：别重建，否则光标没了
-      }
-      startEdit(row, cell);
+    $("pageFirst").onclick = function () {
+      state.page = 0;
+      renderList();
+      $("content").scrollTop = 0;
     };
+    $("pageLast").onclick = function () {
+      state.page = 999999; // renderList 里会夹到最后一页
+      renderList();
+      $("content").scrollTop = 0;
+    };
+    $("pageJump").onchange = function () {
+      state.page = num($("pageJump").value);
+      renderList();
+      $("content").scrollTop = 0;
+    };
+    $("content").onclick = function (e) {
+      // 行不能写死成 tr：画册是 div[data-id]，写死了画册点卡片就不进详情了
+      var hitRow = e.target.closest("[data-id]");
+      var hitCell = e.target.closest("td[data-ed]");
+      // 保存后整行会被重画，e.target 上的引用就成了孤儿节点 —— 一律按 id 重新取
+      var row = hitRow ? $("content").querySelector('[data-id="' + hitRow.dataset.id + '"]') : null;
+      var cell = row && hitCell ? row.querySelector('td[data-ed="' + hitCell.dataset.ed + '"]') : null;
+      if (cell && row) {
+        // 状态例外：它是二选一，没有输入框也不会顶出键盘，误触了再点一下就换回来，
+        // 为它多加一拍不划算
+        if (cell.dataset.ed === "status") {
+          var sp = findProduct(num(row.dataset.id));
+          if (sp) {
+            toggleStatus(sp, row);
+          }
+          return;
+        }
+        var id = num(row.dataset.id);
+        var field = cell.dataset.ed;
+        // 同一格点第二下 = 确认要改 → 弹输入框；点别处只是换选中
+        if (selected && num(selected.id) === id && selected.field === field) {
+          openFieldSheet(row, cell);
+          return;
+        }
+        clearSelected();
+        selected = { id: id, field: field };
+        cell.classList.add("sel");
+        pushLog("已选中 " + (FIELD_LABEL[field] || field) + "，再点一下就能改");
+        return;
+      }
+      // 点到表格里的空白（不在任何一格上）：取消选中
+      clearSelected();
+      // 只有带 data-open 的才进详情：表格里是编号列，画册里是整张卡片
+      if (row && e.target.closest("[data-open]")) {
+        openDetail(num(row.dataset.id));
+      }
+    };
+    // 双击进详情已经去掉了：改成「点两下改一个值」之后它就彻底冲突（第二下是弹输入框）。
+    // 进详情现在只有三个明确入口：点编号、sheet 里的「详情 ›」、画册点卡片。
     $("btnBack").onclick = function () {
+      flushDetailEdits(); // 焦点那格还没结算就返回的话，改动会丢
       show("screen-list");
     };
     $("btnPrevItem").onclick = function () {
+      flushDetailEdits();
       if (state.detail) {
         openDetailAt(state.detail.idx - 1);
       }
     };
     $("btnNextItem").onclick = function () {
+      flushDetailEdits();
       if (state.detail) {
         openDetailAt(state.detail.idx + 1);
       }
@@ -1404,20 +2111,35 @@
         /* 日志里已经有原因 */
       });
     };
-    $("btnNextCode").onclick = nextFreeCode;
     $("nGrade").onchange = updateRuleHint;
-    $("btnSave").onclick = function () {
-      saveDetail().catch(function () {
-        /* 日志里已经有原因 */
+    // 失焦即存：change 事件在「值变了且离开这一格」时才触发，正好是想要的时机
+    DETAIL_FIELDS.forEach(function (f) {
+      $(f[0]).onchange = function () {
+        commitDetailField(f);
+      };
+    });
+    $("fStatus").onclick = function () {
+      var d = state.detail;
+      if (!d) {
+        return;
+      }
+      var next = d.status === 1 ? 0 : 1;
+      var before = d.status;
+      d.status = next;
+      syncStatusBtn();
+      // 与列表保持一致：点一下立刻生效，不用等「保存修改」
+      invoke("setStatus", { id: d.id, status: next }).catch(function () {
+        d.status = before;
+        syncStatusBtn();
+        pushLog("❌改上下架失败，已退回");
       });
     };
-    $("fStatus").onclick = function () {
-      if (state.detail) {
-        state.detail.status = state.detail.status === 1 ? 0 : 1;
-        syncStatusBtn();
-      }
-    };
     $("dImages").onclick = function (e) {
+      var x = e.target.closest(".thumb-x");
+      if (x) {
+        deleteThumb(x.dataset.del);
+        return;
+      }
       var img = e.target.closest("img[data-name]");
       if (img && state.detail) {
         openViewer(state.detail.code, img.dataset.name);
@@ -1431,7 +2153,9 @@
     $("viewerClose").onclick = function () {
       $("viewer").classList.remove("show");
       $("viewerImg").src = "";
+      viewerImg = null;
     };
+    $("viewerDel").onclick = deleteViewerImage;
     $("btnUpload").onclick = function () {
       $("filePick").click();
     };
@@ -1439,15 +2163,44 @@
       uploadFiles($("filePick").files);
       $("filePick").value = ""; // 同一个文件连传两次也要能触发 change
     };
-    $("status").onclick = function () {
+    // 日志改成显式按钮：状态条整条可点的话，手指碰到底部就弹出一大片日志，很烦
+    $("btnLog").onclick = function () {
       renderLogs();
       $("logPanel").classList.add("show");
     };
     $("logClose").onclick = function () {
       $("logPanel").classList.remove("show");
     };
+    // ---- 新建页 ----
+    $("nCode").oninput = checkNewCode;
+    $("nCode").onblur = checkNewCode;
+    $("btnNextCode").onclick = function () {
+      nextFreeCode();
+      checkNewCode();
+    };
+    $("btnNewPick").onclick = function () {
+      $("newFilePick").click();
+    };
+    $("newFilePick").onchange = function () {
+      pendingNewFiles = Array.prototype.slice.call($("newFilePick").files || []);
+      renderNewPickInfo();
+      if (pendingNewFiles.length) {
+        toast("已选 " + pendingNewFiles.length + " 张，保存后上传");
+      }
+    };
+    renderNewPickInfo();
   }
 
+  // 记住上次的大小：手机上表格字号是要反复调的东西，每次进来都回到 100% 很烦
+  try {
+    var z0 = Number(localStorage.getItem(ZOOM_KEY));
+    if (z0) {
+      setZoom(snapZoom(z0)); // 存的可能是旧档位值，吸附一下
+    }
+  } catch (e) {
+    /* 读不到就用默认 1 */
+  }
+  applyZoom(); // 无论有没有存过：按当前视图决定这三个按钮在不在
   bind();
   pushLog("⏳读取商品…");
   invoke("loadAll").catch(function () {
