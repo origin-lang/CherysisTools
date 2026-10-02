@@ -15,14 +15,55 @@
           <button id="viewGallery" class="on">画册</button>
           <button id="viewList">列表</button>
         </div>
-        <button id="btnReload" class="icon" title="重新从数据库读一遍">🔄</button>
+        <button id="btnFilter" class="icon" title="展开筛选：品类/系列/等级/状态/数值范围">🔻 筛选</button>
+        <button id="btnSettings" class="icon" title="等级规则与设置">⚙</button>
         <button id="btnNew" class="primary">＋ 新建</button>
       </header>
       <div class="searchbar">
-        <input id="q" type="search" placeholder="🔍 编号 / 名称 / 品类 / 系列" autocomplete="off" />
+        <!-- 「搜哪一列」：与电脑版工具栏那个下拉同一口径，默认「全部」= 跨列找 -->
+        <select id="scope" class="scope" title="搜哪一列">
+          <option value="all">全部</option>
+          <option value="code">编号</option>
+          <option value="name">名称</option>
+          <option value="category">品类</option>
+          <option value="series">系列</option>
+        </select>
+        <input id="q" class="grow2" type="search" placeholder="🔍 搜…" autocomplete="off" />
+        <!-- 编号范围高频，常驻在搜索行：不用展开筛选也能敲 -->
+        <input
+          id="codeQ"
+          class="grow1 codeq"
+          type="search"
+          placeholder="编号 L1~L33"
+          autocomplete="off"
+          title="编号范围：L1~L33、1~33、多段用逗号（A1~A33,L1~L22）；单写一个 L1 是精确匹配 L001"
+        />
         <span id="count" class="muted"></span>
       </div>
+      <!-- 生效中的条件：每条一个 pill，点 ✕ 撤这一条；末尾「清除全部」一键回到全表 -->
+      <div id="activeBar" class="pills"></div>
+      <!-- 筛选展开区：在当前屏内展开，改的时候列表一直在下面，能看着它变 -->
+      <div id="filterPanel" class="filterpanel">
+        <div id="filterBody"></div>
+        <div class="card">
+          <label>排序
+            <select id="sortBy">
+              <option value="code">编号（默认）</option>
+              <option value="stock">库存：少 → 多</option>
+              <option value="sale">售价：低 → 高</option>
+              <option value="new">最近新建</option>
+            </select>
+          </label>
+          <button id="btnReload2" class="wide">🔄 重新从数据库读一遍</button>
+          <p class="muted small">筛选是「勾一批出来」，顶部搜索是「凭印象找一行」，两者叠加（AND）。</p>
+        </div>
+      </div>
       <main id="content" class="content"></main>
+      <div class="pager">
+        <button id="pagePrev" class="mini">‹ 上一页</button>
+        <span id="pageInfo" class="pi muted"></span>
+        <button id="pageNext" class="mini">下一页 ›</button>
+      </div>
     </section>
 
     <!-- ② 商品详情（覆盖整屏，手机上就是"进入这个商品"） -->
@@ -33,6 +74,11 @@
         <button id="btnUpload" class="primary">📷 传图</button>
         <input id="filePick" type="file" accept="image/*" capture="environment" multiple hidden />
       </header>
+      <div class="detailnav">
+        <button id="btnPrevItem" class="mini">‹ 上一个</button>
+        <span id="dPos" class="pi muted"></span>
+        <button id="btnNextItem" class="mini">下一个 ›</button>
+      </div>
       <main class="content">
         <div id="dCover" class="cover"></div>
         <div id="dImages" class="strip"></div>
@@ -85,6 +131,29 @@
           </div>
           <label>期初库存<input id="nStock" type="number" inputmode="numeric" step="1" value="0" /></label>
           <p id="ruleHint" class="muted small"></p>
+        </div>
+      </main>
+    </section>
+
+    <!-- ④ 规则与设置（只读：改规则仍然去电脑版） -->
+    <section id="screen-settings" class="screen">
+      <header class="bar">
+        <button id="btnSetBack" class="icon">‹ 返回</button>
+        <span class="title">⚙ 规则与设置</span>
+      </header>
+      <main class="content">
+        <div class="card">
+          <h3>等级规则 · 售价怎么算出来的</h3>
+          <div id="ruleTable" class="kv"></div>
+          <p class="muted small">cost = 进价。改规则要去电脑版（VS Code 插件 → 商品管理 →「规则与设置」标签页），网页版只看不改。</p>
+        </div>
+        <div class="card">
+          <h3>当前参数</h3>
+          <div id="settingTable" class="kv"></div>
+        </div>
+        <div class="card">
+          <h3>服务</h3>
+          <div id="serverTable" class="kv"></div>
         </div>
       </main>
     </section>

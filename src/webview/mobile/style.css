@@ -7,6 +7,7 @@
   --line: #e3e6ea;
   --brand: #23a884;
   --danger: #d64545;
+  --accent: #1b64f2; /* 生效条件的 pill 用这个蓝，跟品牌绿区分开 */
   --tap: 44px; /* 触控目标下限，手指点得准 */
 }
 @media (prefers-color-scheme: dark) {
@@ -16,6 +17,7 @@
     --muted: #9aa0a6;
     --card: #1e2126;
     --line: #2c3037;
+    --accent: #6f9bff;
   }
 }
 * {
@@ -38,6 +40,8 @@ body {
   display: none;
   flex-direction: column;
   height: 100dvh;
+  /* 底部状态条是 fixed 的：统一在屏幕底部留出它的高度，否则分页条会被压在它下面 */
+  padding-bottom: calc(34px + env(safe-area-inset-bottom));
 }
 .screen.show {
   display: flex;
@@ -135,11 +139,90 @@ select {
   font-size: 12px;
   white-space: nowrap;
 }
+/* 搜索行：关键词吃 2 份宽，编号范围吃 1 份（手机上也不至于被挤没） */
+.searchbar .grow2 {
+  flex: 2 1 90px;
+  min-width: 90px;
+}
+.searchbar .grow1 {
+  flex: 1 1 84px;
+  min-width: 84px;
+}
+.searchbar input.codeq {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-height: 36px;
+  color: var(--fg);
+}
+.searchbar input.bad {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* 生效中的条件：一条一个 pill，✕ 撤这一条 */
+.pills {
+  display: none;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+.pills.show {
+  display: flex;
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 8px;
+  min-height: 28px;
+  font-size: 12px;
+  color: var(--accent, #1b64f2);
+  background: rgba(27, 100, 242, 0.08);
+  border: 1px solid rgba(27, 100, 242, 0.35);
+  border-radius: 999px;
+}
+.pill span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pill b {
+  font-weight: 700;
+  opacity: 0.75;
+}
+.pill.soft {
+  color: var(--muted);
+  background: transparent;
+  border-color: var(--line);
+}
+.pill.clear {
+  color: #fff;
+  background: var(--accent, #1b64f2);
+  border-color: var(--accent, #1b64f2);
+}
+
+/* 筛选展开区：在当前屏内展开，列表还在下面，能看着它变 */
+.filterpanel {
+  display: none;
+  max-height: 52vh;
+  overflow-y: auto;
+  padding: 8px 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  -webkit-overflow-scrolling: touch;
+}
+.filterpanel.show {
+  display: block;
+}
 .content {
   flex: 1;
   overflow-y: auto;
   padding: 10px;
-  padding-bottom: 64px; /* 给底部状态条让位 */
   -webkit-overflow-scrolling: touch;
 }
 .muted {
@@ -201,40 +284,213 @@ select {
   font-weight: 700;
 }
 
-/* 列表：窄屏也不横滚（长名字省略） */
-.rows {
+/* 列表：真表格。列多放不下就横向滑，不再把字段挤成一行 */
+.tblwrap {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 10px;
-  overflow: hidden;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
-.row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 10px;
+.tbl {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  min-width: 540px; /* 低于这个宽度宁可横滑，也别把七列压成一团 */
+}
+.tbl th,
+.tbl td {
+  padding: 10px 8px;
   border-bottom: 1px solid var(--line);
-}
-.row:last-child {
-  border-bottom: 0;
-}
-.row .c {
-  font-weight: 700;
-  width: 4.6em;
-  flex: none;
-}
-.row .n {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  text-align: left;
   white-space: nowrap;
 }
-.row .p,
-.row .s {
-  flex: none;
-  font-size: 13px;
+.tbl th {
+  font-size: 12px;
+  font-weight: 400;
   color: var(--muted);
+}
+.tbl tbody tr:last-child td {
+  border-bottom: 0;
+}
+.tbl td.num {
+  text-align: right;
+}
+.tbl tr.off {
+  opacity: 0.55;
+}
+.tbl td.nm {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 可就地改的格子：虚下划线 = 「这一格能点」 */
+.tbl td.ed {
+  cursor: pointer;
+  border-bottom: 1px dashed var(--muted);
+}
+.tbl td.editing {
+  border-bottom: 0;
+  padding: 4px;
+}
+.editbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.editbox input.inline {
+  width: 4.8em;
+  min-height: 34px;
+  padding: 4px 6px;
+}
+.editbox button {
+  min-height: 34px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+.editbox .ok {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+.inlinehint {
+  margin: 0 0 8px;
+}
+
+/* 「搜哪一列」下拉：不跟着输入框撑满 */
+.scope {
+  width: auto;
+  flex: none;
+  min-height: 38px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+/* 漏斗筛选面板 */
+.fgroup {
+  margin-bottom: 14px;
+}
+.ftitle {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  min-height: 36px;
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 999px;
+}
+.chip.on {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+.rng {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rng input.inline {
+  flex: 1;
+  min-width: 0;
+}
+input.inline.wide {
+  width: 100%;
+}
+.fgroup .muted.small {
+  margin: 6px 0 0;
+}
+
+/* 规则与设置 */
+.card h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+.kv .kvr {
+  display: flex;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--line);
+  font-size: 13px;
+}
+.kv .kvr:last-child {
+  border-bottom: 0;
+}
+.kv .k {
+  flex: none;
+  width: 42%;
+  color: var(--muted);
+}
+.kv .v {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+/* 编号列 = 进详情的入口，给个颜色暗示它可点 */
+.tbl td.open {
+  color: var(--brand);
+  font-weight: 700;
+}
+
+/* 分页条：固定在列表下方，不跟着内容滚 */
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--card);
+  border-top: 1px solid var(--line);
+}
+.pager .pi {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pager button:disabled {
+  opacity: 0.4;
+}
+
+/* 详情里的「上一个 / 下一个」：按当前筛选结果的顺序翻 */
+.detailnav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+.detailnav .pi {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.detailnav button:disabled {
+  opacity: 0.4;
+}
+
+/* 编号表达式写错：红字说清楚原因，别只给一张空表 */
+.warn {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(214, 69, 69, 0.1);
+  color: var(--danger);
+  font-size: 12px;
+}
+input.bad {
+  border-color: var(--danger);
 }
 
 /* 详情 */

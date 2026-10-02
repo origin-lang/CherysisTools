@@ -333,9 +333,47 @@ function main() {
     }
   }
 
+  // —— 编号范围筛选语法：电脑版 client-product.js 与手机版 webview/mobile/app.js 各存一份 ——
+  // 两份物理分离（手机版是独立静态文件，引不到 client-product.js），改了一边忘了另一边，
+  // 就会出现「同一个 L1~L33 在手机上和电脑上筛出不一样的结果」。所以这里直接跑两边同一个
+  // 函数、比对输出，而不是只比源码文本（文本比不出「两边都漏改」这类问题）。
+  {
+    const deskFile = path.join(root, "src", "tools", "shopTool", "client-product.js");
+    const mobFile = path.join(root, "src", "webview", "mobile", "app.js");
+    // 取「常量 + parseCodeTok + parseCodeQuery」这一整段：两个文件里顺序一致
+    const sliceRules = (file, label) => {
+      const src = fs.readFileSync(file, "utf8");
+      const i = src.search(/(?:const|var|let) CODE_TERM_RE/);
+      const j = src.search(/function matchCodeRange/);
+      if (i < 0 || j < 0 || j <= i) {
+        fails.push(`${label}: 编号筛选语法段落定位失败`);
+        return null;
+      }
+      try {
+        return new Function(src.slice(i, j) + "; return parseCodeQuery;")();
+      } catch (e) {
+        fails.push(`${label}: 编号筛选语法段落执行失败（${e && e.message}）`);
+        return null;
+      }
+    };
+    const deskQ = sliceRules(deskFile, "client-product.js");
+    const mobQ = sliceRules(mobFile, "webview/mobile/app.js");
+    if (deskQ && mobQ) {
+      const raws = ["L1~L33", "1~33", "L1", "a1~a33", "A1~L9,L1~L9", "L9~L1", "A1~L9", "L1~33", "007", "A", "", "  L1 ~ L33  ", "L10000~L1"];
+      for (const r of raws) {
+        const a = JSON.stringify(deskQ(r));
+        const b = JSON.stringify(mobQ(r));
+        if (a !== b) {
+          fails.push(`编号筛选 parseCodeQuery(${JSON.stringify(r)}) 电脑版/手机版不一致：${a} ⇄ ${b}`);
+        }
+      }
+    }
+  }
+
   if (fails.length === 0) {
     console.log(`✅ parity OK：PRODUCT_FIELDS(FIELD_SPECS) 13 条逐一相等，canonicalCode/applyExpr/calcPrice 行为抽查通过`);
     console.log(`   导入可写字段与 sanitize/norm* 校验行为同步，无漂移`);
+    console.log(`   编号筛选语法（L1~L33 那套）：client-product.js ⇄ webview/mobile/app.js 行为一致`);
     console.log(`   来源：${path.relative(root, tsFile)} ⇄ ${path.relative(root, jsFile)}`);
     return;
   }
