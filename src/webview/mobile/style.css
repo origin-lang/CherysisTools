@@ -137,28 +137,36 @@ button .ico {
    手机上"按下去"有 :active 和触控高亮，够用；桌面浏览器上按钮**悬停没任何变化**
    会显得像张图片（光标已经是 pointer 了，但视觉上完全没反应）。
    只在真有鼠标的设备上开：@media (hover:hover) 能挡掉触屏——
-   否则手机上"点完还留着 hover 态"，看着像卡住了。 */
+   否则手机上"点完还留着 hover 态"，看着像卡住了。
+
+   ⚠️ 用"叠一层极淡的灰"，**不要改 background**：
+   改 background 会把「已选中的分段按钮（画册/列表，白字 + 品牌绿底）」压成白底白字 ——
+   实测就是"悬浮一下整块变全白"（user 报的第 4 条）；灯箱里那几个白字按钮同理。
+   叠加式高亮对任何底色都安全（inset 阴影画在背景之上、文字之下）。 */
 @media (hover: hover) and (pointer: fine) {
   button:hover:not(:disabled) {
-    background: var(--soft);
-    border-color: var(--muted);
+    box-shadow: inset 0 0 0 999px rgba(0, 0, 0, 0.055);
   }
   button.primary:hover:not(:disabled) {
-    background: #1e9374; /* 品牌绿压深一档，比加边框更明显 */
-    border-color: #1e9374;
+    box-shadow: inset 0 0 0 999px rgba(0, 0, 0, 0.14); /* 深色底上要压得更多才看得出来 */
   }
   /* 表格里能改的格子：悬停给一层极淡的底 —— 「这一格能点」在桌面上一眼看得出来 */
   .tbl td.ed:hover,
   .tbl td.open:hover {
     background: rgba(35, 168, 132, 0.08);
   }
-  .filterpanel .pill:hover,
-  #activeBar .pill:hover {
-    border-color: var(--muted);
-  }
   .grid .card:hover,
   .thumbw:hover {
     border-color: var(--muted);
+  }
+}
+/* 深色模式下"压暗"看不出来，改成提亮一档 */
+@media (hover: hover) and (pointer: fine) and (prefers-color-scheme: dark) {
+  button:hover:not(:disabled) {
+    box-shadow: inset 0 0 0 999px rgba(255, 255, 255, 0.07);
+  }
+  button.primary:hover:not(:disabled) {
+    box-shadow: inset 0 0 0 999px rgba(255, 255, 255, 0.12);
   }
 }input,
 select {
@@ -436,6 +444,23 @@ select {
 }
 #screen-list .seg button {
   min-height: calc(var(--tap) - 2px);
+}
+/* 顶栏那一排「画册/列表 筛选 ⚙ ＋新建」：手机上 5 个挤一行，宽度比高度更紧张。
+   高度仍是 --tap(44px)（手指点得准），只收左右内边距和最小宽度，行间距也从 10 收到 6。
+   44px 的最小宽度对带字的按钮本来就多余 —— 那点宽度靠 padding 给，够点。 */
+#screen-list .bar {
+  gap: 6px;
+}
+#screen-list .bar button {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+#screen-list .bar button.icon {
+  min-width: 38px;
+}
+#screen-list .seg button {
+  padding-left: 9px;
+  padding-right: 9px;
 }
 #screen-list .pager select {
   width: auto;

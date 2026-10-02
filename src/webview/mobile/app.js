@@ -444,8 +444,8 @@
       if (f[1] === "grade") {
         // 等级是下拉：得先把选项补齐（这个商品可能挂着一个"规则已经没了"的等级，
         // 不补的话 select.value 会设不进去、显示成空白，用户一碰就把等级改掉了）
-        fillDetailGradeSelect(num(up.grade));
-        d.orig.grade = num(up.grade);
+        fillDetailGradeSelect(num(up.grade), num(up.price_manual));
+        d.orig.grade = num(up.price_manual) === 1 ? 0 : num(up.grade);
         return;
       }
       var isText = f[2] === "text";
@@ -841,8 +841,8 @@
    * 名称是文本（不走数字那条路），进价售价等是数字 —— 两类都在这一个属性下，靠 TEXT_FIELDS 区分。
    * 编号列不参与改值：它是「进详情」的入口。
    *
-   * 悬浮提示只写**字段名**（鼠标停一下就知道这一列是什么），不写操作说明：
-   * 怎么改（点一下选中、再点一下弹框）是学会一次就够的事，天天挂在 tooltip 上反而挡视线。
+   * 悬浮提示写**这一格的内容**（不是字段名）：名称那一列窄，长名字会被省略号截掉，
+   * 鼠标停一下能看到全称才是真有用的；数字列的内容本来就在眼前，重复一遍也无害。
    */
   // 点一下 = 选中这一格，再点一下才弹输入框 —— 手机上误触一下就顶出键盘太烦，中间加一拍确认。
   // 选中态按 {id, field} 记着，表格重画时照它把框补回去（改完一个值整行会重画，框不能丢）。
@@ -860,6 +860,23 @@
     selected = null;
   }
 
+  /** 等级这一格显示什么：**与下拉和电脑版同一口径** ——
+   * price_manual=1 就是「自定义」（售价手动定），不显示那个数字。
+   * 以前这里只看 grade，于是"自定义"的商品在手机列表上显示成一个数字、双击后下拉里却写着「自定义」，
+   * 两边对不上，人就以为改不动（这是 user 报的第 2 条）。
+   */
+  function gradeText(p) {
+    if (num(p.price_manual) === 1) {
+      return "自定义";
+    }
+    return num(p.grade) > 0 ? String(num(p.grade)) : "自定义";
+  }
+
+  /** 等级这一格的"当前值"（数值形态）：自定义就是 0，与 gradeText 说的是同一件事 */
+  function gradeCur(p) {
+    return num(p.price_manual) === 1 ? 0 : num(p.grade);
+  }
+
   function rowHtml(p) {
     var off = p.status === 1;
     return (
@@ -868,37 +885,47 @@
       '"' +
       (off ? ' class="off"' : "") +
       ">" +
-      '<td class="open" data-open="1" title="编号">' +
+      '<td class="open" data-open="1" title="' + esc(p.code) + '">' +
       esc(p.code) +
       "</td>" +
-      '<td class="nm ed' + selClass(p, "name") + '" data-ed="name" title="名称">' +
+      '<td class="nm ed' + selClass(p, "name") + '" data-ed="name" title="' + esc(p.name || "") + '">' +
       esc(p.name) +
       "</td>" +
       '<td class="num ed' +
       selClass(p, "cost_price") +
-      '" data-ed="cost_price" title="进价">' +
+      '" data-ed="cost_price" title="' +
+      esc(money(p.cost_price)) +
+      '">' +
       money(p.cost_price) +
       "</td>" +
       '<td class="num ed' +
       selClass(p, "sale_price") +
-      '" data-ed="sale_price" title="售价">' +
+      '" data-ed="sale_price" title="' +
+      esc(money(p.sale_price)) +
+      '">' +
       money(p.sale_price) +
       "</td>" +
       // 等级可改：后端改等级会按新规则重算售价（product.ts 的 grade 分支），所以这里改了就生效
       '<td class="num ed' +
       selClass(p, "grade") +
-      '" data-ed="grade" title="等级（改了按新等级规则重算售价）">' +
-      (num(p.grade) > 0 ? num(p.grade) : "自定义") +
+      '" data-ed="grade" title="' +
+      esc(gradeText(p)) +
+      '">' +
+      esc(gradeText(p)) +
       "</td>" +
       '<td class="num ed' +
       (isLow(p) ? " low" : "") +
       selClass(p, "stock") +
-      '" data-ed="stock" title="库存（实际清点数）">' +
+      '" data-ed="stock" title="库存 ' +
+      num(p.stockTotal) +
+      '">' +
       num(p.stockTotal) +
       "</td>" +
       '<td class="ed' +
       (off ? " low" : "") +
-      '" data-ed="status" title="状态（上下架）">' +
+      '" data-ed="status" title="' +
+      (off ? "已下架" : "在售") +
+      '">' +
       (off ? "已下架" : "在售") +
       "</td>" +
       "</tr>"
@@ -962,11 +989,16 @@
       commitEdit(true); // 换一格改：先结算上一格（值没变等于没改）
     }
     var isTxt = !!TEXT_FIELDS[field];
+    // 等级的"当前值"要看 price_manual：自定义（手动定价）就是 0 —— 与下拉里选中的那一项、
+    // 与格子上显示的字保持完全一致（三处对不上时，用户选了"看着一样"的项会被判成"没改"，
+    // 表现就是"动不了"）
     var cur = isTxt
       ? String(p[field] === undefined || p[field] === null ? "" : p[field])
       : field === "stock"
         ? num(p.stockTotal)
-        : num(p[field]);
+        : field === "grade"
+          ? gradeCur(p)
+          : num(p[field]);
     editing = { row: row, field: field, id: p.id, orig: cur, txt: isTxt };
     $("fsTitle").textContent = (FIELD_LABEL[field] || field) + "　" + p.code + "　" + (p.name || "");
     $("fsBody").innerHTML =
@@ -1042,11 +1074,17 @@
     }
     closeFieldSheet(); // 值已经读出来了，先把 sheet 收掉（里面那个输入框马上要被清空）
     if (!changed) {
+      // 「没改」也要说一声：等级那种下拉最容易撞上（格子上写着"自定义"、下拉里也选着"自定义"，
+      // 再点一次它真的就是没改）—— 一声不响地关掉，人只会以为"这东西坏了/动不了"
+      if (submit && !ed.txt) {
+        pushLog("ℹ️" + (FIELD_LABEL[ed.field] || ed.field) + "没变，没有提交");
+      }
       refreshRow(ed.id);
       return;
     }
     var isStock = ed.field === "stock";
     var before = isStock ? num(p.stockTotal) : num(p[ed.field]);
+    var beforeManual = num(p.price_manual); // 等级那一格的回滚要连 price_manual 一起还原
     // 乐观更新：先让格子显示新值，请求失败再回滚（列表里改一个数还要等网络会显得很卡）
     applyLocal(p, ed.field, v);
     refreshRow(ed.id);
@@ -1055,16 +1093,28 @@
     var msg = isStock ? "setStockQty" : "updateProductField";
     var payload = isStock ? { id: p.id, qty: v } : { id: p.id, field: ed.field, value: v };
     invoke(msg, payload)
-      .then(function () {
+      .then(function (j) {
+        // 业务层的失败（handler 里 log 一句 ❌ 就 return 了）走的是 ok:false —— 请求本身是 200，
+        // 所以不会进 catch。这里必须自己当失败处理，否则表现就是"格子闪一下又变回去，
+        // 什么提示都没有"（user 报的"动不了"有一半是这个）
+        if (j && j.ok === false) {
+          throw new Error(j.error || "写入失败");
+        }
         // 改进价 / 改等级：后端会把售价按规则重算（product.ts），本地只改了一个字段，
         // 不回读的话这一行会显示旧的售价，看着像没改成功
         if (ed.field === "cost_price" || ed.field === "grade") {
           return invoke("loadAll");
         }
       })
-      .catch(function () {
+      .catch(function (err) {
         applyLocal(p, ed.field, before);
+        if (ed.field === "grade") {
+          p.price_manual = beforeManual;
+        }
         refreshRow(p.id);
+        var why = err && err.message ? err.message : "网络或服务端出错";
+        pushLog("❌改" + (FIELD_LABEL[ed.field] || ed.field) + "失败：" + why);
+        toast("没改成：" + why, true);
       });
   }
 
@@ -1087,8 +1137,13 @@
   function applyLocal(p, field, v) {
     if (field === "stock") {
       p.stockTotal = v;
-    } else {
-      p[field] = v;
+      return;
+    }
+    p[field] = v;
+    // 改等级时后端会**同时**改 price_manual（product.ts 的 grade 分支：选具体等级就归 0、
+    // 选自定义就置 1）。本地不跟着改的话，格子上那个"自定义/数字"要等 loadAll 回来才对
+    if (field === "grade") {
+      p.price_manual = num(v) === 0 ? 1 : 0;
     }
   }
 
@@ -1471,17 +1526,19 @@
   }
 
   /**
-   * 详情页的等级下拉。与新建页同源（选项都来自 state.rules），但有两处不一样：
-   *  ① 选中这个商品**当前**的等级（新建页是默认"自定义"）；
-   *  ② 商品挂着一个"规则已经没了"的等级时临时补一个选项 —— 否则 select 显示空白，
+   * 详情页的等级下拉。与新建页同源（选项都来自 state.rules），但有三处不一样：
+   *  ① 选中这个商品**当前**的等级；
+   *  ② `price_manual=1`（售价手动定）时选中的是「自定义」—— 与列表那一格、与电脑版同一口径，
+   *     否则格子上写着"自定义"、下拉里却选着"等级 1"，人就会以为改不动；
+   *  ③ 商品挂着一个"规则已经没了"的等级时临时补一个选项 —— 否则 select 显示空白，
    *     用户随手一存就把等级改成了别的东西。
    */
-  function fillDetailGradeSelect(cur) {
+  function fillDetailGradeSelect(cur, manual) {
     var sel = $("fGrade");
     if (!sel) {
       return;
     }
-    var g = num(cur);
+    var g = num(manual) === 1 ? 0 : num(cur);
     var has = false;
     var opts = state.rules
       .map(function (r) {
@@ -1538,7 +1595,8 @@
         name: p.name || "",
         cost_price: num(p.cost_price),
         sale_price: num(p.sale_price),
-        grade: num(p.grade),
+        // 等级按"显示出来的那个值"记：售价手动定就是 0（自定义），与下拉里选中的一致
+        grade: gradeCur(p),
         stockTotal: num(p.stockTotal),
         category: p.category || "",
         series: p.series || "",
@@ -1548,7 +1606,7 @@
     $("fName").value = p.name || "";
     $("fCost").value = num(p.cost_price);
     $("fSale").value = num(p.sale_price);
-    fillDetailGradeSelect(p.grade);
+    fillDetailGradeSelect(p.grade, p.price_manual);
     $("fStock").value = num(p.stockTotal);
     $("fCategory").value = p.category || "";
     $("fSeries").value = p.series || "";
@@ -1830,11 +1888,20 @@
     d.orig[key] = val; // 乐观更新：delta 回来还会再校准一次
     var msg = key === "stockTotal" ? "setStockQty" : "updateProductField";
     var payload = key === "stockTotal" ? { id: d.id, qty: val } : { id: d.id, field: key, value: val };
-    invoke(msg, payload).catch(function () {
-      d.orig[key] = cur;
-      el.value = String(cur);
-      pushLog("❌保存失败，已退回原值");
-    });
+    invoke(msg, payload)
+      .then(function (j) {
+        // 同列表那条路：业务层的失败是 ok:false（HTTP 还是 200），不当失败处理就会静默退回原值
+        if (j && j.ok === false) {
+          throw new Error(j.error || "写入失败");
+        }
+      })
+      .catch(function (err) {
+        d.orig[key] = cur;
+        el.value = String(cur);
+        var why = err && err.message ? err.message : "网络或服务端出错";
+        pushLog("❌保存失败，已退回原值：" + why);
+        toast("没改成：" + why, true);
+      });
   }
 
   /** 离开详情页前把焦点上那一格结算掉：点返回/翻上一个时，输入框的 change 不一定来得及触发 */

@@ -98,6 +98,8 @@
         <div id="dImages" class="strip"></div>
         <div class="card">
           <label>名称<input id="fName" type="text" /></label>
+          <!-- 等级紧跟名称：它决定下面售价怎么算，所以放在价格上面（改完会按新规则重算售价） -->
+          <label>等级<select id="fGrade"></select></label>
           <div class="row2">
             <label>进价<input id="fCost" type="number" inputmode="decimal" step="0.01" /></label>
             <label>售价<input id="fSale" type="number" inputmode="decimal" step="0.01" /></label>
@@ -112,8 +114,6 @@
             <label>品类<input id="fCategory" type="text" list="catList" /></label>
             <label>系列<input id="fSeries" type="text" /></label>
           </div>
-          <!-- 等级：改了后端会按新等级规则重算售价（与列表里改等级同一口径） -->
-          <label>等级<select id="fGrade"></select></label>
           <p class="muted small">改完自动保存（离开这一格就存，不用点按钮）。上下架点一下立刻生效。库存这一格就是"实际清点数"，直接写进去（与电脑版双击库存列同一口径）。改等级会按新等级的规则重算售价。</p>
         </div>
       </main>
