@@ -214,6 +214,10 @@ select {
 }
 .content {
   flex: 1;
+  /* min-height:0 不能省：flex 项默认 min-height:auto，内容一高它就不肯收缩，
+     把整个 .screen（100dvh）撑破 —— 滚动条于是落到**整个页面**上，顶栏、
+     「上一个/下一个」那排就跟着滚走了。写了 0 才是「这块自己滚、上面不动」。 */
+  min-height: 0;
   overflow-y: auto;
   padding: 10px;
   -webkit-overflow-scrolling: touch;

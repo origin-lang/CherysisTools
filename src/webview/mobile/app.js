@@ -1890,6 +1890,31 @@
         { passive: false }
       );
     });
+    // 双击放大是另一条路：touch-action 的 pan-* 只管捏合，管不住「连点两下」。
+    // 判据是「320ms 内 + 落点几乎没动」，所以快速连点两个不同按钮不受影响；
+    // 输入框里不拦 —— 那里双击是选词，是本该保留的手势。
+    var lastTap = { t: 0, x: 0, y: 0 };
+    document.addEventListener(
+      "touchend",
+      function (e) {
+        var t = e.changedTouches && e.changedTouches[0];
+        if (!t) {
+          return;
+        }
+        var el = e.target;
+        var tag = el && el.tagName ? String(el.tagName) : "";
+        if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || (el && el.isContentEditable)) {
+          return;
+        }
+        var now = Date.now();
+        var near = Math.abs(t.clientX - lastTap.x) < 30 && Math.abs(t.clientY - lastTap.y) < 30;
+        if (now - lastTap.t < 320 && near) {
+          e.preventDefault();
+        }
+        lastTap = { t: now, x: t.clientX, y: t.clientY };
+      },
+      { passive: false }
+    );
     // ---- 改一个值的 sheet ----
     $("fsSave").onclick = function () {
       commitEdit(true);
