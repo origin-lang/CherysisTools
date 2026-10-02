@@ -2170,8 +2170,9 @@
   }
 
   function show(id) {
-    // 宽屏看详情时列表**不关**：抽屉从右边滑出来，左边那份列表还在（可以边看边挑下一件）
-    var keepList = id === "screen-detail" && isWide();
+    // 宽屏看详情/新建时列表**不关**：面板从右边滑出来，左边那份列表还在
+    // （挑下一件、边看边建都不用退出去）
+    var keepList = (id === "screen-detail" || id === "screen-new") && isWide();
     ["screen-list", "screen-detail", "screen-new", "screen-settings"].forEach(function (s) {
       $(s).classList.toggle("show", s === id || (s === "screen-list" && keepList));
     });
@@ -2181,9 +2182,11 @@
     }
   }
 
-  /** 关掉详情：抽屉模式和整屏模式都走这一条（会先把焦点那一格结算掉） */
-  function closeDetail() {
-    flushDetailEdits();
+  /** 关掉右侧面板（详情 / 新建）：抽屉模式和整屏模式都走这一条 */
+  function closePanel() {
+    if ($("screen-detail").classList.contains("show")) {
+      flushDetailEdits(); // 详情是"失焦即存"，关之前先把焦点那一格结算掉
+    }
     show("screen-list");
   }
 
@@ -2195,8 +2198,9 @@
     }
     var mq = window.matchMedia("(min-width: 820px)");
     var onChange = function () {
-      if (state.detail) {
-        show("screen-detail");
+      // 哪个面板开着就按新宽度重排哪一个
+      if (document.body.classList.contains("drawer") || state.detail) {
+        show($("screen-new").classList.contains("show") ? "screen-new" : "screen-detail");
       }
     };
     if (mq.addEventListener) {
@@ -2335,6 +2339,11 @@
     // 双击放大是另一条路：touch-action 的 pan-* 只管捏合，管不住「连点两下」。
     // 判据是「320ms 内 + 落点几乎没动」，所以快速连点两个不同按钮不受影响；
     // 输入框里不拦 —— 那里双击是选词，是本该保留的手势。
+    //
+    // ⚠️ 这一下 preventDefault 会把第二拍的 click **一起吃掉**，而"点第二下弹 sheet"
+    // 正是靠那次 click —— 于是手机上只有**慢慢点两下**（间隔 >320ms）才能进编辑，
+    // 快速双击什么都没发生（电脑上没有 touchend，两次 click 都发得出去，所以一直是好的）。
+    // 所以：吃掉 click 的同时，把"第二拍该做的事"顺手自己做掉。
     var lastTap = { t: 0, x: 0, y: 0 };
     document.addEventListener(
       "touchend",
@@ -2352,6 +2361,11 @@
         var near = Math.abs(t.clientX - lastTap.x) < 30 && Math.abs(t.clientY - lastTap.y) < 30;
         if (now - lastTap.t < 320 && near) {
           e.preventDefault();
+          // 状态列除外：它点一下直接切上下架，双击会被切两下 = 等于没切
+          var cell = el && el.closest ? el.closest("td[data-ed]") : null;
+          if (cell && cell.dataset.ed !== "status") {
+            tapCell(el);
+          }
         }
         lastTap = { t: now, x: t.clientX, y: t.clientY };
       },
@@ -2510,39 +2524,58 @@
       renderList();
       $("content").scrollTop = 0;
     };
-    $("content").onclick = function (e) {
+    /**
+     * 表格里"点一格"的全部逻辑。**两个入口共用**：普通的 click，和手机上双击的第二拍
+     * （那一拍的 click 被"禁双击放大"吃掉了，见 touchend 那段——所以这里必须能被直接调用，
+     * 否则手机上只有慢慢点两下才能进编辑）。
+     * 返回 true = 这一下已经被处理掉了。
+     */
+    function tapCell(target) {
       // 行不能写死成 tr：画册是 div[data-id]，写死了画册点卡片就不进详情了
-      var hitRow = e.target.closest("[data-id]");
-      var hitCell = e.target.closest("td[data-ed]");
+      var hitRow = target.closest("[data-id]");
+      var hitCell = target.closest("td[data-ed]");
       // 保存后整行会被重画，e.target 上的引用就成了孤儿节点 —— 一律按 id 重新取
       var row = hitRow ? $("content").querySelector('[data-id="' + hitRow.dataset.id + '"]') : null;
       var cell = row && hitCell ? row.querySelector('td[data-ed="' + hitCell.dataset.ed + '"]') : null;
-      if (cell && row) {
-        // 状态例外：它是二选一，没有输入框也不会顶出键盘，误触了再点一下就换回来，
-        // 为它多加一拍不划算
-        if (cell.dataset.ed === "status") {
-          var sp = findProduct(num(row.dataset.id));
-          if (sp) {
-            toggleStatus(sp, row);
-          }
-          return;
+      if (!cell || !row) {
+        return false;
+      }
+      // 状态例外：它是二选一，没有输入框也不会顶出键盘，误触了再点一下就换回来，
+      // 为它多加一拍不划算
+      if (cell.dataset.ed === "status") {
+        var sp = findProduct(num(row.dataset.id));
+        if (sp) {
+          toggleStatus(sp, row);
         }
-        var id = num(row.dataset.id);
-        var field = cell.dataset.ed;
-        // 同一格点第二下 = 确认要改 → 弹输入框；点别处只是换选中
-        if (selected && num(selected.id) === id && selected.field === field) {
-          openFieldSheet(row, cell);
-          return;
-        }
-        clearSelected();
-        selected = { id: id, field: field };
-        cell.classList.add("sel");
-        pushLog("已选中 " + (FIELD_LABEL[field] || field) + "，再点一下就能改");
+        return true;
+      }
+      var id = num(row.dataset.id);
+      var field = cell.dataset.ed;
+      // 同一格点第二下 = 确认要改 → 弹输入框；点别处只是换选中
+      if (selected && num(selected.id) === id && selected.field === field) {
+        openFieldSheet(row, cell);
+        return true;
+      }
+      clearSelected();
+      selected = { id: id, field: field };
+      cell.classList.add("sel");
+      pushLog("已选中 " + (FIELD_LABEL[field] || field) + "，再点一下就能改");
+      return true;
+    }
+
+    $("content").onclick = function (e) {
+      // 宽屏下"新建"面板正开着：列表里的点击先别当交易 ——
+      // 不然点一下商品就把填了一半的新建表单换成那个商品的详情，输入全丢
+      if (document.body.classList.contains("drawer") && $("screen-new").classList.contains("show")) {
+        return; // 交给 document 那层的"点面板外面就收起"
+      }
+      if (tapCell(e.target)) {
         return;
       }
       // 点到表格里的空白（不在任何一格上）：取消选中
       clearSelected();
       // 只有带 data-open 的才进详情：表格里是编号列，画册里是整张卡片
+      var row = e.target.closest("[data-id]");
       if (row && e.target.closest("[data-open]")) {
         openDetail(num(row.dataset.id));
       }
@@ -2578,7 +2611,7 @@
       openFieldSheet(row, cell);
     });
     $("btnBack").onclick = function () {
-      closeDetail();
+      closePanel();
     };
     $("btnPrevItem").onclick = function () {
       flushDetailEdits();
@@ -2599,7 +2632,7 @@
       show("screen-new");
     };
     $("btnNewBack").onclick = function () {
-      show("screen-list");
+      closePanel();
     };
     $("btnCreate").onclick = function () {
       createProduct().catch(function () {
@@ -2681,22 +2714,30 @@
         return;
       }
       if (document.body.classList.contains("drawer")) {
-        closeDetail();
+        closePanel();
       }
     });
-    // 宽屏抽屉：点列表里的空白处就收起来（点商品卡片 = 换成那一件，点在格子上 = 就地改，都不关）。
-    // 只认 #content 里的点击：分页/搜索/筛选这些操作不该把详情关掉
+    // 宽屏抽屉（详情 / 新建）：点列表里的空白处就收起来
+    // （点商品卡片 = 换成那一件、点在格子上 = 就地改，都不关）。
+    // 只认 #content 里的点击：分页/搜索/筛选这些操作不该把面板关掉。
     document.addEventListener("click", function (e) {
       if (!document.body.classList.contains("drawer")) {
         return;
       }
-      if (e.target.closest("#screen-detail") || !e.target.closest("#content")) {
+      if (e.target.closest("#screen-detail") || e.target.closest("#screen-new")) {
         return;
       }
-      if (e.target.closest("[data-open]") || e.target.closest("[data-ed]")) {
+      if (!e.target.closest("#content")) {
         return;
       }
-      closeDetail();
+      // 新建面板开着时，列表里点哪儿都只是"收起面板"（点商品也一样：
+      // 免得填了一半的表单被换成那个商品的详情、输入全丢）
+      if (!$("screen-new").classList.contains("show")) {
+        if (e.target.closest("[data-open]") || e.target.closest("[data-ed]")) {
+          return;
+        }
+      }
+      closePanel();
     });
     $("btnUpload").onclick = function () {
       $("filePick").click();

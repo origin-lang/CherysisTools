@@ -101,6 +101,14 @@ if (jsBreak && cssBreak && jsBreak[1] === cssBreak[1]) {
       fails.push(`style.css 里缺少 "${need}"：抽屉会盖住那一块（分页按钮/状态条/提示浮层）`);
     }
   }
+  // 抽屉样式必须**同时**覆盖详情与新建两屏：JS 的 keepList 里两个都有，
+  // CSS 少一个就是"列表留在下面、面板整屏盖上去"的半坏界面
+  if (!/#screen-detail,\s*#screen-new\s*\{/.test(css)) {
+    fails.push("style.css 的抽屉规则里应同时有 #screen-detail 与 #screen-new（两屏都要走抽屉）");
+  }
+  if (!/id === "screen-detail" \|\| id === "screen-new"/.test(js.replace(/\s+/g, " "))) {
+    fails.push("app.js 的 keepList 里应同时包含 screen-detail 与 screen-new（两屏都要走抽屉）");
+  }
 }
 
 if (fails.length > 0) {

@@ -897,9 +897,9 @@ input.bad {
   touch-action: pan-y;
 }
 
-/* ---------- 宽屏：商品详情走右侧抽屉（≥820px） ----------
-   手机上详情是整屏（那样最合用，见设计稿 §十二·补）；但电脑上整屏就是浪费 ——
-   列表被盖住，还得来回切。所以宽屏时：列表留在左边、详情从右边滑出来，点空白处/Esc 收起。
+/* ---------- 宽屏：商品详情 / 新建 走右侧抽屉（≥820px） ----------
+   手机上这两屏都是整屏（那样最合用，见设计稿 §十二·补）；但电脑上整屏就是浪费 ——
+   列表被盖住，还得来回切。所以宽屏时：列表留在左边、面板从右边滑出来，点空白处/Esc 收起。
    判断用**宽度**而不是"是不是电脑"：平板横屏、电脑窄窗口都该各归其位。 */
 @media (min-width: 820px) {
   :root {
@@ -917,7 +917,8 @@ input.bad {
   body.drawer #toast {
     right: calc(var(--drawer) + 12px);
   }
-  #screen-detail {
+  #screen-detail,
+  #screen-new {
     position: fixed;
     top: 0;
     right: 0;
@@ -932,8 +933,9 @@ input.bad {
        所以这里不用再给它留 30px */
     padding-bottom: env(safe-area-inset-bottom);
   }
-  /* 抽屉里的表单窄（≈440px），进价/售价这种并排会挤成两半，改成一行一个。
-     .row2 是 flex 行（不是 grid），所以要改 flex-direction */
+  /* 详情那一列在抽屉里窄（≈440px），进价/售价这种并排会挤成两半，改成一行一个。
+     .row2 是 flex 行（不是 grid），所以要改 flex-direction。
+     新建页那两行（编号+按钮、品类+系列）在 440px 下放得开，保持并排。 */
   #screen-detail .row2 {
     flex-direction: column;
     align-items: stretch;
