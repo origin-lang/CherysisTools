@@ -410,6 +410,9 @@
     ["fName", "name", "text"],
     ["fCost", "cost_price", "num"],
     ["fSale", "sale_price", "num"],
+    // 等级也放进来：后端改等级会按新规则重算售价（product.ts 的 grade 分支），
+    // 与列表里改等级同一口径。选项是下拉，所以 syncDetailFromDelta 里单独处理
+    ["fGrade", "grade", "int"],
     ["fStock", "stockTotal", "int"],
     ["fCategory", "category", "text"],
     ["fSeries", "series", "text"],
@@ -436,6 +439,13 @@
     DETAIL_FIELDS.forEach(function (f) {
       var el = $(f[0]);
       if (!el || document.activeElement === el) {
+        return;
+      }
+      if (f[1] === "grade") {
+        // 等级是下拉：得先把选项补齐（这个商品可能挂着一个"规则已经没了"的等级，
+        // 不补的话 select.value 会设不进去、显示成空白，用户一碰就把等级改掉了）
+        fillDetailGradeSelect(num(up.grade));
+        d.orig.grade = num(up.grade);
         return;
       }
       var isText = f[2] === "text";
@@ -729,8 +739,14 @@
 
   function renderList() {
     // innerHTML 一换，滚动位置就没了。页面没变时把位置还回去 —— 列表里改一个值就会收到
-    // productsDelta → renderList，不还原的话改完一行列表直接跳回顶部（很像是「界面不稳定」）
-    var keepScroll = $("content").scrollTop;
+    // productsDelta → renderList，不还原的话改完一行列表直接跳回顶部（很像是「界面不稳定」）。
+    // 表格有两个滚动容器：#content（纵向）和 .tblwrap（纵向+横向，为了表头能吸顶），
+    // 所以三个位置都要记：少记一个，改完一个值就往回跳一下。
+    var content = $("content");
+    var keepScroll = content.scrollTop;
+    var oldWrap = content.querySelector(".tblwrap");
+    var keepWrapTop = oldWrap ? oldWrap.scrollTop : 0;
+    var keepWrapLeft = oldWrap ? oldWrap.scrollLeft : 0;
     var all = filtered();
     var cq = codeQuery();
     // 一次只渲一页：手机上 DOM 一多就明显卡，画册尤其（每张一张图）
@@ -811,13 +827,22 @@
           .join("") +
         "</tbody></table></div>";
     }
-    $("content").scrollTop = keepScroll;
+    content.scrollTop = keepScroll;
+    // 表格自己那份滚动位置：改完一个值整表重画，横着滑到「状态」列的人不能被拽回左边
+    var newWrap = content.querySelector(".tblwrap");
+    if (newWrap) {
+      newWrap.scrollTop = keepWrapTop;
+      newWrap.scrollLeft = keepWrapLeft;
+    }
   }
 
   /**
    * 表格一行。可编辑的格子带 data-ed：名称 / 进价 / 售价 / 库存 / 状态 / 等级。
    * 名称是文本（不走数字那条路），进价售价等是数字 —— 两类都在这一个属性下，靠 TEXT_FIELDS 区分。
    * 编号列不参与改值：它是「进详情」的入口。
+   *
+   * 悬浮提示只写**字段名**（鼠标停一下就知道这一列是什么），不写操作说明：
+   * 怎么改（点一下选中、再点一下弹框）是学会一次就够的事，天天挂在 tooltip 上反而挡视线。
    */
   // 点一下 = 选中这一格，再点一下才弹输入框 —— 手机上误触一下就顶出键盘太烦，中间加一拍确认。
   // 选中态按 {id, field} 记着，表格重画时照它把框补回去（改完一个值整行会重画，框不能丢）。
@@ -843,37 +868,37 @@
       '"' +
       (off ? ' class="off"' : "") +
       ">" +
-      '<td class="open" data-open="1">' +
+      '<td class="open" data-open="1" title="编号">' +
       esc(p.code) +
       "</td>" +
-      '<td class="nm ed' + selClass(p, "name") + '" data-ed="name" title="点一下选中，再点一下改名称">' +
+      '<td class="nm ed' + selClass(p, "name") + '" data-ed="name" title="名称">' +
       esc(p.name) +
       "</td>" +
       '<td class="num ed' +
       selClass(p, "cost_price") +
-      '" data-ed="cost_price" title="点一下选中，再点一下改进价">' +
+      '" data-ed="cost_price" title="进价">' +
       money(p.cost_price) +
       "</td>" +
       '<td class="num ed' +
       selClass(p, "sale_price") +
-      '" data-ed="sale_price" title="点一下选中，再点一下改售价">' +
+      '" data-ed="sale_price" title="售价">' +
       money(p.sale_price) +
       "</td>" +
       // 等级可改：后端改等级会按新规则重算售价（product.ts 的 grade 分支），所以这里改了就生效
       '<td class="num ed' +
       selClass(p, "grade") +
-      '" data-ed="grade" title="点一下选中，再点一下改等级 → 售价按新等级规则重算">' +
+      '" data-ed="grade" title="等级（改了按新等级规则重算售价）">' +
       (num(p.grade) > 0 ? num(p.grade) : "自定义") +
       "</td>" +
       '<td class="num ed' +
       (isLow(p) ? " low" : "") +
       selClass(p, "stock") +
-      '" data-ed="stock" title="点一下选中，再点一下改库存（= 实际清点数）">' +
+      '" data-ed="stock" title="库存（实际清点数）">' +
       num(p.stockTotal) +
       "</td>" +
       '<td class="ed' +
       (off ? " low" : "") +
-      '" data-ed="status" title="点一下直接切换上/下架">' +
+      '" data-ed="status" title="状态（上下架）">' +
       (off ? "已下架" : "在售") +
       "</td>" +
       "</tr>"
@@ -1158,7 +1183,8 @@
   function renderActive() {
     var pills = activePills();
     // 面板收起时也要知道「现在筛着几条」，所以计数挂在按钮上
-    $("btnFilter").textContent = "🔻 筛选" + (pills.length ? " " + pills.length : "");
+    // （按钮里现在是"图标 + 文字"两段，只能改文字那一段：整块 textContent 会把图标抹掉）
+    $("btnFilterText").textContent = "筛选" + (pills.length ? " " + pills.length : "");
     var bar = $("activeBar");
     if (!pills.length && state.sort === "code") {
       bar.innerHTML = "";
@@ -1444,6 +1470,40 @@
       : "这个等级没有规则，也不会自动算售价：请在「售价」里手填（或去电脑版加一条等级规则）。";
   }
 
+  /**
+   * 详情页的等级下拉。与新建页同源（选项都来自 state.rules），但有两处不一样：
+   *  ① 选中这个商品**当前**的等级（新建页是默认"自定义"）；
+   *  ② 商品挂着一个"规则已经没了"的等级时临时补一个选项 —— 否则 select 显示空白，
+   *     用户随手一存就把等级改成了别的东西。
+   */
+  function fillDetailGradeSelect(cur) {
+    var sel = $("fGrade");
+    if (!sel) {
+      return;
+    }
+    var g = num(cur);
+    var has = false;
+    var opts = state.rules
+      .map(function (r) {
+        if (num(r.grade) === g) {
+          has = true;
+        }
+        return (
+          '<option value="' +
+          r.grade +
+          '">' +
+          esc((r.label ? r.label + "（等级 " + r.grade + "）" : "等级 " + r.grade) + "：" + r.expr) +
+          "</option>"
+        );
+      })
+      .join("");
+    if (g > 0 && !has) {
+      opts = '<option value="' + g + '">等级 ' + g + "（没有规则，售价不会被自动算）</option>" + opts;
+    }
+    sel.innerHTML = opts + '<option value="0">自定义（售价手动定）</option>';
+    sel.value = String(g);
+  }
+
   // ---------- 详情 ----------
   /** 从画册/列表点进来：先在**当前筛选结果**里定位 —— 前后翻就按这个顺序走，不是按全库顺序。 */
   function openDetail(id) {
@@ -1473,10 +1533,12 @@
       code: p.code,
       idx: idx,
       status: p.status === 1 ? 1 : 0,
+      imgs: [], // 这个商品的图片文件名（loadImages 填），灯箱左右切换要用
       orig: {
         name: p.name || "",
         cost_price: num(p.cost_price),
         sale_price: num(p.sale_price),
+        grade: num(p.grade),
         stockTotal: num(p.stockTotal),
         category: p.category || "",
         series: p.series || "",
@@ -1486,6 +1548,7 @@
     $("fName").value = p.name || "";
     $("fCost").value = num(p.cost_price);
     $("fSale").value = num(p.sale_price);
+    fillDetailGradeSelect(p.grade);
     $("fStock").value = num(p.stockTotal);
     $("fCategory").value = p.category || "";
     $("fSeries").value = p.series || "";
@@ -1539,6 +1602,10 @@
       })
       .then(function (j) {
         var names = (j && j.names) || [];
+        // 灯箱左右切换要用这份清单（打开某张图时按它算"上一张/下一张"）
+        if (state.detail && state.detail.code === code) {
+          state.detail.imgs = names;
+        }
         if (!names.length) {
           box.innerHTML = '<span class="muted small">这个商品还没有图片，点右上「📷 传图」拍一张。</span>';
           return;
@@ -1569,12 +1636,45 @@
   }
 
   function openViewer(code, name) {
-    viewerImg = { code: code, name: name };
-    $("viewerImg").src = imgUrl(code, name, "full");
-    // 封面（name 为空）不是具体某张文件，删它等于删整个夹，不给这个按钮
-    $("viewerDel").style.display = name ? "" : "none";
+    // name 为空 = 看封面（夹里第一张）。切到具体某张时用文件名，删图才不会删错
+    var names = (state.detail && state.detail.code === code && state.detail.imgs) || [];
+    var idx = name ? names.indexOf(name) : 0;
+    if (idx < 0) {
+      idx = 0;
+    }
+    showViewerImage({ code: code, names: names, idx: idx, cover: !name });
+  }
+
+  /**
+   * 灯箱里显示第 idx 张。多张时给左右箭头（手机上滑来滑去容易误触，按钮更明确）；
+   * 只有一张就藏起来 —— 摆两个按不动的箭头比没有更让人困惑。
+   * 桌面浏览器上还能用 ← → 翻、Esc 关（见 bind 里的 keydown）。
+   */
+  function showViewerImage(v) {
+    viewerImg = v;
+    var total = v.names.length;
+    var name = total ? v.names[v.idx] : "";
+    $("viewerImg").src = imgUrl(v.code, name, "full");
+    // 封面那一张（打开时 name 为空）不给删：与原来的口径一致 —— 从封面进来的删除入口在缩略图上
+    var deletable = !!name && !(v.cover && v.idx === 0);
+    $("viewerDel").style.display = deletable ? "" : "none";
     $("viewerRetake").style.display = "none"; // 已上传的图没有「重拍」一说
+    var multi = total > 1;
+    $("viewerPrev").style.display = multi ? "" : "none";
+    $("viewerNext").style.display = multi ? "" : "none";
+    $("viewerPos").textContent = multi ? v.idx + 1 + " / " + total : "";
     $("viewer").classList.add("show");
+  }
+
+  /** 灯箱左右翻：到头就绕回去（九张图来回看时不用退出来重点） */
+  function stepViewer(dir) {
+    var v = viewerImg;
+    if (!v || !v.names || v.names.length < 2) {
+      return;
+    }
+    var n = v.names.length;
+    var idx = ((v.idx + dir) % n + n) % n;
+    showViewerImage({ code: v.code, names: v.names, idx: idx, cover: false });
   }
 
   /** 新建页看刚拍的照片：还没上传，所以给「重拍」而不是「删除这张」 */
@@ -1587,6 +1687,10 @@
     $("viewerImg").src = s.url;
     $("viewerDel").style.display = "none";
     $("viewerRetake").style.display = "";
+    // 还没上传的照片：左右切换先不给（下面那排小图本来就能直接点），但把序号显示出来
+    $("viewerPrev").style.display = "none";
+    $("viewerNext").style.display = "none";
+    $("viewerPos").textContent = i + 1 + " / " + pendingNewShots.length;
     $("viewer").classList.add("show");
   }
 
@@ -1605,26 +1709,27 @@
     $("newFilePick").click();
   }
 
-  var viewerImg = null; // 灯箱当前这张：{ code, name } 或 { local, shot }
+  var viewerImg = null; // 灯箱当前这张：{ code, names, idx, cover } 或 { local, shot }
   /** 灯箱里删当前这张：后端走 deleteImageFile（按文件名删，不按序号，避免删错） */
   function deleteViewerImage() {
     var v = viewerImg;
-    if (!v || !v.name) {
+    var name = v && v.names ? v.names[v.idx] : "";
+    if (!v || !name) {
       return;
     }
-    if (!window.confirm("删除「" + v.name + "」这张图？删了就找不回来了。")) {
+    if (!window.confirm("删除「" + name + "」这张图？删了就找不回来了。")) {
       return;
     }
-    pushLog("⏳删除 " + v.name + "…");
+    pushLog("⏳删除 " + name + "…");
     toast("删除中…");
-    invoke("deleteImageFile", { code: v.code, name: v.name })
+    invoke("deleteImageFile", { code: v.code, name: name })
       .then(function (j) {
         if (imgDeleteFailed(j)) {
           pushLog("❌没删掉，图片还在（原因见上面一行）");
           toast("没删掉，图片还在（多半正被占用，稍等再试）", true);
           return;
         }
-        toast("已删除 " + v.name);
+        toast("已删除 " + name);
         $("viewer").classList.remove("show");
         viewerImg = null;
         state.imgStatsLoaded = false; // 图数变了，下次用「有无图片」筛选时重新统计
@@ -1995,6 +2100,17 @@
     }
   }
 
+  /** 开/收筛选面板。抽出来是因为现在有两个入口：顶栏那个按钮，和"点面板外面自动收起" */
+  function setFilterOpen(open) {
+    state.panelOpen = open;
+    $("filterPanel").classList.toggle("show", open);
+    $("btnFilter").classList.toggle("on", open);
+    if (open) {
+      renderFilter();
+      requestImgStats(); // 一打开就把「无图 N / 有图 M」数出来，省得用户自己猜
+    }
+  }
+
   // ---------- 事件绑定 ----------
   function bind() {
     $("viewGallery").onclick = function () {
@@ -2020,14 +2136,19 @@
     $("btnStale").onclick = reload;
     // 筛选不再另起一屏：就在列表页里展开，改的时候下面那张表一直看得见
     $("btnFilter").onclick = function () {
-      state.panelOpen = !state.panelOpen;
-      $("filterPanel").classList.toggle("show", state.panelOpen);
-      $("btnFilter").classList.toggle("on", state.panelOpen);
-      if (state.panelOpen) {
-        renderFilter();
-        requestImgStats(); // 一打开就把「无图 N / 有图 M」数出来，省得用户自己猜
-      }
+      setFilterOpen(!state.panelOpen);
     };
+    // 点面板外面就收起来：面板一展开会占掉半屏，看完/点完条件想收起来时
+    // 不该再要求用户回顶栏点一次那个按钮（手机上拇指够不着）
+    document.addEventListener("click", function (e) {
+      if (!state.panelOpen) {
+        return;
+      }
+      if (e.target.closest("#filterPanel") || e.target.closest("#btnFilter")) {
+        return;
+      }
+      setFilterOpen(false);
+    });
     $("btnSettings").onclick = function () {
       renderSettings();
       show("screen-settings");
@@ -2399,6 +2520,27 @@
     };
     $("viewerDel").onclick = deleteViewerImage;
     $("viewerRetake").onclick = retakeShot;
+    // 左右切图：多张图时不用退出来再点下一张
+    $("viewerPrev").onclick = function () {
+      stepViewer(-1);
+    };
+    $("viewerNext").onclick = function () {
+      stepViewer(1);
+    };
+    // 桌面浏览器上用键盘看更顺：← → 翻图、Esc 关掉。
+    // 只在灯箱开着时管这几个键，别影响列表里打字
+    document.addEventListener("keydown", function (e) {
+      if (!$("viewer").classList.contains("show")) {
+        return;
+      }
+      if (e.key === "ArrowLeft") {
+        stepViewer(-1);
+      } else if (e.key === "ArrowRight") {
+        stepViewer(1);
+      } else if (e.key === "Escape") {
+        $("viewerClose").onclick();
+      }
+    });
     $("btnUpload").onclick = function () {
       $("filePick").click();
     };

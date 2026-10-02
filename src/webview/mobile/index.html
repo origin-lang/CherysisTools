@@ -15,7 +15,18 @@
           <button id="viewGallery" class="on">画册</button>
           <button id="viewList">列表</button>
         </div>
-        <button id="btnFilter" class="icon" title="展开筛选：品类/系列/等级/状态/数值范围">🔻 筛选</button>
+        <!-- 漏斗图标 + 文字：原来那个 🔻 看着像"收起/折叠"，不像"筛选" -->
+        <button id="btnFilter" class="icon" title="筛选：品类/系列/等级/状态/数值范围/有图无图">
+          <svg class="ico" viewBox="0 0 16 16" aria-hidden="true">
+            <path
+              d="M2 3h12l-4.7 5.4v4.3l-2.6 1.3V8.4z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linejoin="round"
+            />
+          </svg><span id="btnFilterText">筛选</span>
+        </button>
         <button id="btnSettings" class="icon" title="等级规则与设置">⚙</button>
         <button id="btnNew" class="primary">＋ 新建</button>
       </header>
@@ -101,7 +112,9 @@
             <label>品类<input id="fCategory" type="text" list="catList" /></label>
             <label>系列<input id="fSeries" type="text" /></label>
           </div>
-          <p class="muted small">改完自动保存（离开这一格就存，不用点按钮）。上下架点一下立刻生效。库存这一格就是"实际清点数"，直接写进去（与电脑版双击库存列同一口径）。</p>
+          <!-- 等级：改了后端会按新等级规则重算售价（与列表里改等级同一口径） -->
+          <label>等级<select id="fGrade"></select></label>
+          <p class="muted small">改完自动保存（离开这一格就存，不用点按钮）。上下架点一下立刻生效。库存这一格就是"实际清点数"，直接写进去（与电脑版双击库存列同一口径）。改等级会按新等级的规则重算售价。</p>
         </div>
       </main>
     </section>
@@ -183,10 +196,13 @@
       </div>
     </div>
 
-    <!-- 大图查看 -->
+    <!-- 大图查看：多张图时左右箭头翻（手机上滑容易误触，按钮更明确；桌面还能按 ← → 和 Esc） -->
     <div id="viewer" class="viewer">
       <img id="viewerImg" alt="" />
       <button id="viewerClose" class="viewer-x">✕</button>
+      <button id="viewerPrev" class="viewer-nav prev" type="button" title="上一张（←）">‹</button>
+      <button id="viewerNext" class="viewer-nav next" type="button" title="下一张（→）">›</button>
+      <span id="viewerPos" class="viewer-pos"></span>
       <button id="viewerDel" class="viewer-del">🗑 删除这张</button>
       <button id="viewerRetake" class="viewer-retake" style="display: none">🔄 重拍</button>
     </div>
