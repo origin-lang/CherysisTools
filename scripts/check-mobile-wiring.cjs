@@ -79,6 +79,30 @@ for (const name of SERVER_EVENTS) {
   }
 }
 
+// ---------- ③ 宽屏抽屉的断点：JS 与 CSS 必须用同一个宽度 ----------
+// JS 里 isWide() 决定"进不进抽屉模式"（要不要把列表留着、给 body 加 drawer 类），
+// CSS 里 @media 决定"抽屉长什么样"。两边写岔了就是一个**半坏**的界面：
+// JS 以为进了抽屉（列表留着），CSS 没生效（详情还是整屏盖上去）→ 列表白留在下面。
+const css = fs.readFileSync(path.join(mobileDir, "style.css"), "utf8");
+const jsBreak = /function isWide\(\)[\s\S]{0,220}?min-width:\s*(\d+)px/.exec(js);
+const cssBreak = /@media \(min-width:\s*(\d+)px\)\s*\{\s*:root\s*\{\s*\/\*[^*]*\*\/\s*--drawer/.exec(css);
+if (!jsBreak) {
+  fails.push("app.js 的 isWide() 里找不到断点宽度（写法变了？这条闸门就失效了）");
+} else if (!cssBreak) {
+  fails.push("style.css 里找不到定义 --drawer 的那个 @media 断点（抽屉样式被改名/挪走了？）");
+} else if (jsBreak[1] !== cssBreak[1]) {
+  fails.push(
+    `抽屉断点两边不一致：app.js 用 ${jsBreak[1]}px，style.css 用 ${cssBreak[1]}px —— 会得到一个半坏的界面`,
+  );
+}
+if (jsBreak && cssBreak && jsBreak[1] === cssBreak[1]) {
+  for (const need of ["body.drawer #screen-list", "body.drawer #status", "body.drawer #toast"]) {
+    if (!css.includes(need)) {
+      fails.push(`style.css 里缺少 "${need}"：抽屉会盖住那一块（分页按钮/状态条/提示浮层）`);
+    }
+  }
+}
+
 if (fails.length > 0) {
   console.error(`❌ check-mobile-wiring：${fails.length} 项不通过`);
   for (const f of fails) {
@@ -89,5 +113,6 @@ if (fails.length > 0) {
 console.log(
   `✅ check-mobile-wiring：app.js 引用的 ${used.size} 个 id 在 index.html 里全部存在` +
     `（豁免 ${DYNAMIC_IDS.size} 个 JS 动态生成的：${[...DYNAMIC_IDS].join(" / ")}）；` +
-    `SSE 事件名 ${SERVER_EVENTS.length} 个（${SERVER_EVENTS.join(" / ")}）与服务端一致`,
+    `SSE 事件名 ${SERVER_EVENTS.length} 个（${SERVER_EVENTS.join(" / ")}）与服务端一致；` +
+    `宽屏抽屉断点前后端一致（${cssBreak ? cssBreak[1] : "?"}px）`,
 );

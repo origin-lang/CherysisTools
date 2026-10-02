@@ -897,6 +897,57 @@ input.bad {
   touch-action: pan-y;
 }
 
+/* ---------- 宽屏：商品详情走右侧抽屉（≥820px） ----------
+   手机上详情是整屏（那样最合用，见设计稿 §十二·补）；但电脑上整屏就是浪费 ——
+   列表被盖住，还得来回切。所以宽屏时：列表留在左边、详情从右边滑出来，点空白处/Esc 收起。
+   判断用**宽度**而不是"是不是电脑"：平板横屏、电脑窄窗口都该各归其位。 */
+@media (min-width: 820px) {
+  :root {
+    /* 抽屉宽度：屏幕越宽给得越多，但最多 440px（再宽就只剩一条缝给列表了） */
+    --drawer: min(440px, 44vw);
+  }
+  /* 列表给抽屉让位：不然分页条右侧那几个按钮会被压住 */
+  body.drawer #screen-list {
+    width: calc(100% - var(--drawer));
+  }
+  /* 底部细条与提示浮层也跟着让位（它们都是 fixed 铺满整宽） */
+  body.drawer #status {
+    right: var(--drawer);
+  }
+  body.drawer #toast {
+    right: calc(var(--drawer) + 12px);
+  }
+  #screen-detail {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: auto;
+    width: var(--drawer);
+    border-left: 1px solid var(--line);
+    box-shadow: -10px 0 26px rgba(0, 0, 0, 0.16);
+    z-index: 40;
+    animation: drawerin 0.16s ease-out;
+    /* 底部那条细条在抽屉模式下只铺到抽屉左边（body.drawer #status 缩小了），
+       所以这里不用再给它留 30px */
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  /* 抽屉里的表单窄（≈440px），进价/售价这种并排会挤成两半，改成一行一个。
+     .row2 是 flex 行（不是 grid），所以要改 flex-direction */
+  #screen-detail .row2 {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+@keyframes drawerin {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
 /* 底部只剩一条 26px 高的细条：原来 12px 字 + 44px 按钮，把分页条顶得只剩半个 */
 .status {
   position: fixed;

@@ -2158,14 +2158,53 @@
   }
 
   // ---------- 屏幕切换 ----------
+  /**
+   * 宽屏（≥820px）= 详情走右侧抽屉，列表留在左边；窄屏（手机）= 详情整屏。
+   *
+   * 判断用**宽度**，不判断"是不是电脑"：这件事说的是"有没有地方并排显示"。
+   * 平板横屏、电脑上把窗口拉宽，都该享受抽屉；手机竖屏自然落到全屏那一支。
+   * （别用 navigator.userAgent 猜设备：iPad 会把自己报成 Mac，最不可靠。）
+   */
+  function isWide() {
+    return !!(window.matchMedia && window.matchMedia("(min-width: 820px)").matches);
+  }
+
   function show(id) {
+    // 宽屏看详情时列表**不关**：抽屉从右边滑出来，左边那份列表还在（可以边看边挑下一件）
+    var keepList = id === "screen-detail" && isWide();
     ["screen-list", "screen-detail", "screen-new", "screen-settings"].forEach(function (s) {
-      $(s).classList.toggle("show", s === id);
+      $(s).classList.toggle("show", s === id || (s === "screen-list" && keepList));
     });
+    document.body.classList.toggle("drawer", keepList);
     if (id === "screen-list") {
       state.detail = null;
     }
   }
+
+  /** 关掉详情：抽屉模式和整屏模式都走这一条（会先把焦点那一格结算掉） */
+  function closeDetail() {
+    flushDetailEdits();
+    show("screen-list");
+  }
+
+  // 窗口从宽变窄（或反过来）时，按当前宽度重新决定"抽屉 or 整屏"。
+  // addEventListener 在旧 Safari 上没有，退回 addListener。
+  (function watchWidth() {
+    if (!window.matchMedia) {
+      return;
+    }
+    var mq = window.matchMedia("(min-width: 820px)");
+    var onChange = function () {
+      if (state.detail) {
+        show("screen-detail");
+      }
+    };
+    if (mq.addEventListener) {
+      mq.addEventListener("change", onChange);
+    } else if (mq.addListener) {
+      mq.addListener(onChange);
+    }
+  })();
 
   /** 开/收筛选面板。抽出来是因为现在有两个入口：顶栏那个按钮，和"点面板外面自动收起" */
   function setFilterOpen(open) {
@@ -2510,9 +2549,36 @@
     };
     // 双击进详情已经去掉了：改成「点两下改一个值」之后它就彻底冲突（第二下是弹输入框）。
     // 进详情现在只有三个明确入口：点编号、sheet 里的「详情 ›」、画册点卡片。
+    //
+    // 但**双击进编辑**要留着，而且写成显式的：电脑上"双击某一格 → 直接改"是本能动作
+    // （原来只是"两下 click"顺带产生的效果，不稳定也不明显）。
+    // 手机上不需要判断：双击已经被"禁双击放大"那段 touchend preventDefault 拦掉了，
+    // 所以这个监听实际只服务鼠标。
+    $("content").addEventListener("dblclick", function (e) {
+      var hitCell = e.target.closest("td[data-ed]");
+      if (!hitCell || hitCell.dataset.ed === "status") {
+        return; // 状态是点一下直接切，没有输入框
+      }
+      var hitRow = e.target.closest("[data-id]");
+      var row = hitRow ? $("content").querySelector('[data-id="' + hitRow.dataset.id + '"]') : null;
+      var cell = row ? row.querySelector('td[data-ed="' + hitCell.dataset.ed + '"]') : null;
+      if (!row || !cell) {
+        return;
+      }
+      var id = num(row.dataset.id);
+      var field = cell.dataset.ed;
+      // 第一下 click 已经把 sheet 弹出来了（选中 → 再点一下）：那就什么都不用做，
+      // 否则 openFieldSheet 会先把刚打开的那个结算掉再重开一遍（白闪一下 + 多一条日志）
+      if (editing && editing.id === id && editing.field === field) {
+        return;
+      }
+      clearSelected();
+      selected = { id: id, field: field };
+      cell.classList.add("sel");
+      openFieldSheet(row, cell);
+    });
     $("btnBack").onclick = function () {
-      flushDetailEdits(); // 焦点那格还没结算就返回的话，改动会丢
-      show("screen-list");
+      closeDetail();
     };
     $("btnPrevItem").onclick = function () {
       flushDetailEdits();
@@ -2594,19 +2660,43 @@
     $("viewerNext").onclick = function () {
       stepViewer(1);
     };
-    // 桌面浏览器上用键盘看更顺：← → 翻图、Esc 关掉。
-    // 只在灯箱开着时管这几个键，别影响列表里打字
+    // 桌面浏览器上用键盘看更顺：← → 翻图、Esc 关掉。Esc 在抽屉模式下还负责关抽屉。
+    // 只在灯箱/抽屉开着时管这几个键，别影响列表里打字
     document.addEventListener("keydown", function (e) {
-      if (!$("viewer").classList.contains("show")) {
+      if ($("viewer").classList.contains("show")) {
+        if (e.key === "ArrowLeft") {
+          stepViewer(-1);
+        } else if (e.key === "ArrowRight") {
+          stepViewer(1);
+        } else if (e.key === "Escape") {
+          $("viewerClose").onclick();
+        }
         return;
       }
-      if (e.key === "ArrowLeft") {
-        stepViewer(-1);
-      } else if (e.key === "ArrowRight") {
-        stepViewer(1);
-      } else if (e.key === "Escape") {
-        $("viewerClose").onclick();
+      if (e.key !== "Escape") {
+        return;
       }
+      // 改值的 sheet 开着时 Esc 归它（放弃这次改动），别顺手把抽屉也关了
+      if ($("fieldSheet").classList.contains("show")) {
+        return;
+      }
+      if (document.body.classList.contains("drawer")) {
+        closeDetail();
+      }
+    });
+    // 宽屏抽屉：点列表里的空白处就收起来（点商品卡片 = 换成那一件，点在格子上 = 就地改，都不关）。
+    // 只认 #content 里的点击：分页/搜索/筛选这些操作不该把详情关掉
+    document.addEventListener("click", function (e) {
+      if (!document.body.classList.contains("drawer")) {
+        return;
+      }
+      if (e.target.closest("#screen-detail") || !e.target.closest("#content")) {
+        return;
+      }
+      if (e.target.closest("[data-open]") || e.target.closest("[data-ed]")) {
+        return;
+      }
+      closeDetail();
     });
     $("btnUpload").onclick = function () {
       $("filePick").click();
