@@ -43,3 +43,5 @@ tmp-web-test/**
 logs/**
 cherysis-server.config.json
 cherysis-server.config.demo.json
+# vsce-pnpm 打包时会在项目里建一个临时 store（.pnpm-store/），不是扩展的一部分
+.pnpm-store/**
