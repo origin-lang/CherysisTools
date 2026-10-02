@@ -50,4 +50,28 @@ export interface HandlerCtx {
   pushUndo: (snap: ShopDBSnapshot, desc: string) => void;
   /** 清空撤销/重做栈（整库恢复后调用，栈里的快照对不上新库） */
   resetUndo: () => void;
+  /**
+   * 把"要跑一会儿的活儿"交给宿主（生成共享缩略图 / 生成九宫格）。
+   * 装配在 index.ts：宿主实现了就转发给它（网页版=服务端队列），没实现就立刻跑 + 错误进日志。
+   * **可选**：测试里那些手写的假 ctx 没有它，靠 runLongTask 兜底。
+   * 返回"等它跑完"的 Promise（VS Code）或立刻返回（网页版排队）。
+   */
+  longTask?: (name: string, run: () => Promise<void>) => void | Promise<void>;
+}
+
+/**
+ * 长活儿的**唯一入口**：handler 只调这个，别自己 `void xxx()` 开跑。
+ *
+ * 三档行为，一处收口：
+ * - 宿主实现了 `longTask` → 转发。VS Code = 立刻跑（返回"跑完"的 Promise）；
+ *   网页版 = 进服务端队列、立刻返回（`/api/invoke` 不阻塞，进度走 SSE）。
+ * - 没实现（测试里手写的假 ctx、将来别的宿主）→ **立刻跑并返回它的 Promise**，
+ *   与加这个接缝之前的行为一字不差（包括"想等的调用方 await 得到跑完"）。
+ */
+export function runLongTask(
+  h: HandlerCtx,
+  name: string,
+  run: () => Promise<void>,
+): void | Promise<void> {
+  return h.longTask ? h.longTask(name, run) : run();
 }

@@ -4,6 +4,7 @@ import * as path from "path";
 import type * as vscode from "vscode";
 import type { ToolContext } from "../core/toolContext.js";
 import type { ServerConfig } from "./config.js";
+import type { TaskQueue } from "./taskQueue.js";
 
 /**
  * 网页版这一侧的宿主实现：handler 只认 ToolContext，这里把它接到 HTTP 上。
@@ -123,6 +124,7 @@ export function createHttpHost(
   cfg: ServerConfig,
   sink: HostSink,
   prefs: PrefsStore,
+  tasks?: TaskQueue,
 ): ToolContext {
   const note = (text: string): void => {
     sinkLog(sink, text);
@@ -204,6 +206,22 @@ export function createHttpHost(
     },
     async pickStorageDir(): Promise<void> {
       note("ℹ️网页版的存储目录是服务端配置（cherysis-server.config.json / 命令行参数），改完重启服务生效");
+    },
+
+    /**
+     * 重活儿交给服务端队列（同一时刻只跑一个）：全组共用一个服务进程、一份共享盘，
+     * 两个人同时点生成就是叠两倍负载。排队状态与进度由 index.ts 走 SSE 推给手机。
+     *
+     * **立刻返回**（不返回"跑完"的 Promise）：/api/invoke 不该为几分钟的活儿挂着 ——
+     * 进度走 SSE，这正是网页版和 VS Code 版在这个接缝上最实质的差别。
+     * 没给队列（比如单测里直接建 host）就退回立刻跑，并把 Promise 交回去。
+     */
+    longTask(name, run) {
+      if (tasks) {
+        tasks.enqueue(name, run);
+        return;
+      }
+      return run().catch((err: any) => note(`❌${name}失败：${err?.message ?? err}`));
     },
   };
 }

@@ -5,6 +5,7 @@ import { loadConfig, lanUrls, type ServerConfig } from "./config.js";
 import { createHttpHost, makeRequestSink, PrefsStore } from "./httpHost.js";
 import { EventHub, shouldAnnounceChange, type SseSink } from "./events.js";
 import { SerialQueue } from "./serialQueue.js";
+import { TaskQueue } from "./taskQueue.js";
 import { shopTool, isWriteAction } from "../tools/shopTool/index.js";
 import { initDB, closeDB, getDB, getDBPath } from "../tools/shopTool/db.js";
 import { effectiveImageDir, initImageDirConfig, resolveImageDir } from "../tools/shopTool/imageDir.js";
@@ -112,6 +113,15 @@ async function main(): Promise<void> {
   // 写请求排队：同一时刻只有一个写进 handleMessage。理由见 src/server/serialQueue.ts
   const writeLock = new SerialQueue("写请求");
 
+  // 重活队列（生成共享缩略图 / 生成九宫格）：全组共用一个服务进程、一份共享盘，
+  // 同一时刻只跑一个。排队状态走 SSE 的 queue 事件推给手机，别让"点了没反应"。
+  const tasks = new TaskQueue((name, err) =>
+    hub.publish({ event: "log", data: `❌${name}失败：${(err as any)?.message ?? err}` }),
+  );
+  tasks.onChange((s) => {
+    hub.publish({ event: "queue", data: s });
+  });
+
   /** 库的版本号：每次**真的写成功**（库文件指纹变了）才 +1，随响应和 changed 事件下发 */
   const rev = { seq: 0, at: "" };
 
@@ -186,7 +196,7 @@ async function main(): Promise<void> {
     const run = async (): Promise<InvokeResult> => {
       const before = isWrite ? dbFingerprint() : "";
       const sink = makeRequestSink(clientId, (e) => hub.publish(e));
-      const host = createHttpHost(cfg, sink, prefs);
+      const host = createHttpHost(cfg, sink, prefs, tasks);
       let out: InvokeResult;
       try {
         await shopTool.handleMessage(msg, host);
@@ -374,6 +384,8 @@ async function main(): Promise<void> {
           // 巡检看到的 SQLite data_version：别人（电脑版）直接写同一个库时它会变。
           // 排查「外面改了但手机没提示」时先看这个：它不动 = 巡检压根没看见变化。
           dataVersion: lastDv,
+          // 重活队列：正在跑哪个、还有谁在排队（「点了没反应」多半是这里在排队）
+          tasks: tasks.status(),
         });
         return;
       }

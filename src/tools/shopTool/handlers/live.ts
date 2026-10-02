@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import sharp from "sharp";
-import { Handler, HandlerCtx } from "./types.js";
+import { Handler, HandlerCtx, runLongTask } from "./types.js";
 import { LivePlanRow, Product } from "../db.js";
 import { canonicalCode } from "../pricing.js";
 import { firstImageFile, previewThumbPath } from "../images.js";
@@ -242,7 +242,12 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
         return;
       }
       gridJobActive = true;
-      return runGridJob(async () => {
+      // 交给宿主（runLongTask 是长活儿的唯一入口）：VS Code 立刻跑，返回"跑完"的 Promise
+      // ——与以前 return runGridJob(...) 的语义一字不差，想等的调用方照样等得到；
+      // 网页版则进服务端队列并**立刻返回**，顺带修掉一个隐患：这个活儿原来是被 await 的，
+      // 几十张原图渲染下来 /api/invoke 那个请求会挂几分钟。
+      return runLongTask(h, "生成九宫格", () =>
+        runGridJob(async () => {
         const rawPlan = Array.isArray(msg.plan) ? (msg.plan as any[]) : [];
         const plan: LivePlanRow[] = rawPlan.map((r) => ({
           group_no: Number(r.group_no),
@@ -386,9 +391,10 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
         post({ type: "liveGenerated", dir: outDir, count: files.length });
         gridStatus("done", { count: files.length, dir: outDir });
         h.postLiveState();
-      }).finally(() => {
-        gridJobActive = false;
-      });
+        }).finally(() => {
+          gridJobActive = false;
+        }),
+      );
     },
 
     // 星标总览图：先出第 1 张预览 → 前端翻页时按需单页渲染（renderStarOverviewPage）

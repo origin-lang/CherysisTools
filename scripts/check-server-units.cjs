@@ -310,6 +310,93 @@ let queueCases = 0;
   ok(q3.depth === 0, "失败也不该把队列卡住");
 }
 
+// ------------------------------------------------ 重活队列（taskQueue.ts）
+let taskCases = 0;
+{
+  const { TaskQueue } = require(path.join(root, "out", "server", "taskQueue.js"));
+
+  // 21) 三种不同名字的重活同时丢进去，任何时刻只跑一个，且按进队顺序
+  taskCases++;
+  const tq = new TaskQueue();
+  const seen = [];
+  const states = [];
+  tq.onChange((s) => states.push(`${s.running}|${s.waiting.join("+")}`));
+  let running = 0;
+  let maxRunning = 0;
+  const mk = (name) => () =>
+    new Promise((resolve) => {
+      running++;
+      maxRunning = Math.max(maxRunning, running);
+      seen.push(name);
+      setTimeout(() => {
+        running--;
+        resolve();
+      }, 8);
+    });
+  tq.enqueue("生成共享缩略图", mk("生成共享缩略图"));
+  tq.enqueue("生成九宫格", mk("生成九宫格"));
+  tq.enqueue("生成九宫格", mk("生成九宫格"));
+  ok(tq.depth === 3, `刚进队时 depth 应为 3，实际 ${tq.depth}`);
+  ok(
+    JSON.stringify(tq.status().waiting) === '["生成共享缩略图","生成九宫格","生成九宫格"]',
+    `排队顺序应保持进队顺序，实际 ${JSON.stringify(tq.status().waiting)}`,
+  );
+  // 等它跑完（8ms × 3 + 余量）
+  await new Promise((r) => setTimeout(r, 120));
+  ok(maxRunning === 1, `重活同一时刻只能跑一个，实际峰值 ${maxRunning}`);
+  ok(
+    JSON.stringify(seen) === '["生成共享缩略图","生成九宫格","生成九宫格"]',
+    `必须按进队顺序跑，实际 ${JSON.stringify(seen)}`,
+  );
+  ok(tq.depth === 0 && tq.status().running === "", `跑完后队列应空闲，实际 ${JSON.stringify(tq.status())}`);
+
+  // 22) 状态变化要广播出去（手机上「正在生成 X / 前面还有 N 个」就靠它）
+  taskCases++;
+  ok(states.length >= 3, `每次进出队都该广播状态，实际只广播了 ${states.length} 次`);
+  ok(
+    states.some((s) => s.startsWith("生成共享缩略图|")),
+    `广播里应出现过 running=生成共享缩略图，实际 ${JSON.stringify(states.slice(0, 4))}`,
+  );
+  ok(
+    states[states.length - 1] === "|",
+    `最后一次广播应该是"跑完了"（running 空、没人排队），实际 ${states[states.length - 1]}`,
+  );
+
+  // 23) 一个任务抛错：错误交给 onError、队列继续（不能卡死后面排队的）
+  taskCases++;
+  const errs = [];
+  const tq2 = new TaskQueue((name, err) => errs.push(`${name}:${err.message}`));
+  let afterRan = false;
+  tq2.enqueue("会失败的任务", () => {
+    throw new Error("故意失败");
+  });
+  tq2.enqueue("后面的任务", async () => {
+    afterRan = true;
+  });
+  await new Promise((r) => setTimeout(r, 30));
+  ok(errs.length === 1 && errs[0] === "会失败的任务:故意失败", `错误应交给 onError，实际 ${JSON.stringify(errs)}`);
+  ok(afterRan, "前一个任务失败后，后面排队的必须照跑");
+  ok(tq2.depth === 0, "失败不该把队列卡住");
+
+  // 24) 排队期间**不许**开始干活（传的是工厂，不是已经开始的 Promise）——
+  //     这条是"排队"有没有意义的关键：否则排队只是把 IO 提前了
+  taskCases++;
+  const tq3 = new TaskQueue();
+  let started = 0;
+  const blocker = new Promise((r) => setTimeout(r, 40));
+  tq3.enqueue("占着的那一个", async () => {
+    started++;
+    await blocker;
+  });
+  tq3.enqueue("还在排队的那个", async () => {
+    started++;
+  });
+  await new Promise((r) => setTimeout(r, 10));
+  ok(started === 1, `排队中的任务不该已经开始，实际已开始 ${started} 个`);
+  await new Promise((r) => setTimeout(r, 80));
+  ok(started === 2, `两个最终都要跑，实际 ${started}`);
+}
+
 // ------------------------------------------------ 接线断言（源码级）
 // 串行化依赖两件事同时成立：① shopTool 导出 isWriteAction（清单只有一处）；
 // ② 服务端的 invoke 真的用它决定排队。少任何一条，这个功能就静默失效了
@@ -338,6 +425,38 @@ let wiringCases = 0;
     /event: "changed"/.test(serverIndex),
     "服务端应发 changed 事件（没它前端不会提示「有改动」）",
   );
+
+  // 长活儿那两处必须真的走 runLongTask：少一处就是"网页版上两个人同时点生成把共享盘打满"，
+  // 或者"那个请求挂几分钟" —— 都属于不报错但很难受的那类。
+  const imgSrc = fs.readFileSync(path.join(root, "src", "tools", "shopTool", "handlers", "image.ts"), "utf8");
+  const liveSrc = fs.readFileSync(path.join(root, "src", "tools", "shopTool", "handlers", "live.ts"), "utf8");
+  wiringCases++;
+  ok(
+    /runLongTask\(h, "生成共享缩略图"/.test(imgSrc),
+    "buildSharedThumbs 必须走 runLongTask（否则网页版不排队、进度也回不到手机）",
+  );
+  wiringCases++;
+  ok(
+    /return runLongTask\(h, "生成九宫格"/.test(liveSrc),
+    "generateLiveGrid 必须 return runLongTask（保住「await 能等到跑完」的既有语义，同时网页版立刻返回）",
+  );
+  wiringCases++;
+  ok(
+    /tasks\.enqueue\(name, run\)/.test(fs.readFileSync(path.join(root, "src", "server", "httpHost.ts"), "utf8")),
+    "网页版宿主必须把 longTask 接到服务端队列上（TaskQueue.enqueue）",
+  );
+  wiringCases++;
+  ok(
+    /export function runLongTask\(/.test(
+      fs.readFileSync(path.join(root, "src", "tools", "shopTool", "handlers", "types.ts"), "utf8"),
+    ),
+    "runLongTask 必须存在（长活儿的唯一入口；假 ctx 没有 longTask 时靠它兜底）",
+  );
+  wiringCases++;
+  ok(
+    /new TaskQueue\(/.test(serverIndex) && /tasks\.onChange\(/.test(serverIndex),
+    "服务端要建重活队列，并把状态变化（queue 事件）广播出去",
+  );
 }
 
 // ------------------------------------------------ 「该不该发 changed」（events.shouldAnnounceChange）
@@ -358,6 +477,39 @@ let changeCases = 0;
   ok(shouldAnnounceChange(false, 0) === false, "没真写进库 → 不该发 changed");
 }
 
+// ------------------------------------------------ 长活儿入口（runLongTask）
+// 这一组守的是**兼容性**：加接缝之前，handler 是"直接跑"的，想等的调用方 await 就能等到跑完
+// （VS Code 版与那一批手写假 ctx 的测试都依赖它）。接缝加进来以后必须还是这样，
+// 否则表现是"await generateLiveGrid(...) 立刻返回、后面的断言看见半成品"——
+// 而这类失败在真机上要翻很久。
+let seamCases = 0;
+{
+  const { runLongTask } = require(path.join(root, "out", "tools", "shopTool", "handlers", "types.js"));
+
+  // 25) 宿主实现了 longTask：原样转发，返回值照给
+  seamCases++;
+  let calledName = "";
+  const forwarded = runLongTask(
+    { longTask: (n, r) => { calledName = n; return r(); } },
+    "生成九宫格",
+    async () => "跑完了",
+  );
+  ok(calledName === "生成九宫格", `应把任务名原样转给宿主，实际 "${calledName}"`);
+  ok((await forwarded) === "跑完了", "宿主实现的返回值应原样交给调用方");
+
+  // 26) 宿主没实现（测试里的假 ctx / 将来别的宿主）：立刻跑，且**返回 Promise**
+  seamCases++;
+  let finished = false;
+  const p = runLongTask({}, "生成九宫格", async () => {
+    await new Promise((r) => setTimeout(r, 20));
+    finished = true;
+  });
+  ok(finished === false, "没实现 longTask 时应立刻开跑（异步进行中，不是同步就完成）");
+  ok(typeof p?.then === "function", "没实现 longTask 时也必须返回 Promise（否则 await 的语义就丢了）");
+  await p;
+  ok(finished === true, "await 之后必须真的跑完了 —— VS Code 版与测试都靠这条");
+}
+
 // ---------------------------------------------------------------- 汇总
 if (fails.length > 0) {
   console.error(`❌ check-server-units：${fails.length} 项不通过`);
@@ -368,8 +520,8 @@ if (fails.length > 0) {
 }
 console.log(
   `✅ check-server-units：EventHub 11 组 + 请求收集器 ${reqCases} 组 + 串行队列 ${queueCases} 组` +
-    ` + changed 判定 ${changeCases} 组 + 接线断言 ${wiringCases} 组，` +
-    `共 ${11 + reqCases + queueCases + changeCases + wiringCases} 组用例全通过`,
+    ` + 重活队列 ${taskCases} 组 + changed 判定 ${changeCases} 组 + 长活儿入口 ${seamCases} 组` +
+    ` + 接线断言 ${wiringCases} 组，共 ${11 + reqCases + queueCases + taskCases + changeCases + seamCases + wiringCases} 组用例全通过`,
 );
 })().catch((err) => {
   // 用例本身崩了（不是断言失败）也要非零退出，否则 CI 会把它当通过

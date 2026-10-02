@@ -49,6 +49,22 @@ export interface ToolContext {
    * 网页版：目录是服务端配置，网页上只读展示、不提供这个动作。
    */
   pickStorageDir(): Promise<void>;
+  /**
+   * 把"要跑一会儿的活儿"交给宿主（生成共享缩略图、生成九宫格这类）。
+   *
+   * 为什么要有这个接缝：这些活儿原来都是 handler 里"不 await 直接跑"的（见 image.ts 的注释：
+   * 上千张图跑几分钟，卡在 handler 里会把整个面板的消息堵住）。**宿主不同，"合适"就不一样**：
+   *   - VS Code：各人一台机器 → 立刻跑，和以前一字不差；
+   *   - 网页版：全组共用一个服务进程、一份共享盘 → 进服务端队列，同一时刻只跑一个，
+   *     排队与进度走 SSE 推给手机（见 src/server/taskQueue.ts）。
+   *
+   * `run` 是**工厂**（不是已经开始的 Promise）：排队期间一个字节都不该去读共享盘。
+   * 返回值：立刻返回（网页版排队）或一个"等它跑完"的 Promise（VS Code）——
+   * 想等就 await，不想等就 `void`。可选：没实现就用"立刻跑 + 错误进日志"
+   * （见 handlers/types.ts 的 runLongTask 与 shopTool/index.ts 的装配兜底），
+   * 所以测试里那些假 ctx 不受影响。
+   */
+  longTask?(name: string, run: () => Promise<void>): void | Promise<void>;
 }
 
 /** 创建工具上下文 */
@@ -133,6 +149,19 @@ export function createToolContext(
     },
     async pickStorageDir() {
       await vscode.commands.executeCommand("Cherysis.setStorageDir");
+    },
+    /**
+     * VS Code 宿主：立刻跑。等价于加这个接缝之前那句 `void task().catch(...)` 或
+     * `return runGridJob(...)`（想等的调用方 await 它就能等到）——各人一台机器，
+     * 没有必要排队；排了反而把"点完就开始出图"变成"等前面那个跑完"。
+     */
+    longTask(name, run) {
+      return run().catch((err: any) => {
+        panel.webview.postMessage({
+          type: "log",
+          text: `❌${name}失败：${err?.message ?? err}`,
+        });
+      });
     },
   };
 }

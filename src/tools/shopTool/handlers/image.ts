@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
-import { Handler, HandlerCtx } from "./types.js";
+import { Handler, HandlerCtx, runLongTask } from "./types.js";
 import { readImageToBase64 } from "../../../core/utils.js";
 import {
   UPLOAD_FILTER,
@@ -880,11 +880,17 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
         return;
       }
       buildSharedRunning = true;
-      void runBuildSharedThumbs(root, dir, h)
-        .catch((err: any) => log(`❌生成共享缩略图失败：${err?.message ?? err}`))
-        .finally(() => {
-          buildSharedRunning = false;
-        });
+      // 交给宿主（runLongTask 是长活儿的唯一入口）：VS Code 立刻跑（与以前一字不差），
+      // 网页版进服务端队列（同一时刻只跑一个重活），排队与进度走 SSE。
+      // 这里**故意不 await**（与改之前一样）：上千张图要跑几分钟，卡在 handler 里会把
+      // 后面的消息全堵住 —— 进度是靠日志/SSE 报的。
+      void runLongTask(h, "生成共享缩略图", () =>
+        runBuildSharedThumbs(root, dir, h)
+          .catch((err: any) => log(`❌生成共享缩略图失败：${err?.message ?? err}`))
+          .finally(() => {
+            buildSharedRunning = false;
+          }),
+      );
     },
   };
 }

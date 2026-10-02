@@ -23,7 +23,7 @@ const DYNAMIC_IDS = new Set(["codeQ", "fsInput"]);
  * 服务端能发的事件名（唯一出处：events.ts 的 HubEvent 注释 + index.ts 的 publish 调用 +
  * httpHost.ts 的 sinkPost/sinkLog）。逐个都要能在 src/server 里找到，防止这里凭记忆写。
  */
-const SERVER_EVENTS = ["post", "log", "changed", "reset"];
+const SERVER_EVENTS = ["post", "log", "changed", "reset", "queue"];
 
 /** EventSource 自带的事件（浏览器发的，不是服务端发的）：别当成"拼错了" */
 const BROWSER_EVENTS = new Set(["open", "error", "message"]);

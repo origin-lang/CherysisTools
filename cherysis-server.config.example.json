@@ -1,0 +1,12 @@
+{
+  "//": "复制本文件为 cherysis-server.config.json（同目录），改成你自己的路径。这个文件不进仓库（见 .gitignore）。",
+  "//路径": "storageDir / imageDir 必须是**跑服务这台机器**能访问到的路径：本机盘写 D:\\...，共享盘写 Z:\\... 或 \\\\主机名\\共享名\\...",
+  "//cacheDir": "必须是跑服务这台机器的**本机盘**，别指共享盘：缩略图缓存和偏好文件放这儿，放共享盘会慢且多机互相踩。",
+  "storageDir": "D:\\cherysis-data",
+  "imageDir": "D:\\商品图片",
+  "cacheDir": "C:\\Users\\你的用户名\\cherysis-cache",
+  "liveOutDir": "C:\\Users\\你的用户名\\cherysis-out",
+  "port": "666",
+  "host": "0.0.0.0",
+  "token": ""
+}

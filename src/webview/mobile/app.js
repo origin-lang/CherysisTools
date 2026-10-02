@@ -326,6 +326,22 @@
     es.addEventListener("changed", function () {
       markStale();
     });
+    // 重活排队（生成共享缩略图 / 九宫格）：手机端目前还没有触发这些活儿的入口，
+    // 所以先只把它写进日志 —— 将来在手机上开出图按钮时，直接用这个事件显示
+    // 「正在生成 X / 前面还有 N 个」，不用再改服务端。
+    es.addEventListener("queue", function (e) {
+      var s = null;
+      try {
+        s = JSON.parse(e.data);
+      } catch (err) {
+        return;
+      }
+      if (s && s.running) {
+        pushLog(
+          "⏳正在" + s.running + (s.waiting && s.waiting.length ? "（后面还排着 " + s.waiting.length + " 个）" : ""),
+        );
+      }
+    });
     es.addEventListener("reset", function () {
       pushLog("ℹ️断线太久，中间的变化补不齐了，重新整表读一遍");
       invoke("loadAll");

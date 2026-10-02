@@ -866,6 +866,18 @@ export const shopTool: ToolDefinition = {
         redoStack.length = 0;
         postUndoState();
       },
+      /**
+       * 长活儿的出口（handler 走 handlers/types.ts 的 runLongTask 进来）。
+       * 宿主实现了就转发（网页版=服务端队列，见 src/server/taskQueue.ts）；
+       * 没有就退回**本来的做法**：立刻跑、错误进日志。
+       * 注意传下去的是工厂：排队期间不该有任何 IO。
+       */
+      longTask: (name, run) => {
+        if (ctx.longTask) {
+          return ctx.longTask(name, run);
+        }
+        return run().catch((err: any) => log(`❌${name}失败：${err?.message ?? err}`));
+      },
     };
 
     // 表驱动分发：单一入口，按消息类型路由到对应域的 handler。
