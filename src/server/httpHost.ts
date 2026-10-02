@@ -19,8 +19,65 @@ import type { ServerConfig } from "./config.js";
  *                          （所以手机版只做不需要确认框的动作：新建/改字段/改库存/上下架/上传图）
  */
 
-/** 一次请求收集到的东西：posts 按序回给浏览器，logs 进日志区 */
-export type HostSink = { posts: any[]; logs: string[] };
+/**
+ * 一次请求收集到的东西：posts 按序回给浏览器，logs 进日志区。
+ *
+ * 后两个字段是给实时推送（/api/events）用的**可选**出口 —— 不接就等于没有它们，
+ * 行为与加这一层之前完全一致（VS Code 宿主、以及单元测试里都用不上）。
+ */
+export type HostSink = {
+  posts: any[];
+  logs: string[];
+  /** 每条回推/日志顺手投进实时推送中枢；不接就不推 */
+  emit?: (kind: "post" | "log", data: any) => void;
+  /**
+   * 请求已经回完了。之后的回推/日志**只走 emit**，不再往上面两个数组里塞：
+   * 「生成共享缩略图」那种跑几分钟的后台任务还在往里塞就是内存只增不减
+   * （它每 50 张报一次，跑一小时能塞满几百条）。
+   */
+  detached?: boolean;
+};
+
+/** 回推一条：实时推送照发；两个数组只在请求还没回完时收 */
+export function sinkPost(sink: HostSink, msg: any): void {
+  sink.emit?.("post", msg);
+  if (!sink.detached) {
+    sink.posts.push(msg);
+  }
+}
+
+/** 记一条日志：同上。多行文本原样交给接收方自己拆（前端就是这么拆的） */
+export function sinkLog(sink: HostSink, text: string): void {
+  sink.emit?.("log", text);
+  if (!sink.detached) {
+    sink.logs.push(text);
+  }
+}
+
+/**
+ * 造一次 `/api/invoke` 的收集器。
+ *
+ * 这里唯一"聪明"的地方是 **origin 随 detached 变**，所以单独拎出来（可测）：
+ *
+ * - 请求还在飞：标上发起人的 clientId —— 他自己那份会随 `/api/invoke` 的响应回去，
+ *   中枢按 origin 跳过他就不会"同一件事应用两遍"。
+ * - 请求已经回完（`detached = true`）：清空 origin —— 后台任务（生成共享缩略图的进度）
+ *   **没有"随响应回去"这条路了**，再标着发起人就等于：点了按钮的那台手机
+ *   永远看不到自己触发的进度，别人反倒看得见。这是本层唯一一个能静悄悄出错的地方。
+ */
+export function makeRequestSink(
+  clientId: string,
+  publish: (e: { event: string; data: any; origin: string }) => void,
+): HostSink {
+  const sink: HostSink = {
+    posts: [],
+    logs: [],
+    emit: (kind, data) => {
+      publish({ event: kind, data, origin: sink.detached ? "" : clientId });
+    },
+  };
+  return sink;
+}
 
 /** 服务端本机偏好：一个 JSON 文件，读写都在这里，进程内加一层缓存 */
 export class PrefsStore {
@@ -68,7 +125,7 @@ export function createHttpHost(
   prefs: PrefsStore,
 ): ToolContext {
   const note = (text: string): void => {
-    sink.logs.push(text);
+    sinkLog(sink, text);
   };
 
   return {
@@ -95,10 +152,10 @@ export function createHttpHost(
     },
 
     postToWebview(msg: any) {
-      sink.posts.push(msg);
+      sinkPost(sink, msg);
     },
     log(text: string) {
-      sink.logs.push(text);
+      sinkLog(sink, text);
     },
 
     async selectFolder(): Promise<string | undefined> {

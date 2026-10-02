@@ -2,7 +2,8 @@ import * as fs from "fs";
 import * as http from "http";
 import * as path from "path";
 import { loadConfig, lanUrls, type ServerConfig } from "./config.js";
-import { createHttpHost, PrefsStore, type HostSink } from "./httpHost.js";
+import { createHttpHost, makeRequestSink, PrefsStore } from "./httpHost.js";
+import { EventHub, type SseSink } from "./events.js";
 import { shopTool } from "../tools/shopTool/index.js";
 import { initDB, closeDB, getDB } from "../tools/shopTool/db.js";
 import { effectiveImageDir, initImageDirConfig, resolveImageDir } from "../tools/shopTool/imageDir.js";
@@ -90,19 +91,77 @@ async function main(): Promise<void> {
   initDB(cfg.storageDir); // 提前打开，好让「库打不开」在启动时就报出来
   const prefs = new PrefsStore(cfg.prefsFile);
 
+  // 实时推送中枢（SSE /api/events）：整个进程一个，后台任务也往里投
+  const hub = new EventHub();
+
+  /** 请求带来的 clientId（浏览器 localStorage 里生成的一个随机串）：用来做「跳过自己」的去重 */
+  const clientOf = (req: http.IncomingMessage): string =>
+    String((req.headers["x-cherysis-client"] as string) || "").slice(0, 64);
+
   const resolveImgDir = (): string =>
     effectiveImageDir(resolveImageDir(String(getDB().getSetting("image_dir") || "")));
 
-  /** 一次 /api/invoke：新建一个 host（posts/logs 按请求隔离），跑完把那两条数组回给浏览器 */
-  async function invoke(msg: any): Promise<{ ok: boolean; posts: any[]; logs: string[]; error?: string }> {
-    const sink: HostSink = { posts: [], logs: [] };
+  /**
+   * 一次 /api/invoke：新建一个 host（posts/logs 按请求隔离），跑完把那两条数组回给浏览器。
+   *
+   * 同时把每条回推/日志投进实时推送中枢（makeRequestSink 的 emit）——「跳过发起人自己」
+   * 与「回完之后清掉 origin」这两条规则都在那个函数里，理由见它的注释。
+   * 请求回完立刻 `detached = true`：后台任务后面那些日志只走推送，
+   * 否则它们会一直往一个没人再读的数组里堆。
+   */
+  async function invoke(
+    msg: any,
+    clientId: string,
+  ): Promise<{ ok: boolean; posts: any[]; logs: string[]; error?: string }> {
+    const sink = makeRequestSink(clientId, (e) => hub.publish(e));
     const host = createHttpHost(cfg, sink, prefs);
+    let out: { ok: boolean; posts: any[]; logs: string[]; error?: string };
     try {
       await shopTool.handleMessage(msg, host);
-      return { ok: true, posts: sink.posts, logs: sink.logs };
+      out = { ok: true, posts: sink.posts, logs: sink.logs };
     } catch (err: any) {
-      return { ok: false, posts: sink.posts, logs: sink.logs, error: String(err?.message ?? err) };
+      out = { ok: false, posts: sink.posts, logs: sink.logs, error: String(err?.message ?? err) };
     }
+    sink.detached = true;
+    return out;
+  }
+
+  /**
+   * GET /api/events —— SSE。
+   *
+   * 几个必须写对的点：
+   * - `no-cache` + `no-transform`：中间设备（代理/杀软）会缓存或改写字流，改了就成"卡住不动"。
+   * - 心跳注释行 `: ping`：空闲连接会被路由/手机省电策略掐掉，25 秒一句让它保持"有流量"。
+   * - 断线续传：浏览器自带重连并带上 `Last-Event-ID`，交给 hub.replay 补发。
+   * - token 只能走 `?token=`：EventSource **不能**带自定义请求头（所以没有 x-cherysis-token 这条路）。
+   */
+  function openEvents(req: http.IncomingMessage, res: http.ServerResponse, url: URL): void {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    // 先把响应头认下来，之后即使一条事件都没有，客户端也知道"连上了"
+    res.write(": connected\n\n");
+    const sink: SseSink = {
+      origin: String(url.searchParams.get("client") || "").slice(0, 64),
+      write: (chunk) => res.write(chunk),
+      end: () => res.end(),
+    };
+    const detach = hub.attach(sink);
+    hub.replay(sink, Number(req.headers["last-event-id"] || 0) || 0);
+    const beat = setInterval(() => {
+      try {
+        res.write(": ping\n\n");
+      } catch {
+        /* 连接已经断了，close 事件里会收尾 */
+      }
+    }, 25000);
+    req.on("close", () => {
+      clearInterval(beat);
+      detach();
+    });
   }
 
   /** 图片：size=thumb 走两级缩略图缓存回 webp；size=full 直接流原文件 */
@@ -216,7 +275,14 @@ async function main(): Promise<void> {
           imageDir: cfg.imageDir,
           imageDirReady: !!resolveImgDir(),
           tokenRequired: !!cfg.token,
+          // 连着的实时连接数：排查「手机到底连上没有」（0 = 一个都没连，先看手机端报什么错）
+          eventClients: hub.clientCount,
         });
+        return;
+      }
+
+      if (p === "/api/events") {
+        openEvents(req, res, url);
         return;
       }
 
@@ -232,7 +298,7 @@ async function main(): Promise<void> {
           sendJson(res, 400, { ok: false, error: `请求体不是合法 JSON：${err?.message ?? err}` });
           return;
         }
-        sendJson(res, 200, await invoke(msg));
+        sendJson(res, 200, await invoke(msg, clientOf(req)));
         return;
       }
 
@@ -285,6 +351,7 @@ async function main(): Promise<void> {
   });
 
   const bye = (): void => {
+    hub.closeAll(); // 先把 SSE 连接收干净：不然手机要一直等到超时才发现服务停了
     try {
       closeDB();
     } catch {
