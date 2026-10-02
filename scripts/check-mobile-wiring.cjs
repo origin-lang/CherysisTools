@@ -112,13 +112,19 @@ if (jsBreak && cssBreak && jsBreak[1] === cssBreak[1]) {
       fails.push(`style.css 里缺少 "${need}"：宽屏筛选抽屉会盖住那一块或整屏铺开`);
     }
   }
-  // 抽屉样式必须**同时**覆盖详情与新建两屏：JS 的 keepList 里两个都有，
+  // 抽屉样式必须**同时**覆盖详情/新建/设置三屏：JS 的 keepList 里三个都有，
   // CSS 少一个就是"列表留在下面、面板整屏盖上去"的半坏界面
-  if (!/#screen-detail,\s*#screen-new\s*\{/.test(css)) {
-    fails.push("style.css 的抽屉规则里应同时有 #screen-detail 与 #screen-new（两屏都要走抽屉）");
+  if (!/#screen-detail,\s*#screen-new,\s*#screen-settings\s*\{/.test(css)) {
+    fails.push(
+      "style.css 的抽屉规则里应同时有 #screen-detail / #screen-new / #screen-settings（三屏都要走抽屉）",
+    );
   }
-  if (!/id === "screen-detail" \|\| id === "screen-new"/.test(js.replace(/\s+/g, " "))) {
-    fails.push("app.js 的 keepList 里应同时包含 screen-detail 与 screen-new（两屏都要走抽屉）");
+  if (
+    !/id === "screen-detail" \|\| id === "screen-new" \|\| id === "screen-settings"/.test(
+      js.replace(/\s+/g, " "),
+    )
+  ) {
+    fails.push("app.js 的 keepList 里应同时包含 screen-detail / screen-new / screen-settings");
   }
 }
 

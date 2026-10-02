@@ -25,6 +25,7 @@
     settings: {},
     detail: null, // { id, code, idx, orig: {...}, status: 0 }
     logs: [],
+    setTab: "sys", // 设置页停在哪个页签（只在内存里：进设置时用，刷新回到系统配置）
   };
   var PAGE_SIZE = 50;
   // ---------- 显示大小（只放大表格） ----------
@@ -34,6 +35,8 @@
   // 画册和详情页都不做这一套：画册里卡片本来就是图，缩放没意义；详情页交还给浏览器自己的
   // 双指缩放（那里就是想让人捏着看）。
   var ZOOM_KEY = "cherysis_zoom";
+  /** 画册卡片大小：以前是写死最小档，现在能在「设置 → 页面配置」里选（存本机，跟设备走） */
+  var GALLERY_ZOOM_KEY = "cherysis_gallery_zoom";
   var ZOOMS = [0.75, 0.85, 1, 1.15, 1.3, 1.5]; // 走档位：连续缩放会让整张表每帧重排，手机上很卡
   var zoom = 1;
 
@@ -41,15 +44,14 @@
   function zoomActive() {
     return state.view === "list";
   }
-  // 画册不给缩放按钮，卡片大小固定：取最小档（一屏放得最多，卡片上就编号 + 图 + 一行价，
-  // 小一点也够认）。要改回来只动这一个常量。
-  var GALLERY_ZOOM = ZOOMS[0];
+  // 画册卡片大小：默认最小档（一屏放得最多，卡片上就编号 + 图 + 一行价，小一点也够认）
+  var galleryZoom = ZOOMS[0];
 
-  /** 把 zoom 落到 DOM 上。画册里用固定档，否则切过去卡片会跟着表格的档位莫名变大变小 */
+  /** 把 zoom 落到 DOM 上。画册用 galleryZoom、表格用 zoom，切换视图时各归各的档 */
   function applyZoom() {
     var c = $("content");
     if (c) {
-      c.style.setProperty("--zoom", String(zoomActive() ? zoom : GALLERY_ZOOM));
+      c.style.setProperty("--zoom", String(zoomActive() ? zoom : galleryZoom));
     }
     var lab = $("zoomLabel"); // 筛选区里那个按钮上的百分比，展开时才在 DOM 里
     if (lab) {
@@ -70,6 +72,18 @@
       localStorage.setItem(ZOOM_KEY, String(z));
     } catch (e) {
       /* 隐私模式下写不了就算了，不影响用 */
+    }
+  }
+
+  /** 画册卡片大小：与表格那套同一个档位表，各存各的 */
+  function setGalleryZoom(z) {
+    z = Math.min(ZOOMS[ZOOMS.length - 1], Math.max(ZOOMS[0], z));
+    galleryZoom = z;
+    applyZoom();
+    try {
+      localStorage.setItem(GALLERY_ZOOM_KEY, String(z));
+    } catch (e) {
+      /* 同上 */
     }
   }
   // 捏合算出来的是连续值：吸附到最近档位，跨档才变，否则手指一抖就重排一次
@@ -1487,6 +1501,47 @@
       .catch(function () {
         $("serverTable").innerHTML = '<div class="muted small">（读不到服务信息）</div>';
       });
+    renderPageConfig();
+  }
+
+  /**
+   * 「页面配置」页签：这台设备的观感设置（存 localStorage，跟设备走，不写共享库）。
+   * 一档一个按钮 —— 档位就六档，直接点比 A−/A＋ 少几下。
+   */
+  function renderPageConfig() {
+    $("galleryZoomRow").innerHTML = zoomTierButtons("gallery", galleryZoom);
+    $("tableZoomRow").innerHTML = zoomTierButtons("table", zoom);
+  }
+
+  function zoomTierButtons(kind, cur) {
+    return ZOOMS.map(function (z) {
+      var on = Math.abs(num(z) - num(cur)) < 0.001;
+      return (
+        '<button type="button" class="zoomtier' +
+        (on ? " on" : "") +
+        '" data-kind="' +
+        kind +
+        '" data-z="' +
+        z +
+        '">' +
+        Math.round(z * 100) +
+        "%</button>"
+      );
+    }).join("");
+  }
+
+  /** 设置页的两个页签：sys=系统配置（只读），page=页面配置（本机观感） */
+  function showSettingsTab(name) {
+    var panes = { sys: $("tabSys"), page: $("tabPage") };
+    Object.keys(panes).forEach(function (k) {
+      panes[k].style.display = k === name ? "" : "none";
+    });
+    var tabs = $("setTabs").querySelectorAll(".tab");
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].classList.toggle("on", tabs[i].dataset.tab === name);
+    }
+    // 记在内存里：从列表页再进设置时停在上次那个页签，刷新回到「系统配置」
+    state.setTab = name;
   }
 
   function renderPager(total, pages) {
@@ -2209,7 +2264,7 @@
   function show(id) {
     // 宽屏看详情/新建时列表**不关**：面板从右边滑出来，左边那份列表还在
     // （挑下一件、边看边建都不用退出去）
-    var keepList = (id === "screen-detail" || id === "screen-new") && isWide();
+    var keepList = (id === "screen-detail" || id === "screen-new" || id === "screen-settings") && isWide();
     // 筛选抽屉和它们抢同一块地方，不并存
     if (keepList && state.panelOpen) {
       setFilterOpen(false);
@@ -2320,10 +2375,33 @@
     });
     $("btnSettings").onclick = function () {
       renderSettings();
+      showSettingsTab(state.setTab || "sys"); // 停在上次那个页签
       show("screen-settings");
     };
     $("btnSetBack").onclick = function () {
-      show("screen-list");
+      closePanel();
+    };
+    // 页签切换 + 「页面配置」里的档位按钮（都是每次重画，所以走容器上的委托）
+    $("setTabs").onclick = function (e) {
+      var b = e.target.closest(".tab");
+      if (b) {
+        showSettingsTab(b.dataset.tab);
+      }
+    };
+    $("tabPage").onclick = function (e) {
+      var b = e.target.closest(".zoomtier");
+      if (!b) {
+        return;
+      }
+      var z = num(b.dataset.z);
+      var isTable = b.dataset.kind === "table";
+      if (isTable) {
+        setZoom(z);
+      } else {
+        setGalleryZoom(z);
+      }
+      renderPageConfig(); // 重画一遍高亮
+      toast((isTable ? "表格" : "画册") + "大小 " + Math.round(z * 100) + "%");
     };
     $("zoomOut").onclick = function () {
       stepZoom(-1);
@@ -2797,7 +2875,7 @@
       if (!document.body.classList.contains("drawer")) {
         return;
       }
-      if (e.target.closest("#screen-detail") || e.target.closest("#screen-new")) {
+      if (e.target.closest("#screen-detail") || e.target.closest("#screen-new") || e.target.closest("#screen-settings")) {
         return;
       }
       if (!e.target.closest("#content")) {
@@ -2865,8 +2943,13 @@
     if (z0) {
       setZoom(snapZoom(z0)); // 存的可能是旧档位值，吸附一下
     }
+    // 画册卡片大小（设置 → 页面配置里选的）：默认仍是最小档，没存过就不动
+    var gz = Number(localStorage.getItem(GALLERY_ZOOM_KEY));
+    if (gz) {
+      setGalleryZoom(snapZoom(gz));
+    }
   } catch (e) {
-    /* 读不到就用默认 1 */
+    /* 读不到就用默认值 */
   }
   applyZoom(); // 无论有没有存过：按当前视图决定这三个按钮在不在
   bind();

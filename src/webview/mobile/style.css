@@ -966,7 +966,8 @@ input.bad {
     right: calc(var(--drawer) + 12px);
   }
   #screen-detail,
-  #screen-new {
+  #screen-new,
+  #screen-settings {
     position: fixed;
     top: 0;
     right: 0;
@@ -1038,6 +1039,44 @@ input.bad {
   display: none;
 }
 .panelhead .ptitle {
+  font-weight: 700;
+}
+
+/* ---------- 设置页的页签 + 「页面配置」里的档位按钮 ---------- */
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: var(--gap);
+  border-bottom: 1px solid var(--line);
+}
+.tabs .tab {
+  min-height: 36px;
+  padding: 0 12px;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--muted);
+  font-weight: 700;
+}
+.tabs .tab.on {
+  color: var(--brand);
+  border-bottom-color: var(--brand);
+}
+/* 一档一个按钮（画册/表格各一排）：档位就六档，直接点比 A−/A＋ 少几下 */
+.zoomtiers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.zoomtiers .zoomtier {
+  min-height: 36px;
+  padding: 0 12px;
+}
+.zoomtiers .zoomtier.on {
+  color: var(--brand);
+  border-color: var(--brand);
+  background: rgba(35, 168, 132, 0.1);
   font-weight: 700;
 }
 

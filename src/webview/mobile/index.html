@@ -171,18 +171,39 @@
         <span class="title">⚙ 规则与设置</span>
       </header>
       <main class="content">
-        <div class="card">
-          <h3>等级规则 · 售价怎么算出来的</h3>
-          <div id="ruleTable" class="kv"></div>
-          <p class="muted small">cost = 进价。改规则要去电脑版（VS Code 插件 → 商品管理 →「规则与设置」标签页），网页版只看不改。</p>
+        <!-- 两个页签：系统配置（跟库/服务有关，只读）与页面配置（跟这台设备有关，能改、存本机） -->
+        <div class="tabs" id="setTabs">
+          <button class="tab on" type="button" data-tab="sys">系统配置</button>
+          <button class="tab" type="button" data-tab="page">页面配置</button>
         </div>
-        <div class="card">
-          <h3>当前参数</h3>
-          <div id="settingTable" class="kv"></div>
+
+        <div id="tabSys">
+          <div class="card">
+            <h3>等级规则 · 售价怎么算出来的</h3>
+            <div id="ruleTable" class="kv"></div>
+            <p class="muted small">cost = 进价。改规则要去电脑版（VS Code 插件 → 商品管理 →「规则与设置」标签页），网页版只看不改。</p>
+          </div>
+          <div class="card">
+            <h3>当前参数</h3>
+            <div id="settingTable" class="kv"></div>
+          </div>
+          <div class="card">
+            <h3>服务</h3>
+            <div id="serverTable" class="kv"></div>
+          </div>
         </div>
-        <div class="card">
-          <h3>服务</h3>
-          <div id="serverTable" class="kv"></div>
+
+        <div id="tabPage" style="display: none">
+          <div class="card">
+            <h3>画册卡片大小</h3>
+            <div class="zoomtiers" id="galleryZoomRow"></div>
+            <p class="muted small">画册里每张卡片多大（同时决定一屏放几个）。**跟着这台设备走**：存在浏览器里，换设备各是各的，不影响别人。</p>
+          </div>
+          <div class="card">
+            <h3>表格大小（列表视图）</h3>
+            <div class="zoomtiers" id="tableZoomRow"></div>
+            <p class="muted small">与列表页筛选区里那三个按钮（A− / 100% / A＋）是同一个设置，改哪边都一样。</p>
+          </div>
         </div>
       </main>
     </section>
