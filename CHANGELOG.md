@@ -4,6 +4,25 @@ All notable changes to the "cherysis-tools" extension will be documented in this
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.0.29] - 2026-10-03
+
+**换个电脑/给同事用，别再把带自己机器用户名的配置原样拷过去**：网页版配置里那几项目录，
+能不写死就不写死——服务端 `loadConfig` 本来就有默认值，多写一份就等于把两份实现钉死在某台机器上。
+
+- **自动生成配置不再塞本机缓存**：`buildDefaultConfig()` 现在只写数据目录 / 图片目录 / 端口 666，
+  `cacheDir`、`host`、`liveOutDir` 全都不写（都是 `src/server/config.ts` 自己有默认值的字段）。
+  以前那份生成结果里写死了 `C:\Users\YFF\AppData\Local\cherysis-server`，拷到别人机器上就变成
+  "在 YFF 的目录下重建一遍缩略图缓存、九宫格输出也跑到那去"。
+- **面板把这件事说清楚**：「本机缓存」那栏空着时显示「留空 = 自动用这台机器的默认目录
+  `…\cherysis-server`（跟着跑服务的机器走）」；填了则反向提醒"换台机器会指向不存在的目录"。
+  `serve-web.cjs` 的体检屏以前只打「本机缓存：（没配）」，现在显示「没配 → 自动用 `…\cherysis-server`」。
+- **新增第四个 cmd：`停止服务.cmd`**（扩展目录里，跟那三个同层）。之前只有「启动网页版 / 设置开机自启 /
+  取消开机自启」，没有关服务的——面板那颗 ⏹ 一关 VS Code 就废了，而主机上的服务常被双击 cmd 或开机自启起起来。
+  它和面板「⏹ 停止」复用同一个 `stopPort`（netstat 找端口 → PID → tasklist 核对是 `node.exe` 才杀），
+  另外比面板多给一件信息：把"是谁占着这个端口"打出来。
+- 面板里加了「关服务 —— 在终端里用 cmd 关掉」入口（点它会开终端跑同一个脚本，能看到完整诊断），
+  并在下方列出扩展目录里那四个 cmd 各干什么（起 → 停 → 设自启 → 取消自启）。
+
 ## [0.0.28] - 2026-10-03
 
 **网页版（手机也能打开的那个）这轮补的是「装上就能用」**：面板里就能起停、开关机自启、改配置，

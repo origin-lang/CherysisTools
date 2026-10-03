@@ -9,6 +9,7 @@
 // 用法：node scripts/serve-web.cjs [--config=配置文件的绝对路径] [--allow-new-db]
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const { spawn, spawnSync } = require("child_process");
 
 const root = path.join(__dirname, "..");
@@ -132,7 +133,15 @@ console.log(`  shop.db ${dbExists ? `✓（${sizeMb} MB）` : "✗（--allow-new
 console.log(
   `图片目录：${imageDir || "（没配！图片相关的功能会报错）"}${imageDir ? (dirOk(imageDir) ? "  ✓" : "  ✗ 读不到") : ""}`,
 );
-console.log(`本机缓存：${cacheDir || "（没配）"}`);
+if (cacheDir) {
+  console.log(`本机缓存：${cacheDir}`);
+} else {
+  // 不配才是推荐写法：%LOCALAPPDATA% 跟着"跑服务那台机器的当前用户"走，
+  // 一旦写死成 C:\Users\<某人>\…，这份配置拷到第二台机器就指向一个不存在的目录。
+  // 这里把实际会用的目录摆出来，免得「（没配）」让人以为出问题了。
+  const fallback = path.join(process.env.LOCALAPPDATA || os.tmpdir(), "cherysis-server");
+  console.log(`本机缓存：没配 → 自动用 ${fallback}（本机盘，换台机器也不用改配置）`);
+}
 if (isDemo) {
   console.log("");
   console.log("⚠️ 注意：这份配置指向的是**演示/测试数据**（tmp-web-test），不是正式商品库。");

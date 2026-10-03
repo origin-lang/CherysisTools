@@ -210,6 +210,13 @@
         <span id="wsAutoState">未设置</span>
         <button class="ws-mini" id="wsAutoBtn">设为开机自启</button>
       </div>
+      <div class="ws-row">
+        <span class="ws-label">关服务</span>
+        <button class="ws-mini" id="wsStopCmdBtn">在终端里用 cmd 关掉</button>
+        <span class="ws-hint" id="wsStopHint" style="margin-top: 0">
+          不开 VS Code 时用：双击扩展目录里的「停止服务.cmd」（同一个脚本，会显示是谁占着端口）
+        </span>
+      </div>
     </div>
 
     <div class="ws-sect">配置（存进扩展目录那份 cherysis-server.config.json）</div>
@@ -223,12 +230,17 @@
       <button class="ws-mini" data-ws-pick="imageDir">选文件夹</button>
 
       <label class="ws-label" for="ws_cache">本机缓存</label>
-      <input id="ws_cache" placeholder="缩略图缓存放本机盘，别指共享盘" />
+      <input id="ws_cache" placeholder="留空 = 用这台机器的默认目录（推荐）" />
       <button class="ws-mini" data-ws-pick="cacheDir">选文件夹</button>
 
       <label class="ws-label" for="ws_port">端口</label>
       <input id="ws_port" type="number" min="1" max="65535" />
       <span style="font-size: 12px; opacity: 0.7">被占就换个端口</span>
+
+      <span class="ws-label"></span>
+      <span class="ws-hint" id="wsCacheHint" style="grid-column: 2 / -1; display: none"></span>
+      <span class="ws-label"></span>
+      <span class="ws-hint" id="wsCacheFilled" style="grid-column: 2 / -1"></span>
     </div>
     <div class="ws-row" style="margin-top: 12px">
       <button class="ws-mini" id="wsSaveBtn">保存配置</button>
@@ -245,6 +257,9 @@
       网页版这边改完「保存配置」，面板那侧去设置里改（数据目录 <code>cherysis.storageDir</code>、图片目录
       <code>cherysis.shopTool.imageDir</code>）。数据目录必须两边都指到同一份库，否则等于对着另一个库录数据。
     </div>
+
+    <div class="ws-sect">扩展目录里那几个 cmd（不开 VS Code 也能用）</div>
+    <div class="ws-note" id="wsCmdList"></div>
 
     <div class="ws-note">
       <b>几个容易踩的点</b><br />

@@ -31,6 +31,8 @@
     $("wsAutoState").textContent = state.autostart ? "已设置（登录时自动起）" : "未设置";
     $("wsAutoBtn").textContent = state.autostart ? "取消开机自启" : "设为开机自启";
     $("wsCfgPath").textContent = s.configPath ? "配置文件：" + s.configPath : "";
+    renderCacheHint(s.fields && s.fields.cacheDir, s.cacheDefault);
+    renderCmdList(s.cmdNames);
     if (s.configError) {
       $("wsCfgPath").textContent = "⚠️ 配置文件不是合法 JSON：" + s.configError;
     }
@@ -43,6 +45,49 @@
     $("wsGenBtn").style.display = s.canGen ? "" : "none";
     renderSync(s.sync);
     fillForm(s.fields);
+  }
+
+  // 本机缓存这一栏空着才是推荐写法（留空 = 服务端按跑服务那台机器的 %LOCALAPPDATA% 兜底），
+  // 但空输入框本身看不出这点 —— 所以把"实际会用哪个目录"摆出来。
+  // 反过来填了就提醒一句：写死成某台机器某个用户名，这份配置拷到第二台上会指向不存在的目录。
+  function renderCacheHint(value, def) {
+    const empty = !String(value || "").trim();
+    const hint = $("wsCacheHint");
+    const filled = $("wsCacheFilled");
+    if (hint) {
+      hint.style.display = empty ? "" : "none";
+      hint.textContent = def
+        ? "留空 = 自动用这台机器的默认目录 " + def + "（推荐：换台机器、换用户名都不用改配置）。"
+        : "留空 = 自动用这台机器当前用户的默认目录（推荐）。";
+    }
+    if (filled) {
+      filled.style.display = empty ? "none" : "";
+      filled.textContent = "填了这个之后，缩略图缓存和九宫格输出都放这儿；" +
+        "换台机器跑这份配置时会指向不存在的目录，留空或重新「选文件夹」更稳。";
+    }
+  }
+
+  // 起/停/自启/取消自启 四个 cmd 列出来：装了扩展的人大半只用过面板，
+  // 而"不开 VS Code 也能操作服务"全靠它们（主机上常是这个场景）。
+  function renderCmdList(names) {
+    const box = $("wsCmdList");
+    if (!box || !Array.isArray(names) || names.length === 0) {return;}
+    const desc = {
+      "启动网页版.cmd": "起服务（先做体检：库读不到就拒跑）",
+      "停止服务.cmd": "关服务（会先说清是谁占着端口再杀）",
+      "设置开机自启.cmd": "下次登录时自动起（计划任务）",
+      "取消开机自启.cmd": "取消上面那个",
+    };
+    box.textContent = "";
+    names.forEach(function (n) {
+      const line = document.createElement("div");
+      line.textContent = "· " + n + " —— " + (desc[n] || "");
+      box.appendChild(line);
+    });
+    const tip = document.createElement("div");
+    tip.style.marginTop = "4px";
+    tip.textContent = "双击哪个就对哪层目录生效（cmd 里是 cd /d \"%~dp0\"），所以「停止服务.cmd」和面板用的是同一份配置。";
+    box.appendChild(tip);
   }
 
   var SYNC_TEXT = { same: "一致", diff: "不一样", empty: "有一边没填", na: "网页版专用" };
@@ -134,6 +179,9 @@
       // 点地址本身也能直接跳浏览器（要复制地址才点「复制」）
       $("wsUrl").onclick = function () {
         if (state.url) {post({ type: "openUrl" });}
+      };
+      $("wsStopCmdBtn").onclick = function () {
+        post({ type: "stopCmd" });
       };
       $("wsAutoBtn").onclick = function () {
         post({ type: "autostart", value: !state.autostart });

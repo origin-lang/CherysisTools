@@ -62,19 +62,25 @@ export function defaultCacheDir(): string {
 }
 
 /**
- * 一份「最小可用」的网页版配置：只写面板那四项。
+ * 一份「最小可用」的网页版配置：只写面板那三项 + 端口。
  *
- * host（0.0.0.0）和 liveOutDir（cacheDir/out）刻意不写 —— src/server/config.ts 的 loadConfig
- * 自己有默认值，多写一份就等于把两份实现钉死在两处，改了一处忘另一处就是手机连不上 / 九宫格
- * 跑到别处去。少即是多。
+ * 每一项"不写"都是有意的，全都是"服务端自己有默认值"的字段，多写一份就等于把两份实现
+ * 钉死在两处，改了一处忘另一处就是手机连不上 / 九宫格跑到别处去：
+ *
+ * · host（0.0.0.0）、liveOutDir（cacheDir/out）—— src/server/config.ts 的 loadConfig 自己有默认。
+ * · cacheDir —— **最不能写死的一项**。%LOCALAPPDATA% 是"跑服务那台机器的当前用户"，
+ *   一旦把 `C:\Users\<某个人>\…` 写进配置，这份文件拷到第二台机器上就会指向一个不存在的目录，
+ *   表现是缩略图缓存每次重建、prefs 重置、九宫格 out 错位 —— 不报错，但绕很久。
+ *   留空则 loadConfig 自己兜底成本机默认，换机器、换用户名天然都对。
+ *   （面板在 cacheDir 空时会显示那条默认值，看得见就不算盲填。）
  */
 export function buildDefaultConfig(storageDir: string, imageDir = ""): ServerConfig {
-  return {
+  const cfg: ServerConfig = {
     storageDir: String(storageDir || "").trim(),
     imageDir: String(imageDir || "").trim(),
-    cacheDir: defaultCacheDir(),
     port: DEFAULT_PORT,
   };
+  return cfg;
 }
 
 export function portOf(cfg: ServerConfig | null): number {

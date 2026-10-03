@@ -11,6 +11,7 @@
  * 跟双击扩展目录里的「启动网页版.cmd」完全是同一份配置。
  */
 import * as fs from "fs";
+import * as path from "path";
 import * as vscode from "vscode";
 import { ToolDefinition } from "../../core/toolRegistry.js";
 import type { ToolContext } from "../../core/toolContext.js";
@@ -32,6 +33,23 @@ import {
 
 /** 传给前端的字段白名单：token 是口令，一个字节都不进 webview */
 const FRONT_FIELDS = ["storageDir", "imageDir", "cacheDir", "port"] as const;
+
+/**
+ * 扩展目录（= 双击 cmd 时 `cd /d "%~dp0"` 落的那层）里那几个 cmd。
+ *
+ * 面板要把它们列出来：装了扩展的人大半只用过面板，压根不知道还有这四个 cmd，
+ * 而**不开 VS Code 也能操作服务**这件事（主机上常是这种场景）全靠它们。
+ * 顺序按"起 → 停 → 自启 → 取消自启"，跟面板按钮从上到下的顺序一致。
+ */
+export const CMD_FILES = [
+  "启动网页版.cmd",
+  "停止服务.cmd",
+  "设置开机自启.cmd",
+  "取消开机自启.cmd",
+] as const;
+
+/**「停止服务.cmd」用的那个脚本（面板上的「在终端里关掉」走的是同一条） */
+export const STOP_CMD_SCRIPT = "scripts/stop-web.cjs";
 
 const extDirOf = (ctx: ToolContext): string => ctx.extensionUri.fsPath;
 
@@ -64,6 +82,26 @@ export function startWebServer(extDir: string): void {
 
 export function stopWebServer(port: number): { ok: boolean; detail: string } {
   return stopPort(port);
+}
+
+/**
+ * 开一个终端，用「停止服务.cmd」那条路把服务关掉（双击那个 cmd 走的就是同一条）。
+ *
+ * 为什么要留这条（面板自己就能按端口停，看起来是重复）：
+ *   面板的「⏹ 停止」是**静默**的 —— 它杀掉了进程，但不告诉你"刚才占着端口的是谁"。
+ *   而"谁占着这个端口"恰恰是最难查的那一半（可能是别的程序、可能是上次残留的服务）。
+ *   走 cmd 这条路会在终端里把 netstat/tasklist 的结论和解决办法打全，看得见才敢动手；
+ *   而且它不依赖 VS Code 还开着 —— 主机上服务常被双击 cmd 或开机自启起起来，
+ *   那时人可能只留在浏览器里，关服务就得靠这个 cmd 或面板那颗按钮（面板此刻还得 VS Code 开着）。
+ *
+ * 命令形态照 startWebServer 的教训：sendText 发的是文本，交给系统默认 shell 解释，
+ * 本机是 Windows PowerShell 5.1（`&&` 是 PS7 才有，5.1 直接整行报 ParserError），
+ * 所以包一层 cmd /c 让 cmd 去解 `&`；chcp 65001 免得中文输出变乱码。
+ */
+export function stopWebServerCmd(extDir: string): void {
+  const term = vscode.window.createTerminal({ name: "Cherysis 网页版（停止）", cwd: extDir });
+  term.sendText('cmd /c "chcp 65001 >nul & node scripts/stop-web.cjs & pause"');
+  term.show();
 }
 
 /** 当前这台机器在 VS Code 里配的库 / 图片目录（两边对一眼要用） */
@@ -118,8 +156,9 @@ export function ensureServerConfigAt(
   say(`✅ 照 VS Code 的设置生成了一份配置：${cfgPath}`);
   say(`ℹ️ 数据目录：${vs.storageDir}`);
   say(`ℹ️ 图片目录：${vs.imageDir || "（没填 —— 图片相关功能会报错，数据还能录）"}`);
-  say(`ℹ️ 本机缓存：${defaultCacheDir()}（本机盘，换台机器填那台机器的用户目录）｜端口 ${DEFAULT_PORT}`);
-  say("ℹ️ 这份配置和「启动网页版.cmd」是同一个文件，以后双击 cmd 也用它。");
+  say(`ℹ️ 本机缓存：没写 —— 自动用 ${defaultCacheDir()}（%LOCALAPPDATA%\cherysis-server，跟着跑服务的机器走）`);
+  say(`ℹ️ 端口：${DEFAULT_PORT}｜这份配置和「启动网页版.cmd」是同一个文件，以后双击 cmd 也用它。`);
+  say("ℹ️ 这份配置里只写了数据目录 / 图片目录 / 端口；host、本机缓存、九宫格输出目录都留空，由服务端按本机兜底 —— 拷到别的机器上不用改就能用。");
   return { ok: true, logs };
 }
 
@@ -147,6 +186,11 @@ async function pushStatus(
     // 没配 / 配了但和 VS Code 不一样时，面板上摆一行行对照，别让人靠猜
     sync: configSyncRows(vscodePaths(), s.cfg),
     canGen: !s.cfg && !!vscodePaths().storageDir,
+    // 本机缓存空值时面板要能把那条默认值摆出来：配置里留空是靠它兜底的，
+    // 不显示的话用户只会看到"空着的输入框"，不知道那正是推荐写法
+    cacheDefault: defaultCacheDir(),
+    // 扩展目录里的四个 cmd（不装 VS Code 也能用）；列出来是因为它们各自干的事容易记混
+    cmdNames: CMD_FILES,
   });
 }
 
@@ -249,6 +293,26 @@ export const webServerTool: ToolDefinition = {
       case "stop":
         await handleStop(ctx);
         break;
+      case "stopCmd":
+        // 面板上「在终端里关掉」：看得见"到底是谁占着端口"，也照「启动」那条路的形态包 cmd /c
+        ctx.log(
+          "ℹ️ 终端里开一个「Cherysis 网页版（停止）」标签页：它会报出占用端口的进程并关掉服务；" +
+            "要停就点上面的「⏹ 停止」，要么双击扩展目录里的「停止服务.cmd」。",
+        );
+        stopWebServerCmd(extDirOf(ctx));
+        break;
+      case "listCmds": {
+        const dir = extDirOf(ctx);
+        const missing = CMD_FILES.filter((c) => !fs.existsSync(path.join(dir, c)));
+        if (missing.length === 0) {
+          ctx.log(`ℹ️ 扩展目录里的四个 cmd 都在：${CMD_FILES.join(" / ")}`);
+          ctx.log("ℹ️ 不开 VS Code 也能用：双击「停止服务.cmd」就能关服务（会显示是哪个进程占着端口）。");
+        } else {
+          ctx.log(`⚠️ 扩展目录里缺这几个 cmd：${missing.join(" / ")}`);
+          ctx.log("ℹ️ 通常是装的是旧版 vsix（0.0.27 及以前只有三个 cmd，没有「停止服务.cmd」），重装最新版即可。");
+        }
+        break;
+      }
       case "autostart":
         await handleAutostart(ctx, !!msg.value);
         break;

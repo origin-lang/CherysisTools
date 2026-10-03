@@ -122,12 +122,19 @@ ok(st && typeof st.on === "boolean", "autostartStatus 应返回 boolean 的 on")
 const generated = service.buildDefaultConfig("z:\\测试商品管理程序20261001\\数据库", "");
 ok(generated.port === 666, `buildDefaultConfig 默认端口应是 666：${JSON.stringify(generated)}`);
 ok(
-  String(generated.cacheDir).split(path.sep).pop() === "cherysis-server",
-  `buildDefaultConfig 的 cacheDir 应落到 %LOCALAPPDATA%\\cherysis-server：${generated.cacheDir}`,
-);
-ok(
   generated.host === undefined && generated.liveOutDir === undefined,
   "buildDefaultConfig 不该写 host / liveOutDir —— src/server/config.ts 自己有默认值，别开两份",
+);
+// cacheDir 最不能写死：%LOCALAPPDATA% 是"跑服务那台机器的当前用户"。
+// 一旦把 C:\Users\<某人>\… 写进配置，这份文件拷到第二台机器就指向一个不存在的目录
+// （缓存重建 / prefs 重置 / 九宫格 out 错位，不报错但很绕）。
+ok(
+  generated.cacheDir === undefined,
+  `buildDefaultConfig 不该写 cacheDir：写死成某台机器的用户名，换台机器就指错（现在是 ${generated.cacheDir}）`,
+);
+ok(
+  /%LOCALAPPDATA%/.test(fs.readFileSync(path.join(root, "src", "tools", "webServerTool", "service.ts"), "utf-8")),
+  "service.ts 里交代不清 cacheDir 为什么留空（注释要在，后人最容易手贱补上写死的那行）",
 );
 
 // ---- 6) 两边一致性比对 ----
@@ -158,12 +165,54 @@ ok(
   "handleStart 没先 ensureServerConfig —— 没配置文件时点「启动」仍旧只会报错",
 );
 const fragHtml = fs.readFileSync(frag, "utf-8");
-for (const id of ["wsGenBtn", "wsNoCfgRow", "wsSyncList", "wsSyncSummary"]) {
+for (const id of ["wsGenBtn", "wsNoCfgRow", "wsSyncList", "wsSyncSummary", "wsStopCmdBtn", "wsCacheHint", "wsCmdList"]) {
   ok(fragHtml.includes(`id="${id}"`), `fragment.html 缺 id="${id}"（client.js 会拿到 null）`);
 }
+
+// ---- 8) 「停止服务.cmd」这一条路 ----
+// 面板的「⏹ 停止」是静默的（杀掉就完了，不告诉你"是谁占着端口"），而那恰好是最难查的半边；
+// 不开 VS Code 的场景（服务被双击 cmd / 开机自启起起来）也只能靠这个 cmd。
+const stopScript = path.join(root, "scripts", "stop-web.cjs");
+const stopCmdFile = path.join(root, "停止服务.cmd");
+ok(fs.existsSync(stopScript), "缺 scripts/stop-web.cjs（「停止服务.cmd」和面板那个按钮都靠它）");
+ok(fs.existsSync(stopCmdFile), "缺 停止服务.cmd（别人机器上不开 VS Code 就停不了服务）");
+const stopCjs = fs.existsSync(stopScript) ? fs.readFileSync(stopScript, "utf-8") : "";
+const stopCmdTxt = fs.existsSync(stopCmdFile) ? fs.readFileSync(stopCmdFile, "utf-8") : "";
+// 中文必须留在 cjs 里：.cmd 里出现多字节字符会被 cmd 按当前代码页切坏命令行
+ok(!/[^\x00-\x7F]/.test(stopCmdTxt), "停止服务.cmd 里有非 ASCII 字符（中文得留在 scripts/stop-web.cjs 里）");
+ok(/chcp 65001/.test(stopCmdTxt), "停止服务.cmd 没切 UTF-8（中文会成乱码）");
+ok(/cd \/d "%~dp0"/.test(stopCmdTxt), "停止服务.cmd 没 cd 到自身目录 —— 会去读错层的配置");
+ok(/node "scripts\\stop-web\.cjs"/.test(stopCmdTxt), "停止服务.cmd 没调 scripts/stop-web.cjs");
+ok(/pause/.test(stopCmdTxt), "停止服务.cmd 结尾没 pause（窗口一闪就没，看不出停没停成）");
+// 停的逻辑只此一份：跟面板「⏹ 停止」共用 service.js，别在脚本里再写一遍 netstat 解析
+ok(/out[\s\\]+tools[\s\\]+webServerTool[\s\\]+service\.js/.test(stopCjs.replace(/\//g, path.sep)) || stopCjs.includes("tools" + path.sep + "webServerTool" + path.sep + "service.js"), "stop-web.cjs 没复用 service.js 的 stopPort（两份实现早晚会漂）");
+ok(!/taskkill\s+\/IM\s+node\.exe/i.test(stopCjs), "stop-web.cjs 里有 `taskkill /IM node.exe`（VS Code 扩展宿主也是 node.exe，会连编辑器一起带走）");
+// 面板那条入口也得跟着齐
+ok(
+  /stopWebServerCmd\(/.test(idxTs),
+  "index.ts 没实现 stopWebServerCmd（面板「在终端里用 cmd 关掉」点了没反应）",
+);
+const stopFn = /export function stopWebServerCmd[\s\S]*?\n}/.exec(idxTs);
+ok(
+  stopFn && /sendText\(\s*['"]cmd \/c "chcp 65001 >nul & node scripts\/stop-web\.cjs & pause"['"]\s*\)/.test(stopFn[0]),
+  "stopWebServerCmd 发的命令不是 `cmd /c \"chcp 65001 >nul & node scripts/stop-web.cjs & pause\"` 了" +
+    "（check 脚本要同步：默认 shell 是 PowerShell 5.1，&& 这种形态会整行 ParserError）",
+);
+ok(
+  stopFn && !/&&/.test(stopFn[0]),
+  "stopWebServerCmd 里还用了 `&&`（PowerShell 5.1 不支持）",
+);
+ok(
+  /case "stopCmd"/.test(idxTs) && /case "listCmds"/.test(idxTs),
+  "index.ts 没处理 stopCmd / listCmds 消息",
+);
+
 const clientJs = fs.readFileSync(client, "utf-8");
 ok(/{ type: "genConfig" }/.test(clientJs), "client.js 没发 genConfig（生成按钮点了没反应）");
 ok(/renderSync\(/.test(clientJs), "client.js 没渲染一致性对照表（wsSyncList 永远是空的）");
+ok(/{ type: "stopCmd" }/.test(clientJs), "client.js 没发 stopCmd（「在终端里用 cmd 关掉」点了没反应）");
+ok(/renderCacheHint\(/.test(clientJs), "client.js 没渲染本机缓存的空值提示（留空=本机默认 这条看不见）");
+ok(/renderCmdList\(/.test(clientJs), "client.js 没列扩展目录里那几个 cmd");
 
 if (fails.length > 0) {
   console.error("❌ check-webServerTool：");
