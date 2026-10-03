@@ -288,6 +288,38 @@
     }
   }
 
+  /**
+   * 这一刻能不能自动刷新。**绝不能把 <select> 算进"正在输入"**：焦点会赖在下拉框上，
+   * 算进去等于把自动刷新永久按住（这个坑在电脑版 0.0.21 真出过一次）。
+   */
+  function isTypingNow() {
+    var a = document.activeElement;
+    if (!a) {
+      return false;
+    }
+    var t = (a.tagName || "").toLowerCase();
+    return t === "input" || t === "textarea" || !!a.isContentEditable;
+  }
+
+  /**
+   * 别人改了东西 → 默认**自动**刷新（多端同步要的就是这个，每次手点等于没有）。
+   * 两个例外必须守住，否则比看到旧数据更糟：
+   *   ① 正在输入框里打字 → 整表重读会把正在填的那一格冲掉，等离开输入框再刷；
+   *   ② 不在列表/画册页（正看详情、正填新建表单）→ 只亮角标，回到列表再刷。
+   * 另外 reload() 里已经带了 bumpImg()：图片 URL 换版本号，画册那批 <img> 才会真去问
+   * 服务器，而不是继续拿浏览器缓存里的旧图顶着。
+   */
+  function tryAutoRefresh() {
+    var onList = state.view === "list" || state.view === "gallery";
+    if (!onList || isTypingNow()) {
+      markStale(); // 这轮先只亮角标，等条件合适再说
+      return;
+    }
+    clearStale();
+    reload();
+    toast("🔄别人改了，已自动刷新");
+  }
+
   function connectEvents() {
     if (typeof EventSource === "undefined") {
       // 老浏览器：退回"手动刷新"那套，功能不少，只是别人改了不会提示
@@ -328,7 +360,15 @@
       pushLog(e.data);
     });
     es.addEventListener("changed", function () {
-      markStale();
+      tryAutoRefresh(); // 自动刷新；正在打字/不在列表页时退化成「只亮角标」
+    });
+    // 打字时被按住的那次刷新，在离开输入框后补上（focusout 会冒泡，一个监听就够）
+    document.addEventListener("focusout", function () {
+      setTimeout(function () {
+        if (stale) {
+          tryAutoRefresh();
+        }
+      }, 60);
     });
     // 重活排队（生成共享缩略图 / 九宫格）：手机端目前还没有触发这些活儿的入口，
     // 所以先只把它写进日志 —— 将来在手机上开出图按钮时，直接用这个事件显示
@@ -2348,6 +2388,11 @@
       renderList();
     };
     var reload = function () {
+      // 换掉图片 URL 的版本号再重读：URL 不变的话，画册里那批 <img> 的 src 一字不差，
+      // 浏览器直接拿缓存里的旧图顶着，压根不会去问服务器（那张其实已经被别人删了）。
+      // 服务端 /api/image 已经是「每次校验」（max-age=0 + ETag），但那是**下次请求**才生效；
+      // bumpImg 让当前这一屏立刻换地址、立刻看到真相。
+      bumpImg();
       pushLog("⏳重新读取…");
       invoke("loadAll");
     };

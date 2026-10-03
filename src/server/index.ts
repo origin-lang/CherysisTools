@@ -168,11 +168,31 @@ async function main(): Promise<void> {
       return lastDv;
     }
   };
+  /**
+   * 图片「心跳」的上一次取值。
+   *
+   * 光靠 data_version 是不够的，它有两条命门：① 它的语义是"**别的连接**提交过才变"，
+   * 这个服务自己写的（手机传图/删图）**自己看不见**，于是浏览器之间永远同步不了图片；
+   * ② 图片压根不写库 —— 谁删了图都不改 data_version。
+   * 所以图片操作会写一次 `image_stamp`（见 handlers/image.ts 的 bumpImageStamp），
+   * 这里比对**值**（谁写的都能看见），两个判据取或。
+   */
+  let lastImgStamp = "";
+  const readImgStamp = (): string => {
+    try {
+      return String(getDB().getSetting("image_stamp") || "");
+    } catch {
+      return lastImgStamp;
+    }
+  };
   lastDv = readDataVersion();
+  lastImgStamp = readImgStamp();
   const dvTimer = setInterval(() => {
     const dv = readDataVersion();
-    if (dv !== lastDv) {
+    const stamp = readImgStamp();
+    if (dv !== lastDv || stamp !== lastImgStamp) {
       lastDv = dv;
+      lastImgStamp = stamp;
       publishChanged(""); // by 为空 = 服务端自己发现的，广播给所有人（含发起不了的那种"别人"）
     }
   }, 3000);
@@ -265,6 +285,35 @@ async function main(): Promise<void> {
     });
   }
 
+  /**
+   * 把文件流给响应。**必须**在任一端提前收摊时销毁读流。
+   *
+   * 为什么不能只写 `createReadStream(fp).pipe(res)`：客户端提前掐断连接（手机切后台、
+   * 关掉大图、切页面）时，`pipe` 只会把源流 unpipe，**不会 destroy 它** —— 文件描述符
+   * 就这么泄漏了，而且只有进程退出才还回来。Windows 上这个句柄是「不带 FILE_SHARE_DELETE」
+   * 打开的，后果非常隐蔽：**这张图连本进程自己都删不掉**，别人（VS Code 那边）更删不掉，
+   * 表现就是「封面永远 EBUSY，重启服务就好了」。所以两端都要兜。
+   */
+  function pipeFile(fp: string, res: http.ServerResponse): void {
+    const rs = fs.createReadStream(fp);
+    const kill = () => {
+      if (!rs.destroyed) {
+        rs.destroy();
+      }
+    };
+    // 响应提前结束（客户端断开 / 出错）→ 立刻放掉文件句柄
+    res.on("close", kill);
+    res.on("error", kill);
+    // 读的过程中文件没了/读不了 → 别让请求挂着
+    rs.on("error", () => {
+      kill();
+      if (!res.writableEnded) {
+        res.destroy();
+      }
+    });
+    rs.pipe(res);
+  }
+
   /** 图片：size=thumb 走两级缩略图缓存回 webp；size=full 直接流原文件 */
   async function sendImage(
     req: http.IncomingMessage,
@@ -310,9 +359,11 @@ async function main(): Promise<void> {
         "Content-Type": MIME[path.extname(file).toLowerCase()] || "application/octet-stream",
         "Content-Length": st.size,
         ETag: etag,
-        "Cache-Control": "private, max-age=60",
+        // 见 sendImage 上方 sendThumbHeaders 的注释：必须每次回源校验，否则别的端删/换过的图
+        // 会被浏览器拿缓存顶着，显示成旧图。
+        "Cache-Control": "private, max-age=0, must-revalidate",
       });
-      fs.createReadStream(src).pipe(res);
+      pipeFile(src, res); // 不能裸 pipe：客户端断开会漏掉文件句柄，详见 pipeFile 的注释
       return;
     }
     try {
@@ -328,7 +379,12 @@ async function main(): Promise<void> {
         "Content-Type": MIME[".webp"],
         "Content-Length": buf.length,
         ETag: etag,
-        "Cache-Control": "private, max-age=300",
+        // 为什么从 max-age=300 改成 0：图片会被「别的端」改掉（同事直接在共享盘删/换图、
+        // VS Code 面板删图），那些改动不写数据库，任何版本号/事件都通知不到网页。
+        // 让浏览器每次回来校验一次，没变就是 304（只 stat 一下，一个字节都不传，比传几十 KB
+        // 缩略图还省）；变没了就 404，前端 onerror 立刻显示「暂无图片」。
+        // 这正是 ETag（上面那个 size-mtime-size）存在的意义 —— 之前的 max-age 让它白有。
+        "Cache-Control": "private, max-age=0, must-revalidate",
       });
       res.end(buf);
     } catch (err: any) {
@@ -351,7 +407,7 @@ async function main(): Promise<void> {
       "Content-Type": MIME[path.extname(fp).toLowerCase()] || "application/octet-stream",
       "Cache-Control": "no-cache",
     });
-    fs.createReadStream(fp).pipe(res);
+    pipeFile(fp, res);
   }
 
   const server = http.createServer((req, res) => {

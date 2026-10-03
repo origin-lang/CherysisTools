@@ -858,6 +858,12 @@ function runExternalRefresh() {
     return;
   }
   externalRefreshPending = false;
+  // 封面必须连带重核：ensureCovers 见到 coverCache 里有值就走快路径跳过，不置这个标记的话
+  // 别人（网页版 / 另一台电脑）删了图、换了封面，这边列表刷新完**封面还是旧的**。
+  // 后端 getCover 会先用「图片夹 mtime」比对一遍，没动过的编号直接回缓存值、不会真去重读
+  // 原图，所以这一圈很便宜。
+  state.coverRecheck = true;
+  state.coverRecheckDone = {};
   toast("🔄 别人改了数据，已自动刷新");
   post({ type: "loadAll" });
 }

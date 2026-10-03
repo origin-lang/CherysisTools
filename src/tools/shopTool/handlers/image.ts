@@ -149,6 +149,43 @@ async function unlinkForDelete(fp: string, unlink: (p: string) => void): Promise
   throw last ?? new Error(`删除失败：${fp}`);
 }
 
+/**
+ * 图片的「心跳」：往库里写一个时间戳。
+ *
+ * 为什么非得写库：图片活在共享盘的**文件系统**里，增删改一个字节都不碰数据库。而各端判断
+ * 「有没有变化」全靠 `PRAGMA data_version`（只有**别的连接**提交过才变），所以 A 端删了图、
+ * B 端永远发现不了 —— 表现就是「这边删了，那边还显示旧图」，连刷新页面都救不了。
+ *
+ * 写这一行之后，两端**现成的** 3 秒巡检立刻就能看见它：VS Code 面板自动重刷，网页端收到
+ * SSE 的 changed 会自动重读并换掉图片 URL 版本号。等于不新建任何通道就补上了图片同步。
+ *
+ * 成本是一次单行写入（比删图时"整库备份 4 秒"便宜两个数量级），且刻意**不走 preOpBackup**
+ * —— 那道 4 秒是为了回滚**数据**，图片改动没数据可回滚，白等。
+ * 连续传十几张图会写十几次，所以做了 2 秒节流（末尾补一次）。
+ */
+const IMG_STAMP_KEY = "image_stamp";
+const IMG_STAMP_THROTTLE_MS = 2000;
+let lastImgStampAt = 0;
+let imgStampTimer: ReturnType<typeof setTimeout> | null = null;
+
+function bumpImageStamp(h: HandlerCtx): void {
+  const write = () => {
+    imgStampTimer = null;
+    lastImgStampAt = Date.now();
+    // 不 await：这只是个通知，写失败（只读模式 / 库正忙）也不该拖住图片操作本身
+    void Promise.resolve(h.setSetting(IMG_STAMP_KEY, String(lastImgStampAt))).catch(() => undefined);
+  };
+  const gap = Date.now() - lastImgStampAt;
+  if (gap >= IMG_STAMP_THROTTLE_MS) {
+    write();
+    return;
+  }
+  if (imgStampTimer) {
+    return;
+  }
+  imgStampTimer = setTimeout(write, IMG_STAMP_THROTTLE_MS - gap);
+}
+
 /** 占用类报错的统一话术：说清是「被占用」而不是把 EBUSY 甩给用户 */
 export function busyHint(subject: string, err: any, fp?: string): string {
   const head = `⚠️${subject}（${err?.message || "未知错误"}）`;
@@ -597,6 +634,7 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       log(`🖼已上传导入 ${added} 张图 → ${code} 文件夹（自动按 ${code}_时间戳.jpg 命名）`);
       await reloadImages(code);
       h.invalidateCover(code);
+      bumpImageStamp(h); // 让别的端也知道这个夹子动过（详见 bumpImageStamp 的注释）
     },
 
     async receiveImageData(msg) {
@@ -656,6 +694,7 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
         );
         await reloadImages(code);
         h.invalidateCover(code);
+        bumpImageStamp(h);
       } else if (skipped) {
         log(`🖼${skipped} 张图与已有内容重复，未新增（${code}）`);
       }
@@ -677,6 +716,7 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       const r = await clearOneFolder(code);
       logClearOne(code, r);
       post({ type: "imagesLoaded", code, images: [], names: [] });
+      bumpImageStamp(h);
       h.invalidateCover(code);
     },
 
@@ -750,6 +790,7 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
         lines.push(`·另有 ${rejected} 个编号不合法，已跳过`);
       }
       log(lines.join("\n"));
+      bumpImageStamp(h);
     },
 
     async openImageFile(msg) {
@@ -812,6 +853,7 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       log(`🗑已删除 ${code} 的第 ${index + 1} 张图片`);
       await reloadImages(code);
       h.invalidateCover(code);
+      bumpImageStamp(h); // 同上：删图不写库的话，别的端永远看不到
     },
 
     /**
@@ -852,6 +894,7 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       log(`🗑已删除 ${code} 的封面图${files.length > 1 ? "（下一张自动顶上来当封面）" : ""}`);
       await reloadImages(code);
       h.invalidateCover(code);
+      bumpImageStamp(h);
     },
 
     /**

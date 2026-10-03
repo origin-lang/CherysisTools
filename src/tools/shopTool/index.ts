@@ -394,6 +394,11 @@ export function resetShopUndoRedo(): void {
 // 「别人改了库」的巡检器状态：只有一个（面板用的就是当前这一个），所以放文件级
 let watchTimer: NodeJS.Timeout | undefined;
 let watchLastDv = -1;
+/**
+ * 图片「心跳」的上一次取值。判据除了 data_version 还要单独看它一眼，原因见下面的 tick：
+ * data_version 只认「别的连接」，而这个进程自己写的（面板里删图/传图）自己看不见。
+ */
+let watchLastImgStamp = "";
 
 /**
  * 定时检查「别的连接有没有提交过」，有就回调（用于面板自动刷新）。
@@ -411,20 +416,29 @@ export function watchExternalChanges(
 ): () => void {
   const period = Math.max(1, Math.floor(seconds)) * 1000;
   watchLastDv = -1;
+  watchLastImgStamp = "";
   const tick = (): void => {
     let dv = -1;
+    let stamp = "";
     try {
       initDB(storageDir);
       dv = getDB().dataVersion();
+      // 图片的「心跳」：图片活在共享盘的文件系统里，增删改都不写库，所以只有 data_version
+      // 的话，别人（网页版 / 另一台电脑）改了图这边永远发现不了 —— 表现就是"这边删了图，
+      // 那边的封面还是旧的"。图片操作现在会写一次 image_stamp，这里比对**值**就能看见。
+      // 比对比值而不是 data_version 也顺带绕开了"自己写的自己看不见"那个语义。
+      stamp = String(getDB().getSetting("image_stamp") || "");
     } catch {
       return; // 库还没就绪 / 暂时读不到：这一轮跳过，下一轮再来，不打扰用户
     }
     if (watchLastDv < 0) {
       watchLastDv = dv; // 第一枪只取基准
+      watchLastImgStamp = stamp;
       return;
     }
-    if (dv !== watchLastDv) {
+    if (dv !== watchLastDv || stamp !== watchLastImgStamp) {
       watchLastDv = dv;
+      watchLastImgStamp = stamp;
       onChange();
     }
   };
