@@ -2,8 +2,8 @@ import * as vscode from "vscode";
 import * as fs from "fs";
 import { createToolContext, ToolContext } from "./toolContext.js";
 
-/** 工具所属分组：system=系统管理（带数据库等重依赖），utility=小工具 */
-export type ToolCategory = "system" | "utility";
+/** 工具所属分组：system=系统管理（带数据库等重依赖），utility=小工具，service=服务/运行环境 */
+export type ToolCategory = "system" | "utility" | "service";
 
 /**
  * 数据存储目录：优先用用户配置的 cherysis.storageDir，留空则退回 VS Code 全局存储目录。

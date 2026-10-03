@@ -4,6 +4,28 @@ All notable changes to the "cherysis-tools" extension will be documented in this
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.0.28] - 2026-10-03
+
+**网页版（手机也能打开的那个）这轮补的是「装上就能用」**：面板里就能起停、开关机自启、改配置，
+不用再去 `.vscode\extensions` 里翻版本号文件夹、去 C 盘找那个 `.cmd`。
+
+- **新增「网页版服务」面板**（侧栏 → 网页版服务）：状态卡（绿点/灰点）、「▶ 启动 / ⏹ 停止」按运行时状态自动切换、
+  手机访问地址（点一下直接跳浏览器，另有复制）、开机自启开关（走计划任务 `CherysisWebServer`）。
+  起停用「按端口定位 PID、核对是 `node.exe` 才杀」，不是 `taskkill /IM node.exe` —— 后者会把 VS Code 一起带走。
+- **「启动」不再依赖 PowerShell 7**：点「启动」是往终端发一段**文本**，原来那句 `node … && pause` 在
+  Windows PowerShell 5.1 上整行 ParserError（`&&` 是 PS7 才有），表现就是"点了没反应、终端只剩一行红字"。
+  改成 `cmd /c "chcp 65001 >nul & node scripts/serve-web.cjs & pause"`：包一层交给 cmd 解 `&`（cmd 的 `&`
+  是无条件分隔，正好保留"按任意键"）；`chcp 65001` 是因为体检那屏是中文，PS 5.1 的代码页 936 会把它解成乱码。
+- **配置能自动生成**：扩展目录里那份 `cherysis-server.config.json` 以前得手打（vsix 里只有 example，
+  缺文件 `serve-web.cjs` 直接拒跑，而带中文的路径打错一个字符就是"图全挂但库还在"）。现在缺配置时，
+  按 VS Code 的设置（`cherysis.storageDir` / `cherysis.shopTool.imageDir`）+ 本机缓存默认值 + 端口 666
+  现生成一份；只有"VS Code 设置也空"或"扩展目录只读"才拦下，并给出下一步（填那几栏 / 换个目录解压）。
+- **两边指的不是同一处，面板上直接摆出来**：网页版和 VS Code 面板是**两份各自存、互不相读**的配置
+  （网页服务端只认 `cherysis-server.config.json`）。面板新增「和 VS Code 面板对一对」，逐行对照
+  数据目录 / 图片目录 / 本机缓存并标「一致 / 不一样 / 有一边没填 / 网页版专用」，比对前归一化斜杠与大小写。
+- **命令面板那条入口同源**：`Cherysis:启动网页版服务` 与面板里点「启动」共用同一套补配置逻辑，不会出现
+  "命令能起、按钮报错"。
+
 ## [0.0.27] - 2026-10-03
 
 **面板用法一条没变**，这个版本改的都是"图片在无网络服务、只在 VS Code 里用时最容易碰到的三件事"：

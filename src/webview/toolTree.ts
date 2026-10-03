@@ -12,6 +12,8 @@ export interface ToolNode {
 const GROUP_INFO: Record<ToolCategory, { label: string; icon: string }> = {
   system: { label: "系统管理", icon: "database" },
   utility: { label: "小工具", icon: "tools" },
+  // 服务这一类是"运行环境的开关"，跟录数据的工具放一起容易被当成又一个录数据的入口
+  service: { label: "网页版服务", icon: "rocket" },
 };
 
 export class ToolTreeProvider implements vscode.TreeDataProvider<GroupNode | ToolNode> {
@@ -41,7 +43,8 @@ export class ToolTreeProvider implements vscode.TreeDataProvider<GroupNode | Too
 
   getChildren(element?: GroupNode | ToolNode): Array<GroupNode | ToolNode> {
     if (!element) {
-      return [{ key: "system" }, { key: "utility" }];
+      const groups: ToolCategory[] = ["service", "system", "utility"];
+      return groups.map((key) => ({ key }));
     }
     if ("meta" in element) {
       return [];

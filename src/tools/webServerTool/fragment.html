@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      .ws-card {
+        border: 1px solid var(--vscode-panel-border);
+        border-left-width: 3px;
+        border-radius: 4px;
+        padding: 12px 14px;
+        margin-bottom: 14px;
+      }
+      .ws-card.on {
+        border-left-color: var(--vscode-charts-green, #3fb950);
+      }
+      .ws-card.off {
+        border-left-color: var(--vscode-charts-gray, #6e7681);
+      }
+      .ws-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .ws-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+      .ws-card.on .ws-dot {
+        background: var(--vscode-charts-green, #3fb950);
+        box-shadow: 0 0 5px var(--vscode-charts-green, #3fb950);
+      }
+      .ws-card.off .ws-dot {
+        background: var(--vscode-charts-gray, #6e7681);
+      }
+      .ws-title {
+        font-weight: 600;
+      }
+      .ws-hint {
+        opacity: 0.7;
+        font-size: 12px;
+        margin-top: 6px;
+      }
+      .ws-main-btn {
+        margin-left: auto;
+        padding: 5px 16px;
+        cursor: pointer;
+        border: 1px solid transparent;
+        border-radius: 3px;
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+      }
+      .ws-main-btn:hover {
+        background: var(--vscode-button-hoverBackground);
+      }
+      .ws-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+        flex-wrap: wrap;
+      }
+      .ws-label {
+        min-width: 66px;
+        opacity: 0.85;
+      }
+      .ws-url {
+        font-family: var(--vscode-editor-font-family);
+        color: var(--vscode-textLink-foreground);
+        cursor: pointer;
+        text-decoration: underline dotted;
+      }
+      .ws-mini {
+        padding: 2px 9px;
+        font-size: 12px;
+        cursor: pointer;
+        border: 1px solid var(--vscode-button-secondaryBackground);
+        border-radius: 3px;
+        background: var(--vscode-button-secondaryBackground);
+        color: var(--vscode-button-secondaryForeground);
+      }
+      .ws-mini:hover {
+        border-color: var(--vscode-focusBorder);
+      }
+      .ws-form {
+        display: grid;
+        grid-template-columns: 92px 1fr auto;
+        gap: 8px 10px;
+        align-items: center;
+      }
+      .ws-form input {
+        width: 100%;
+        box-sizing: border-box;
+        background: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+        padding: 4px 6px;
+        border-radius: 2px;
+      }
+      .ws-sect {
+        margin-top: 18px;
+        font-weight: 600;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        padding-bottom: 5px;
+        margin-bottom: 10px;
+      }
+      .ws-path {
+        font-size: 11px;
+        opacity: 0.65;
+        word-break: break-all;
+        margin-top: 8px;
+      }
+      .ws-warn {
+        color: var(--vscode-charts-orange, #d29922);
+      }
+      .ws-sync {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+      .ws-sync-item {
+        border: 1px solid var(--vscode-panel-border);
+        border-left-width: 3px;
+        border-radius: 4px;
+        padding: 7px 9px;
+        font-size: 12px;
+      }
+      .ws-sync-item.same {
+        border-left-color: var(--vscode-charts-green, #3fb950);
+      }
+      .ws-sync-item.diff {
+        border-left-color: var(--vscode-charts-orange, #d29922);
+      }
+      .ws-sync-item.empty,
+      .ws-sync-item.na {
+        border-left-color: var(--vscode-charts-gray, #6e7681);
+      }
+      .ws-sync-head {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-weight: 600;
+      }
+      .ws-badge {
+        font-weight: 500;
+        font-size: 11px;
+        padding: 1px 7px;
+        border-radius: 9px;
+        border: 1px solid currentColor;
+      }
+      .ws-sync-item.same .ws-badge {
+        color: var(--vscode-charts-green, #3fb950);
+      }
+      .ws-sync-item.diff .ws-badge {
+        color: var(--vscode-charts-orange, #d29922);
+      }
+      .ws-sync-item.empty .ws-badge,
+      .ws-sync-item.na .ws-badge {
+        color: var(--vscode-charts-gray, #6e7681);
+      }
+      .ws-sync-v {
+        display: flex;
+        gap: 6px;
+        margin-top: 3px;
+        font-family: var(--vscode-editor-font-family);
+        font-size: 11px;
+        word-break: break-all;
+        opacity: 0.85;
+      }
+      .ws-sync-k {
+        opacity: 0.6;
+        flex: 0 0 44px;
+      }
+      .ws-note {
+        margin-top: 14px;
+        font-size: 12px;
+        opacity: 0.75;
+        line-height: 1.7;
+      }
+      .ws-note b {
+        opacity: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="wsCard" class="ws-card off">
+      <div class="ws-head">
+        <span class="ws-dot"></span>
+        <span class="ws-title" id="wsState">服务未启动</span>
+        <button class="ws-main-btn" id="wsMainBtn" title="启动/停止网页版服务">▶ 启动网页版服务</button>
+      </div>
+      <div class="ws-hint" id="wsHint">
+        点右边「启动」会在 VS Code 里开一个「Cherysis 网页版」终端跑服务（Ctrl+C 或关掉它即停）；手机要连同一个
+        Wi-Fi。
+      </div>
+      <div class="ws-row" id="wsUrlRow" style="display: none">
+        <span class="ws-label">手机访问</span>
+        <span class="ws-url" id="wsUrl" title="点一下用浏览器打开"></span>
+        <button class="ws-mini" id="wsCopyBtn">复制</button>
+        <button class="ws-mini" id="wsOpenBtn">在浏览器打开</button>
+      </div>
+      <div class="ws-row" id="wsNoCfgRow" style="display: none">
+        <span class="ws-warn" id="wsNoCfgText">网页版的配置文件还不存在</span>
+        <button class="ws-mini" id="wsGenBtn">按 VS Code 设置生成</button>
+      </div>
+      <div class="ws-row">
+        <span class="ws-label">开机自启</span>
+        <span id="wsAutoState">未设置</span>
+        <button class="ws-mini" id="wsAutoBtn">设为开机自启</button>
+      </div>
+    </div>
+
+    <div class="ws-sect">配置（存进扩展目录那份 cherysis-server.config.json）</div>
+    <div class="ws-form">
+      <label class="ws-label" for="ws_storage">数据目录</label>
+      <input id="ws_storage" placeholder="shop.db 所在的文件夹，如 D:\data" />
+      <button class="ws-mini" data-ws-pick="storageDir">选文件夹</button>
+
+      <label class="ws-label" for="ws_image">图片目录</label>
+      <input id="ws_image" placeholder="商品图片根目录" />
+      <button class="ws-mini" data-ws-pick="imageDir">选文件夹</button>
+
+      <label class="ws-label" for="ws_cache">本机缓存</label>
+      <input id="ws_cache" placeholder="缩略图缓存放本机盘，别指共享盘" />
+      <button class="ws-mini" data-ws-pick="cacheDir">选文件夹</button>
+
+      <label class="ws-label" for="ws_port">端口</label>
+      <input id="ws_port" type="number" min="1" max="65535" />
+      <span style="font-size: 12px; opacity: 0.7">被占就换个端口</span>
+    </div>
+    <div class="ws-row" style="margin-top: 12px">
+      <button class="ws-mini" id="wsSaveBtn">保存配置</button>
+      <button class="ws-mini" id="wsOpenCfgBtn">打开配置文件</button>
+      <span class="ws-path" id="wsCfgPath"></span>
+    </div>
+
+    <div class="ws-sect">和 VS Code 面板对一对</div>
+    <div class="ws-sync" id="wsSyncList"></div>
+    <div class="ws-hint" id="wsSyncSummary" style="margin-top: 8px"></div>
+    <div class="ws-hint">
+      网页版服务和 VS Code 面板是<b>两份各自存的配置、互不相读</b>（网页服务端只认
+      <code>cherysis-server.config.json</code>），所以改了一边另一边不会跟。上面不一致时两边都要改：
+      网页版这边改完「保存配置」，面板那侧去设置里改（数据目录 <code>cherysis.storageDir</code>、图片目录
+      <code>cherysis.shopTool.imageDir</code>）。数据目录必须两边都指到同一份库，否则等于对着另一个库录数据。
+    </div>
+
+    <div class="ws-note">
+      <b>几个容易踩的点</b><br />
+      · 数据目录 / 图片目录必须是这台机器读得到的路径；<b>本机缓存要放本机盘</b>（放共享盘会又慢又多人互踩）。<br />
+      · 改完配置要重新「启动」才生效（端口改了尤其明显）。<br />
+      · 起服务前记得放行防火墙，否则这台自己能开、手机连不上。<br />
+      · 别一边开着 VS Code 工具面板改数据、一边开着网页版改同一份库：电脑版的撤销是整库回滚，会把另一边刚写的一起抹掉。
+    </div>
+  </body>
+</html>

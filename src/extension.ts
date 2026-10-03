@@ -9,6 +9,7 @@ import { excelAnalyzeTool } from "./tools/excelAnalyzeTool/index.js";
 import { procurementTool } from "./tools/procurementTool/index.js";
 import { shopTool } from "./tools/shopTool/index.js";
 import { order1688Tool } from "./tools/order1688Tool/index.js";
+import { ensureServerConfigAt, startWebServer, webServerTool } from "./tools/webServerTool/index.js";
 import {
   clearConfigImageDir,
   configScope,
@@ -239,8 +240,45 @@ export function activate(context: vscode.ExtensionContext) {
   toolRegistry.register(procurementTool);
   toolRegistry.register(shopTool);
   toolRegistry.register(order1688Tool);
+  toolRegistry.register(webServerTool);
 
+  /**
+   * 网页版服务的两条入口：
+   *   openWebServer —— 打开面板（侧栏「网页版服务」节点走的就是它），起停改配置都在面板里；
+   *   startWebServer —— 命令面板一条直接起，不开面板。
+   * 以前只有扩展目录里那几个 .cmd，版本号文件夹藏在 .vscode\extensions 里，很容易点错 ——
+   * 这两条命令是给"想不起路径"时留的后路。
+   */
   context.subscriptions.push(
+    vscode.commands.registerCommand("Cherysis.openWebServer", () => {
+      toolRegistry.openTool("webServer", context);
+    }),
+    vscode.commands.registerCommand("Cherysis.startWebServer", async () => {
+      const extDir = context.extensionUri.fsPath;
+      // 复用同一套"缺配置就照 VS Code 设置现生成"：这条命令和面板点「启动」走同一个出口，
+      // 不然两条路径一个能自愈一个只会报错，用户就会撞上"命令能起、按钮不行"的鬼故事。
+      const r = ensureServerConfigAt(extDir);
+      if (!r.ok) {
+        const pick = await vscode.window.showWarningMessage(
+          "网页版还起不来：扩展目录里还没有 cherysis-server.config.json，而且照 VS Code 设置也补不出来。",
+          "打开服务面板",
+        );
+        if (pick) {
+          await vscode.commands.executeCommand("Cherysis.openWebServer");
+        }
+        return;
+      }
+      if (r.logs.length > 0) {
+        // 刚生成了一份：把"写在哪 / 图片目录填没填 / 端口"这几行塞进详情里，别弹一串弹窗
+        vscode.window.showInformationMessage(r.logs[0].slice(0, 140), {
+          detail: r.logs.slice(1).join("\n"),
+        });
+      }
+      startWebServer(extDir);
+      vscode.window.showInformationMessage(
+        "已在 VS Code 里开终端跑网页版，日志看「Cherysis 网页版」那个终端页。",
+      );
+    }),
     vscode.commands.registerCommand("Cherysis.openToolPanel", () => {
       toolRegistry.openPanel(context);
     }),

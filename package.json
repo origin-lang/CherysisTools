@@ -3,7 +3,7 @@
   "displayName": "Cherysis",
   "publisher": "Faye",
   "description": "small tools",
-  "version": "0.0.27",
+  "version": "0.0.28",
   "repository": {
     "type": "git",
     "url": "https://github.com/origin-lang/CherysisTools.git"
@@ -48,6 +48,14 @@
       {
         "command": "Cherysis.openTool",
         "title": "Cherysis:打开指定工具"
+      },
+      {
+        "command": "Cherysis.openWebServer",
+        "title": "Cherysis:打开网页版服务面板"
+      },
+      {
+        "command": "Cherysis.startWebServer",
+        "title": "Cherysis:启动网页版服务"
       },
       {
         "command": "Cherysis.setShopImageDir",
@@ -104,10 +112,10 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "pnpm run compile && pnpm run check:parity && pnpm run check:server && pnpm run check:mobile && pnpm run check:longtask",
+    "vscode:prepublish": "pnpm run compile && pnpm run check:parity && pnpm run check:webserver && pnpm run check:server && pnpm run check:mobile && pnpm run check:longtask",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "pnpm run compile && pnpm run lint && pnpm run check:parity && pnpm run check:server && pnpm run check:mobile && pnpm run check:longtask",
+    "pretest": "pnpm run compile && pnpm run lint && pnpm run check:parity && pnpm run check:webserver && pnpm run check:server && pnpm run check:mobile && pnpm run check:longtask",
     "lint": "eslint src",
     "check:parity": "node scripts/check-shopTool-parity.cjs",
     "check:server": "node scripts/check-server-units.cjs",
@@ -115,7 +123,8 @@
     "check:longtask": "node scripts/check-longtask-handlers.cjs",
     "test": "vscode-test",
     "package": "vsce-pnpm package",
-    "serve": "node out/server/index.js"
+    "serve": "node out/server/index.js",
+    "check:webserver": "node scripts/check-webServerTool.cjs"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
