@@ -4,7 +4,38 @@ All notable changes to the "cherysis-tools" extension will be documented in this
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [Unreleased]
+## [0.0.27] - 2026-10-03
+
+**面板用法一条没变**，这个版本改的都是"图片在无网络服务、只在 VS Code 里用时最容易碰到的三件事"：
+共享盘上删不掉的图片、删掉了图片还在、放大了看不清。
+
+- **共享盘上的图片删不掉**：`core/utils.ts` 模块顶层加 `sharp.cache(false)`。libvips 默认缓存输入文件，
+  在网络共享盘上表现为"刚读过就一直锁着"，于是任何为它生成过缩略图的原图都删不掉（实测本地盘不复现，
+  共享盘必现；`sharp.cache({files: 0})` 无效）。这是 sharp 官方 issue 模板里的解法，真实商品图无可测代价。
+- **删不掉要看得见**：`handlers/image.ts` 新增 `failToast()`，接在删图 / 删封面 / 清空部分失败 / 序号不存在四处。
+  此前失败只写日志而 HTTP 仍 `ok: true`，前端只能去扫日志字符串。电脑版 `showGlobalToast(text, actions, bad)`
+  支持红字，手机端 `toast(text, bad)`。
+- **详情页的图片刷不到**：详情页的图走 `/api/images` 单独取，不在列表那份里，自动刷新碰不到它。
+  `tryAutoRefresh` 改为按视图分发（原先开头的 `return` 让详情页分支永不执行），新增 `refreshDetailMedia()`
+  只刷图片、不碰正在填的表单。
+- **删了图还挂着旧图**：详情页封面 URL 原先不带文件名，删掉第一张后 URL 一字不差，浏览器直接拿缓存里的
+  旧图顶着——表现就是"小图都对、就大图是旧的"。带文件名后是内容寻址，图换了 URL 必变；顺带去掉进详情时
+  先塞一张无名封面的做法（原图 7.9MB 会下两次）。新增 `size=mid`（1024 等比 webp，约 87KB）供封面使用。
+- **多端同步**：`image_stamp` 图片心跳（6 个写图出口写库）复用原有的 3 秒巡检与 SSE，
+  让"改了图"也能跨端感知（原先只有 `PRAGMA data_version`，它只在**别的连接**提交时才变，自己写自己看不到）。
+- **图片缓存别自己造版本号**：`/api/image` 早就配有 ETag + `max-age=0`，判"图变没变"本就是它的活；
+  前端那个全局 `imgVer` 一 +1 就让全屏 URL 全部失效、全部 200 重下。改成按商品记，且只在这台设备
+  自己刚删/传过图时才换那一个商品的号，其余交给 `If-None-Match`（没变 304 零字节、变了 200、没了 404）。
+  ETag 的 mtime 不再取整（毫秒满精度）；刻意**不**把 `image_stamp` 塞进 ETag——那是全局心跳，
+  塞进来等于一张图改动就让全站图片缓存一并作废。
+- **灯箱能放大了**：滚轮（以光标为锚点，Ctrl/触控板捏合天然就是 `wheel + ctrlKey`）、触屏双指、
+  双击 100%↔250%、放大后拖拽平移、换图自动复位、底部显示当前倍率。CSS 侧必须把 `.viewer` 的
+  `touch-action` 从 `pan-y` 改成 `none`，否则浏览器在合成器里先把双指判成"滚页面"，`preventDefault` 拦不住。
+- **封面占位别拉原图**：删图 / 清空 / 传图成功后同步塞给封面的那三处，从 `full`（7.9MB）改成 `mid`——
+  它只是几十毫秒的占位，且改成 mid 后与最终那张同尺寸，切换不跳变。灯箱 `viewerImg` 保持 `full`（放大看细节就得原图）。
+
+验证：`tsc` ✅ `lint` 0 errors ✅ 四个 check 脚本 ✅；`node --check` ✅；
+`curl` 自测首请求 200(26036B)、带 `If-None-Match` 复请求 304、不存在的图 404。
 
 ## [0.0.19] - 2026-10-02
 
