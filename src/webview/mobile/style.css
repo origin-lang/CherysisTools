@@ -268,9 +268,29 @@ select {
   overflow-y: auto;
   padding: var(--pad);
   -webkit-overflow-scrolling: touch;
+  /* 关掉 Chrome/安卓**自带**的那套下拉刷新（它会整页转圈，跟我们自己做的那套打架）。
+     iOS Safari 没有原生下拉刷新，这条对它无害。 */
+  overscroll-behavior-y: contain;
   /* 显示大小：只有这个容器里的东西（表格 / 画册）跟着 --zoom 变。
      顶栏、搜索行、筛选区、分页条、状态条都是它的兄弟节点，天然不会被缩放带跑。 */
   --zoom: 1;
+}
+/* 下拉刷新的提示条：插在滚动容器最前面，平时 height:0 完全不占地方；
+   下拉时 JS 改 height 把它撑开。用文档流而不做绝对定位，是免得跟
+   overflow-y:auto 的裁剪打架（绝对定位在 scrollTop=0 时会被裁掉看不见）。 */
+.ptr {
+  height: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--muted);
+  /* 松手回弹要有动画；手指还按着时（.on）跟着手指走，有动画反而黏手 */
+  transition: height 0.18s ease;
+}
+.ptr.on {
+  transition: none;
 }
 .muted {
   color: var(--muted);

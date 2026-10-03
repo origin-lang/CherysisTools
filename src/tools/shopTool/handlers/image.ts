@@ -452,6 +452,19 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
   };
 
   /** 单个入口的日志：一个夹一次，把话说全（含被占用的排查提示） */
+  /**
+   * 操作失败时给用户的一行**红字提示**。
+   *
+   * 为什么不能只写日志：日志区是排查用的，默认收在页面底部，普通用户根本不看 ——
+   * 结果就是「点了删除，弹了个成功提示，图还在那儿」，看着像前端撒谎。
+   * 而且前端原来只能靠**扫日志字符串**（找"删不掉"）判成败，改一句文案就失灵。
+   * 这里改成后端显式发一条 `toast`（bad: true 走红样式），成败有据可依。
+   * 详细的自证信息（谁占着、怎么查）仍然写进日志，两条路各管一层。
+   */
+  const failToast = (text: string): void => {
+    post({ type: "toast", text: `⚠️${text}`, bad: true });
+  };
+
   const logClearOne = (code: string, r: ClearResult): void => {
     if (r.outcome === "nofolder") {
       log(`⚠️${code} 无图片文件夹`);
@@ -466,8 +479,10 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
           `　本次只删掉了 ${r.ok}/${r.total} 张，剩下的还在。` +
           `请确认图库抽屉已关、别的机器没在看这些图，再点一次「清空图片夹」。`,
       );
+      failToast(`清空 ${code} 图片夹只删掉 ${r.ok}/${r.total} 张`);
     } else {
       log(`⚠️清空 ${code} 图片夹只成功 ${r.ok}/${r.total} 张（${r.lastErr?.message || ""}）`);
+      failToast(`清空 ${code} 图片夹只删掉 ${r.ok}/${r.total} 张`);
     }
   };
 
@@ -833,6 +848,8 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
       const fp = folder && name && files.includes(name) ? path.join(folder, name) : null;
       if (!fp) {
         log(`⚠️${code} 没有第 ${index + 1} 张图片`);
+        // 也是失败：用户点了删除、结果什么都没发生，不提示就成了「点了没反应」
+        failToast(`${code} 已经没有第 ${index + 1} 张图了，没删成（可能刚被别台机器删掉）`);
         return;
       }
       // 刻意不 preOpBackup：删图只动文件系统、一个字节都不写数据库，
@@ -848,6 +865,7 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
         log(busyHint(`删不掉 ${code} 的第 ${index + 1} 张图片`, err, fp));
         await reloadImages(code);
         h.invalidateCover(code);
+        failToast(`删不掉 ${code} 的第 ${index + 1} 张图片（多半正被占用），图还在，稍等再试`);
         return;
       }
       log(`🗑已删除 ${code} 的第 ${index + 1} 张图片`);
@@ -889,6 +907,7 @@ export function imageHandlers(h: HandlerCtx, deps: ImageHandlerDeps = {}): Recor
         log(busyHint(`删不掉 ${code} 的封面图`, err, fp));
         await reloadImages(code);
         h.invalidateCover(code);
+        failToast(`删不掉 ${code} 的封面图（多半正被占用），图还在，稍等再试`);
         return;
       }
       log(`🗑已删除 ${code} 的封面图${files.length > 1 ? "（下一张自动顶上来当封面）" : ""}`);

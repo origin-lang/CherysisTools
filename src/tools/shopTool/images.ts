@@ -362,7 +362,72 @@ export async function thumbToCachedBase64(
   fileName?: string,
   shared?: SharedThumbCache,
 ): Promise<string> {
-  const name = thumbName(code, fileName);
+  return cachedWebp(src, cacheDir, thumbName(code, fileName), () => thumbToBase64(src), shared);
+}
+
+/**
+ * 详情页封面要用的「中号图」：等比缩到 MID_SIZE、**不裁剪**。
+ *
+ * 为什么非得再来一档：封面以前直接用原图（size=full），而手机拍的原图实测 7.9MB，
+ * 详情页那个封面在屏幕上也就几百像素宽 —— 等于每次进详情都拉一整张原图下来看个缩略。
+ * 1024 宽在手机上看不出差别，体积却小一个数量级。
+ *
+ * 为什么不直接用 512 那档：512 是 cover 裁成**正方形**的（画册卡片要方图），
+ * 当封面看会把上下/左右裁掉一截，构图不对。这一档是 inside 等比缩，完整保留原图。
+ *
+ * 缓存名带 @m1024，与 512 那档各存各的，互不覆盖。
+ */
+export const MID_SIZE = 1024;
+
+function midName(code: string, fileName?: string): string {
+  const base = safeCode(code);
+  if (!fileName) {
+    return `${base}@m${MID_SIZE}`;
+  }
+  const h = crypto.createHash("sha1").update(String(fileName)).digest("hex").slice(0, 8);
+  return `${base}~${h}@m${MID_SIZE}`;
+}
+
+/** 等比缩到 MID_SIZE 的 webp base64；sharp 失败时回退原图 base64 */
+async function midToBase64(src: string): Promise<string> {
+  try {
+    const out = await withSharpFile((f) =>
+      f(src)
+        .resize(MID_SIZE, MID_SIZE, { fit: "inside", withoutEnlargement: true })
+        .webp({ quality: 82 })
+        .toBuffer(),
+    );
+    return "data:image/webp;base64," + out.toString("base64");
+  } catch {
+    try {
+      return await readImageToBase64(src);
+    } catch {
+      return "";
+    }
+  }
+}
+
+export async function midToCachedBase64(
+  src: string,
+  cacheDir: string,
+  code: string,
+  fileName?: string,
+  shared?: SharedThumbCache,
+): Promise<string> {
+  return cachedWebp(src, cacheDir, midName(code, fileName), () => midToBase64(src), shared);
+}
+
+/**
+ * 三级缓存（本机 → 共享 → 现缩）的公共骨架，上面两档尺寸共用。
+ * make 只在**都没命中**时才跑，也就是"真正该付代价"的那一次。
+ */
+async function cachedWebp(
+  src: string,
+  cacheDir: string,
+  name: string,
+  make: () => Promise<string>,
+  shared?: SharedThumbCache,
+): Promise<string> {
   // 指纹只算一次：本机缓存和共享缓存都要用它，各算一次就是两趟共享盘 stat
   const fp = fingerprints(src);
   const entry = cacheEntry(cacheDir, name);
@@ -385,7 +450,7 @@ export async function thumbToCachedBase64(
       }
     }
   }
-  const data = await thumbToBase64(src);
+  const data = await make();
   if (entry) {
     writeCache(entry, src, data, fp.local);
   }

@@ -866,6 +866,12 @@ function runExternalRefresh() {
   state.coverRecheckDone = {};
   toast("🔄 别人改了数据，已自动刷新");
   post({ type: "loadAll" });
+  // 详情抽屉（灯箱）里那批图**不在 loadAll 里**：它们是开抽屉时单独 getImages 取回来的。
+  // 别人把这个商品的图删光之后，列表自己变了、抽屉里那几张还挂在那儿 ——
+  // 看着就像"手机删了图，这边没反应"。开着的抽屉重读一次，只动图片、不碰用户正在填的表单。
+  if (state.lbCode) {
+    post({ type: "getImages", code: state.lbCode });
+  }
 }
 
 function onMessage(msg) {

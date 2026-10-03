@@ -207,6 +207,11 @@
       .then(function (j) {
         (j.posts || []).forEach(handlePost);
         (j.logs || []).forEach(pushLog);
+        // 后端发了「红色 toast」= 这次操作失败了。记在回包上，调用方据此走失败分支
+        // （省得它们再去扫日志文本判成败）。
+        j.__opFailed = (j.posts || []).some(function (m) {
+          return !!m && m.type === "toast" && m.bad;
+        });
         if (j.error) {
           pushLog("❌" + j.error);
         }
@@ -218,18 +223,36 @@
       });
   }
 
-  // 图片缓存版本号：删图/传图后 +1，让 imgUrl 变出新 URL 绕开浏览器 5 分钟的图片缓存
-  var imgVer = 0;
-  function bumpImg() {
-    imgVer++;
+  /**
+   * 图片版本号：**按商品编号记**，不再是一个全局数字。
+   *
+   * 为什么要改：服务端 /api/image 现在是 `max-age=0, must-revalidate` + ETag —— 浏览器每次
+   * 都会回来问一句「还是那个吗」，没变就 304（只有请求头，一个图片字节都不传）。
+   * 而换版本号 = 换 URL = 手机缓存里压根没这个新地址 = **必定 200 全量重下一遍**，
+   * 等于把 ETag 这套"先问一句"白白绕过去。一屏画册几十张缩略图（实测一张 26KB），
+   * 以前那个全局 +1 一次就是大几百 KB 白花。
+   *
+   * 所以现在的规矩：**只有这台设备自己刚改过图**（删/传）才 bump 那一个商品的号，
+   * 让这一屏立刻看到真相；别人改的、或者单纯"我想再看一眼"（重读/自动刷新/下拉），
+   * 一律**不换号** —— 交给浏览器拿 If-None-Match 去问，没变 304，变了 200，没了 404。
+   */
+  var imgVerByCode = {};
+  function imgVerOf(code) {
+    return imgVerByCode[code] || 0;
+  }
+  function bumpImg(code) {
+    if (code) {
+      imgVerByCode[code] = imgVerOf(code) + 1;
+    }
   }
 
   function imgUrl(code, name, size) {
-    // /api/image 带 Cache-Control: private, max-age=300 —— 删掉一张图后如果还用同一个 URL，
-    // 浏览器直接拿缓存里的旧图显示出来，看着就像「点了 × 没反应」。所以 URL 上挂一个版本号，
-    // 删图/传图后 bumpImg() 让它 +1，URL 变了浏览器才会真去问服务器（那张已经 404 了）。
+    // URL 上挂的版本号只是**兜底**，正常情况下"图变没变"是浏览器和服务端的事：
+    // /api/image 带 `Cache-Control: private, max-age=0, must-revalidate` + ETag，
+    // 没变回 304、变了回 200、没了回 404，前端 onerror 收尾。
+    // 只有这台设备自己刚删/传过图才 bumpImg(code) 换号（见上面的注释）。
     var u =
-      "/api/image?code=" + encodeURIComponent(code) + "&size=" + (size || "thumb") + "&v=" + imgVer;
+      "/api/image?code=" + encodeURIComponent(code) + "&size=" + (size || "thumb") + "&v=" + imgVerOf(code);
     if (name) {
       u += "&name=" + encodeURIComponent(name);
     }
@@ -306,18 +329,197 @@
    * 两个例外必须守住，否则比看到旧数据更糟：
    *   ① 正在输入框里打字 → 整表重读会把正在填的那一格冲掉，等离开输入框再刷；
    *   ② 不在列表/画册页（正看详情、正填新建表单）→ 只亮角标，回到列表再刷。
-   * 另外 reload() 里已经带了 bumpImg()：图片 URL 换版本号，画册那批 <img> 才会真去问
-   * 服务器，而不是继续拿浏览器缓存里的旧图顶着。
+   * reload() **不换图片版本号**：那会让一屏几十张缩略图全部 200 重下一遍。
+   * 正确与否交给服务端 ETag —— 重绘出来的 <img> 会带着 If-None-Match 去问，
+   * 没变 304（零字节）、变了 200、没了 404。
    */
-  function tryAutoRefresh() {
-    var onList = state.view === "list" || state.view === "gallery";
-    if (!onList || isTypingNow()) {
-      markStale(); // 这轮先只亮角标，等条件合适再说
+  /**
+   * 详情页开着时，把**图片这一块**单独重读一遍。
+   *
+   * 为什么非得单独来一下：`loadAll` 只换商品数据，详情页那几张图是走 `/api/images`
+   * 单独取的，不在整表那份里。所以别人把某个商品的图删光之后 —— 列表/画册自己变了，
+   * **详情页那几张还挂在那儿**，看着就像"手机删了、这边没反应"。
+   * 只刷图片、不刷表单：图片不是用户能编辑的格子，重读不会冲掉他正在填的东西。
+   */
+  function refreshDetailMedia() {
+    var d = state.detail;
+    if (!d || !d.code) {
       return;
     }
-    clearStale();
-    reload();
-    toast("🔄别人改了，已自动刷新");
+    // 这里同样**不换版本号**（理由见 imgVerOf 那条注释）：loadImages 会把 #dImages 和封面
+    // 整块重画，新的 <img> 会带着 If-None-Match 去问服务器 —— 图真被删了服务端回 404，
+    // 前端 onerror 立刻把它抹掉，效果一样，但没动的图一个字节都不用重下。
+    return loadImages(d.code);
+  }
+
+  /**
+   * 下拉刷新 —— 手机上"我现在就想再看一眼"的手势入口。
+   *
+   * 自动刷新已经兜住大部分情况，但它有够不着的时候：推送没送到、通知被节流、
+   * 或者纯粹想确认一次。这种时候下拉就行，不用满屏找按钮。
+   *
+   * 三条边界，缺一个就会变成"怎么滑都在刷新"：
+   *   · 只有**已经滚到顶**才认这个手势，否则下拉就只是普通滚动；
+   *   · 横着滑不认（表格要左右拖）；
+   *   · 只认单指（双指留给缩放），且表格处于缩放状态时不插手。
+   */
+  function setupPullToRefresh(scrollEl, onRefresh) {
+    if (!scrollEl) {
+      return;
+    }
+    var bar = document.createElement("div");
+    bar.className = "ptr";
+    var txt = document.createElement("span");
+    bar.appendChild(txt);
+    scrollEl.insertBefore(bar, scrollEl.firstChild);
+
+    var TRIGGER = 56; // 松手触发的阈值（阻尼之后的像素）
+    var MAXH = 84;
+    var startY = 0;
+    var startX = 0;
+    var pulling = false;
+    var armed = false;
+    var busy = false;
+
+    function setBar(h, t) {
+      bar.style.height = h + "px";
+      txt.textContent = t;
+    }
+    function reset() {
+      pulling = false;
+      armed = false;
+      bar.classList.remove("on");
+      setBar(0, "");
+    }
+
+    scrollEl.addEventListener(
+      "touchstart",
+      function (e) {
+        if (e.touches.length !== 1 || busy || zoomActive()) {
+          pulling = false;
+          return;
+        }
+        startY = e.touches[0].clientY;
+        startX = e.touches[0].clientX;
+        pulling = scrollEl.scrollTop <= 0; // 已经在顶部时，下拉才是"刷新"的意思
+        armed = false;
+      },
+      { passive: true }
+    );
+
+    scrollEl.addEventListener(
+      "touchmove",
+      function (e) {
+        if (!pulling || e.touches.length !== 1) {
+          return;
+        }
+        var dy = e.touches[0].clientY - startY;
+        var dx = e.touches[0].clientX - startX;
+        // 往上滑、或者横着滑 → 交还给原生滚动
+        if (dy <= 0 || Math.abs(dx) > Math.abs(dy)) {
+          reset();
+          return;
+        }
+        var h = Math.min(dy * 0.45, MAXH); // 阻尼：手指走 2px、条子长 1px
+        armed = h >= TRIGGER;
+        bar.classList.add("on");
+        setBar(Math.round(h), armed ? "↑ 松手刷新" : "↓ 下拉刷新");
+      },
+      { passive: true }
+    );
+
+    scrollEl.addEventListener("touchend", function () {
+      if (!pulling) {
+        return;
+      }
+      if (!armed) {
+        reset();
+        return;
+      }
+      busy = true;
+      bar.classList.add("on");
+      setBar(32, "🔄 刷新中…");
+      var done = function () {
+        reset();
+        busy = false;
+      };
+      try {
+        onRefresh(done);
+      } catch (err) {
+        done();
+      }
+      // 兜底：回调忘了喊 done 也别一直顶在那儿
+      setTimeout(function () {
+        if (busy) {
+          done();
+        }
+      }, 4000);
+    });
+  }
+
+  /** 收尾统一：刷新动作可能是异步的，回来时把提示条收掉 */
+  function whenDone(r, done) {
+    if (r && typeof r.then === "function") {
+      r.then(done, done);
+    } else {
+      done();
+    }
+  }
+
+  /**
+   * 详情页封面的大图。**name 必须带上当前第一张的文件名**，别偷懒传空串。
+   *
+   * 之前就是传了空串：URL 只剩 `?code=X&size=full&v=N`，而"第一张"是哪个由服务端临时算。
+   * 于是删掉第一张之后 —— URL 一字不差，浏览器直接把缓存里的旧图顶出来，
+   * 表现就是「下面一排小图都对了，就上面那张大的还是旧的」（小图 URL 都带 name，所以它们没事）。
+   * 带上文件名就等于给 URL 做了内容寻址：图一换，URL 必变，任何缓存都顶不住。
+   *
+   * 另外两件事：
+   *   · 用 mid 而不是 full —— 手机拍的原图实测 7.9MB，而这块屏幕上就几百像素宽，
+   *     拉原图纯属浪费；mid 是服务端等比缩到 1024 的 webp，小一个数量级。
+   *     要看细节（灯箱里放大看）才用 full，那是另一处。
+   *   · onerror 自删：图真没了服务端回 404，不留浏览器的「碎图」占位符 ——
+   *     那玩意儿看着像"还有图、只是坏了"，其实该表达的是"没图了"。
+   */
+  function setCoverImg(code, name) {
+    var cover = $("dCover");
+    if (!cover) {
+      return;
+    }
+    var im = document.createElement("img");
+    im.alt = "";
+    im.onerror = function () {
+      im.remove();
+    };
+    im.src = imgUrl(code, name || "", "mid");
+    cover.innerHTML = "";
+    cover.appendChild(im);
+  }
+
+  function tryAutoRefresh() {
+    // ① 正停在详情页：图片**必须**自己刷（loadAll 碰不到它），但可以放心刷——
+    //    图片不是用户能编辑的格子，重读不会冲掉他正在填的名称/价格。
+    //    ⚠️ 之前把这句写在下面 return 之后，等于详情页永远刷不到，
+    //    表现就是「别人删了图，我这边详情页还挂着旧图」。
+    if (state.view === "detail") {
+      clearStale();
+      refreshDetailMedia();
+      toast("🔄别人改了，图片已刷新");
+      return;
+    }
+    // ② 正在输入框里打字 → 整表重读会把正在填的那一格冲掉，等离开输入框再刷
+    if (isTypingNow()) {
+      markStale();
+      return;
+    }
+    if (state.view === "list" || state.view === "gallery") {
+      clearStale();
+      reload(); // 不换版本号：画册重绘后每张图自己去问 ETag，没变的 304，只有真变了的才重下
+      toast("🔄别人改了，已自动刷新");
+      return;
+    }
+    // ③ 新建/设置这类页面：重读会把正在填的表单冲掉，只亮角标
+    markStale();
   }
 
   function connectEvents() {
@@ -395,6 +597,12 @@
   // ---------- 收到的消息 ----------
   function handlePost(m) {
     if (!m || !m.type) {
+      return;
+    }
+    if (m.type === "toast") {
+      // 后端显式发的一行提示（bad=true 走红样式）。成败由后端说了算，
+      // 不用前端再去扫日志字符串猜 —— 那种做法改一句文案就失灵。
+      toast(m.text || "", !!m.bad);
       return;
     }
     if (m.type === "productsLoaded") {
@@ -1744,7 +1952,13 @@
     $("fSeries").value = p.series || "";
     syncStatusBtn();
     updateDetailNav();
-    $("dCover").innerHTML = '<img src="' + imgUrl(p.code, "", "full") + '" alt="" />';
+    // 封面**不要**在这里先塞一张：此刻还不知道第一张叫什么，只能发"不带文件名"的 URL，
+    // 而清单回来后又会换成带文件名的 —— 等于每次进详情把那张大图下载两遍（好几 MB）。
+    // 留空，等 loadImages 拿到清单一次性放上去（那时 URL 带文件名，既准又只下一次）。
+    var cv = $("dCover");
+    if (cv) {
+      cv.innerHTML = '<span class="muted small">封面读取中…</span>';
+    }
     show("screen-detail");
     loadImages(p.code);
   }
@@ -1786,7 +2000,8 @@
   function loadImages(code) {
     var box = $("dImages");
     box.innerHTML = '<span class="muted small">图片读取中…</span>';
-    fetch("/api/images?code=" + encodeURIComponent(code) + (token ? "&token=" + encodeURIComponent(token) : ""))
+    // 把 promise 交出去：下拉刷新要等清单真的回来了才收提示条
+    return fetch("/api/images?code=" + encodeURIComponent(code) + (token ? "&token=" + encodeURIComponent(token) : ""))
       .then(function (r) {
         return r.json();
       })
@@ -1795,6 +2010,9 @@
         // 灯箱左右切换要用这份清单（打开某张图时按它算"上一张/下一张"）
         if (state.detail && state.detail.code === code) {
           state.detail.imgs = names;
+          // 清单到手就顺便把大图换掉（带文件名，见 setCoverImg 的注释）。
+          // 打开详情时那次是"不知道第一张叫什么"的临时占位，这里才是准确的。
+          setCoverImg(code, names[0] || "");
         }
         if (!names.length) {
           box.innerHTML = '<span class="muted small">这个商品还没有图片，点右上「📷 传图」拍一张。</span>';
@@ -1915,15 +2133,19 @@
     invoke("deleteImageFile", { code: v.code, name: name })
       .then(function (j) {
         if (imgDeleteFailed(j)) {
-          pushLog("❌没删掉，图片还在（原因见上面一行）");
-          toast("没删掉，图片还在（多半正被占用，稍等再试）", true);
+          // 后端已经发过一条红字 toast 了（带具体是哪张图），这里别再盖一层
+          if (!j.__opFailed) {
+            pushLog("❌没删掉，图片还在（原因见上面一行）");
+            toast("没删掉，图片还在（多半正被占用，稍等再试）", true);
+          }
           return;
         }
         toast("已删除 " + name);
         $("viewer").classList.remove("show");
         viewerImg = null;
         state.imgStatsLoaded = false; // 图数变了，下次用「有无图片」筛选时重新统计
-        bumpImg(); // 同 deleteThumb：先换 URL 再重读，否则浏览器拿缓存里的旧图顶着
+        // 自己刚改的图 → 换这个商品的号（只换它一个，不影响别的商品），这一屏立刻看到真相
+        bumpImg(v.code);
         if (state.detail && state.detail.code === v.code) {
           loadImages(v.code);
           renderList();
@@ -1938,10 +2160,16 @@
   }
 
   /**
-   * 后端删图失败时只打一行日志、不抛错（HTTP 照样 200），所以前端必须自己看日志判成败 ——
+   * 后端删图失败时只打一行日志、不抛错（HTTP 照样 200），所以前端必须自己判成败 ——
    * 否则会打出「🗑已删除」而图还在那儿，看着就像「点了没反应」。
+   *
+   * 首选判据是后端显式发的红字 toast（`j.__opFailed`，invoke() 里设的）；
+   * 下面扫日志那套是老代码的兜底，留着只为兼容还在跑的旧服务端，迟早可以删。
    */
   function imgDeleteFailed(j) {
+    if (j && j.__opFailed) {
+      return true;
+    }
     var logs = (j && j.logs) || [];
     for (var i = 0; i < logs.length; i++) {
       var t = String(logs[i]);
@@ -1966,15 +2194,19 @@
     invoke("deleteImageFile", { code: d.code, name: name })
       .then(function (j) {
         if (imgDeleteFailed(j)) {
-          pushLog("❌没删掉，图片还在（原因见上面一行）");
-          toast("没删掉，图片还在（多半正被占用，稍等再试）", true);
+          // 同上：后端那条红字 toast 已经说清是哪张图了，别再盖一层
+          if (!j.__opFailed) {
+            pushLog("❌没删掉，图片还在（原因见上面一行）");
+            toast("没删掉，图片还在（多半正被占用，稍等再试）", true);
+          }
           loadImages(d.code); // 清单并没变，重画一遍确认状态
           return;
         }
         pushLog("🗑已删除 " + name);
         toast("已删除 " + name);
         state.imgStatsLoaded = false; // 图数变了，下次用「有无图片」筛选时重新统计
-        bumpImg(); // 必须先于 imgUrl：URL 变了才会真去问服务器，否则浏览器继续显示缓存里的旧图
+        // 自己刚删的图 → 换这个商品的号（只换它一个），不必等下一轮校验才看到它消失
+        bumpImg(d.code);
         loadImages(d.code);
         renderList(); // 列表里这张卡片的封面也用旧 URL，一起换掉（此时列表是隐藏的，图不会真去加载）
         $("dCover").innerHTML = '<img src="' + imgUrl(d.code, "", "full") + '" alt="" />';
@@ -2273,8 +2505,8 @@
       toast("上传 " + items.length + " 张…");
       invoke("receiveImageData", { code: code, items: items })
         .then(function () {
-          // 传完图片可能换了封面：换 URL 版本号再重读，否则浏览器拿缓存里的旧封面顶着
-          bumpImg();
+          // 自己刚传的图 → 换这个商品的号（只换它一个），封面立刻换成新的
+          bumpImg(code);
           toast("已上传 " + items.length + " 张");
           state.imgStatsLoaded = false; // 这个编号现在有图了，之前统计的作废
           if (state.detail && state.detail.code === code) {
@@ -2388,13 +2620,13 @@
       renderList();
     };
     var reload = function () {
-      // 换掉图片 URL 的版本号再重读：URL 不变的话，画册里那批 <img> 的 src 一字不差，
-      // 浏览器直接拿缓存里的旧图顶着，压根不会去问服务器（那张其实已经被别人删了）。
-      // 服务端 /api/image 已经是「每次校验」（max-age=0 + ETag），但那是**下次请求**才生效；
-      // bumpImg 让当前这一屏立刻换地址、立刻看到真相。
-      bumpImg();
+      // **故意不 bumpImg**：换号 = 换 URL = 手机缓存里没有这个新地址 = 一屏几十张缩略图
+      // 全部 200 全量重下（实测一张 thumb 26KB，一屏就是大几百 KB）。
+      // 不换号也没问题：服务端是 max-age=0 + ETag，重绘出来的 <img> 会带 If-None-Match
+      // 去问 —— 没变 304（零字节）、变了 200、被别人删了 404（onerror 抹掉）。
+      // 这正好就是"先判断是不是一样"，判断的成本只有几十字节的请求头。
       pushLog("⏳重新读取…");
-      invoke("loadAll");
+      return invoke("loadAll"); // 交给下拉刷新判断何时收提示条
     };
     $("btnReload2").onclick = reload;
     // 「有改动」那个角标本身就是个按钮：点它 = 重读一遍（角标在 productsLoaded 里收起来）
@@ -2468,6 +2700,19 @@
       return Math.sqrt(dx * dx + dy * dy) || 1;
     }
     var contentEl = $("content");
+    // 下拉刷新**只装在详情页**（只刷这一个商品的图片，绝不动正在填的表单）。
+    //
+    // 列表/画册不装，两个原因：
+    //   ① 那一屏本来就没出过"刷新了还是旧的"这种问题 —— 它有 SSE 自动刷新兜着，
+    //      另有「🔄 有改动」角标和设置里的「重新从数据库读一遍」两个手动入口；
+    //   ② 更要紧的是**装不住**：#content 每次渲染都是 innerHTML 整块重写，
+    //      插在最前面的提示条第一次渲染就被冲掉了，而 touch 监听还挂着没卸 ——
+    //      结果是"看不见提示条、下拉却偷偷触发了整表重读"，比没有更糟。
+    //      （详情页那个容器只替换里面的 #dCover / #dImages，容器本身不动，所以它能活。）
+    // 以后真要给列表装，得先把提示条挪出 .content（外面套一层），否则同上。
+    setupPullToRefresh(document.querySelector("#screen-detail .content"), function (done) {
+      whenDone(refreshDetailMedia(), done);
+    });
     // 保底：万一页面已经被放大了（iOS 会自动放大聚焦的输入框、或者用户在别处捏过），
     // 就放行系统手势让他捏回来 —— 否则「只缩内容区」的拦截会把人困在放大状态里出不来。
     function pageZoomed() {

@@ -371,9 +371,10 @@ window.toolClients = window.toolClients || {};
       document.body.removeChild(ta);
     }
 
-    function toast(text) {
+    /** bad=true 走红样式（失败提示）：成功/失败不能长得一样，否则用户分不清 */
+    function toast(text, bad) {
       if (window.showGlobalToast) {
-        window.showGlobalToast(text);
+        window.showGlobalToast(text, undefined, bad);
         return;
       }
       let el = document.querySelector(".toast");
@@ -382,6 +383,7 @@ window.toolClients = window.toolClients || {};
         el.className = "toast";
         document.body.appendChild(el);
       }
+      el.classList.toggle("bad", !!bad);
       el.textContent = text;
       el.style.display = "block";
       clearTimeout(toastTimer);

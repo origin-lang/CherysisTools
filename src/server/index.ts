@@ -9,7 +9,12 @@ import { TaskQueue } from "./taskQueue.js";
 import { shopTool, isWriteAction } from "../tools/shopTool/index.js";
 import { initDB, closeDB, getDB, getDBPath } from "../tools/shopTool/db.js";
 import { effectiveImageDir, initImageDirConfig, resolveImageDir } from "../tools/shopTool/imageDir.js";
-import { listImageFiles, sharedThumbRoot, thumbToCachedBase64 } from "../tools/shopTool/images.js";
+import {
+  listImageFiles,
+  sharedThumbRoot,
+  thumbToCachedBase64,
+  midToCachedBase64,
+} from "../tools/shopTool/images.js";
 
 /**
  * 网页版服务端。
@@ -322,7 +327,9 @@ async function main(): Promise<void> {
   ): Promise<void> {
     const code = url.searchParams.get("code") || "";
     const name = url.searchParams.get("name") || "";
-    const size = url.searchParams.get("size") === "full" ? "full" : "thumb";
+    // thumb = 512 方图（画册卡片），mid = 1024 等比（详情页封面），full = 原图（看细节）
+    const rawSize = url.searchParams.get("size");
+    const size = rawSize === "full" ? "full" : rawSize === "mid" ? "mid" : "thumb";
     if (!isPlainName(code) || (name && !isPlainName(name))) {
       sendJson(res, 400, { ok: false, error: "编号或文件名不合法" });
       return;
@@ -348,8 +355,13 @@ async function main(): Promise<void> {
       sendJson(res, 404, { ok: false, error: "文件读不到" });
       return;
     }
-    // ETag 用「源文件大小 + mtime」：源图一改指纹就变，浏览器不会再拿旧图
-    const etag = `W/"${st.size}-${Math.round(st.mtimeMs)}-${size}"`;
+    // ETag 用「源文件大小 + mtime（毫秒，不取整）」：源图一改指纹就变，浏览器不会再拿旧图。
+    //
+    // **故意不把 image_stamp 塞进来**：那个心跳是**全局**的（任何商品的任何一张图一改就变），
+    // 塞进每张图的 ETag 等于"一张图变了、全站所有图的缓存一起作废"，正好把 304 的意义毁掉。
+    // 判断"这张图变没变"就该只看这张图自己的属性 —— size + mtime 已经够：
+    // 覆盖写一定会更新 mtime，而"同尺寸 + 同一毫秒内被替换"实际不可能发生。
+    const etag = `W/"${st.size}-${st.mtimeMs}-${size}"`;
     if (req.headers["if-none-match"] === etag) {
       res.writeHead(304, { ETag: etag }).end();
       return;
@@ -367,10 +379,15 @@ async function main(): Promise<void> {
       return;
     }
     try {
-      const b64 = await thumbToCachedBase64(src, cfg.cacheDir, code, name || undefined, {
+      const shared = {
         root: sharedThumbRoot(cfg.storageDir, cfg.cacheDir),
-        writable: true,
-      });
+        writable: true as const,
+      };
+      // mid 与 thumb 共用同一套三级缓存，只是尺寸和缓存名不同（见 images.ts 的 MID_SIZE）
+      const b64 =
+        size === "mid"
+          ? await midToCachedBase64(src, cfg.cacheDir, code, name || undefined, shared)
+          : await thumbToCachedBase64(src, cfg.cacheDir, code, name || undefined, shared);
       const buf = Buffer.from(String(b64).split(",")[1] || "", "base64");
       if (buf.length === 0) {
         throw new Error("缩图失败");

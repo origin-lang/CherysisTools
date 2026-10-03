@@ -124,6 +124,11 @@
       #shToast.show {
         opacity: 1;
       }
+      /* 失败提示：红框红字。成功/失败只差一个 class，别让用户去读日志区分 */
+      #shToast.bad {
+        border-color: var(--vscode-inputValidation-errorBorder, #be1100);
+        color: var(--vscode-errorForeground, #f85149);
+      }
       #shToastActions {
         display: inline-flex;
         gap: 6px;
@@ -178,7 +183,7 @@
       const logPanelEl = document.getElementById("logPanel");
       const logPanelToggle = document.getElementById("logPanelToggle");
       let shToastTimer = null;
-      function showGlobalToast(text, actions) {
+      function showGlobalToast(text, actions, bad) {
         let el = document.getElementById("shToast");
         if (!el) {
           el = document.createElement("div");
@@ -186,6 +191,7 @@
           document.body.appendChild(el);
         }
         el.textContent = text;
+        el.classList.toggle("bad", !!bad);
         const oldWrap = document.getElementById("shToastActions");
         if (oldWrap) {
           oldWrap.remove();
@@ -403,7 +409,8 @@
             logDom.scrollTop = logDom.scrollHeight;
           }
         } else if (msg.type === "toast") {
-          showGlobalToast(msg.text);
+          // bad=true 走红样式：操作失败必须一眼看出来，不能跟成功提示长得一样
+          showGlobalToast(msg.text, msg.actions, msg.bad);
         } else if (msg.type === "clearLog") {
           const logDom = document.getElementById("logArea");
           if (logDom) logDom.innerText = "";
