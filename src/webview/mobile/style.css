@@ -859,6 +859,27 @@ input.bad {
 .viewer img {
   max-width: 100%;
   max-height: 100%;
+  /* 灯箱缩放（app.js「灯箱缩放」那一段）：transform 是放大平移的唯一手段。
+     顺手禁掉选中文字和"拖图片到别处"——那两样都会跟平移抢同一只手的手势。 */
+  transform-origin: center center;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+/* 当前倍率：只在不是 100% 时露出来，免得平白占一块地方 */
+.viewer-zoom {
+  position: absolute;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 11px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.52);
+  color: #fff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.88;
+  pointer-events: none; /* 纯数字，别把手势接走 */
 }
 .viewer-x {
   position: absolute;
@@ -960,9 +981,14 @@ input.bad {
 }
 #screen-detail main.content,
 #screen-new main.content,
-#screen-settings main.content,
-.viewer {
+#screen-settings main.content {
   touch-action: pan-y;
+}
+/* 灯箱是另一套：缩放全由 app.js 自己接管（滚轮 / 双指捏合 / 双击 / 放大后拖着看）。
+   touch-action 这里给 none 而不是 pan-y：留 pan-y 的话，双指会被浏览器判成"滚页面"
+   并在合成器里先跑掉，JS 的 preventDefault 拦不住，捏合手势永远触发不了。 */
+.viewer {
+  touch-action: none;
 }
 
 /* ---------- 宽屏：商品详情 / 新建 走右侧抽屉（≥820px） ----------

@@ -2053,6 +2053,181 @@
     showViewerImage({ code: code, names: names, idx: idx, cover: !name });
   }
 
+  // ---------- 灯箱缩放：滚轮 / 双指捏合 / 双击 / 放大后拖着看 ----------
+  // 为什么不复用表格那套（ZOOMS 档位 + --zoom）：那套是为几十行数据重排定的，走的是档位；
+  // 灯箱里只有一张图，缩放要**连续**才跟手，重排也不存在。
+  // 灯箱是全屏覆盖层，本来就没东西可滚，所以裸滚轮直接当缩放用、不用按 Ctrl；
+  // 按 Ctrl 也一样处理 —— 否则浏览器顺手把整页放大，黑底和按钮会一起变形。
+  // 前提：.viewer 的 touch-action 必须是 none（见 style.css）。留 pan-y 的话双指会被
+  // 浏览器判成"滚页面"并在合成器里先跑掉，JS 的 preventDefault 根本拦不到，捏合永不触发。
+  var VZ_MIN = 0.5, VZ_MAX = 5, VZ_DOUBLE = 2.5;
+  var vz = { s: 1, x: 0, y: 0 }; // 倍率 + 平移（translate 写在外层，不受 scale 影响）
+
+  function vzCenter() {
+    var r = $("viewer").getBoundingClientRect();
+    return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+  }
+
+  /** 把 vz 落到 DOM 上。倍率不是 100% 才显示百分比，别平白占一块地方 */
+  function vzApply() {
+    var im = $("viewerImg");
+    if (im) {
+      im.style.transform = "translate(" + vz.x + "px," + vz.y + "px) scale(" + vz.s + ")";
+    }
+    var lab = $("viewerZoom");
+    if (lab) {
+      lab.style.display = Math.abs(vz.s - 1) < 0.01 ? "none" : "";
+      lab.textContent = Math.round(vz.s * 100) + "%";
+    }
+  }
+
+  /** 换图 / 开灯箱一律复位：不该带着上一张的倍率和偏移进来 */
+  function vzReset() {
+    vz.s = 1;
+    vz.x = 0;
+    vz.y = 0;
+    vzApply();
+  }
+
+  /**
+   * 以屏幕点 (px,py) 为中心缩放到 s。
+   *
+   * 这一步是"缩放不跑偏"的关键：CSS 里 `translate(x,y) scale(s)` 把图片内一点 u 摆到
+   * `center + t + s·u`，要使某个屏幕点 p 在缩放前后钉在原处，解出来是 `t' = k·t + (1−k)·p`
+   * （k = 新旧倍率之比）。少了它，滚轮一滚图就朝左上角往外扩，看着像在乱跑。
+   */
+  function vzSetScale(s, px, py) {
+    var ns = Math.min(VZ_MAX, Math.max(VZ_MIN, s));
+    var k = ns / vz.s;
+    var c = vzCenter();
+    vz.x = k * vz.x + (1 - k) * ((px == null ? c.cx : px) - c.cx);
+    vz.y = k * vz.y + (1 - k) * ((py == null ? c.cy : py) - c.cy);
+    vz.s = ns;
+    if (vz.s <= 1.001) {
+      // 缩回 100% 以内就把偏移收掉：否则平移残量会让图歪着，用户还得手动拽回来
+      vz.s = 1;
+      vz.x = 0;
+      vz.y = 0;
+    }
+    vzApply();
+  }
+
+  // 滚轮：触控板双指捏合在 Chrome 里发的正是 `wheel + ctrlKey`，所以桌面端捏合自动就有，
+  // 不用另写一套。走 exp 是为了"手感不受步长影响"（一格 100 和触控板的 3 都能平滑）。
+  $("viewer").addEventListener(
+    "wheel",
+    function (e) {
+      e.preventDefault();
+      var d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY; // 行模式（少数浏览器）给的是行数不是像素
+      var rate = e.ctrlKey || e.metaKey ? -d * 0.01 : -d * 0.002;
+      vzSetScale(vz.s * Math.exp(rate), e.clientX, e.clientY);
+    },
+    { passive: false }
+  );
+
+  // 放大后必须能拖：不然放大到 250% 只看得到中间一块，跟卡死没区别。
+  // 用 pointer 一套覆盖鼠标和触屏单指；双指走下面的捏合，所以这里只跟第一根指针。
+  var vzDrag = null;
+  $("viewer").addEventListener("pointerdown", function (e) {
+    if (vzDrag || e.target.closest("button")) {
+      return; // 按的是 ✕ ‹ › 🗑 这些按钮，别把拖拽挂上去（capture 会把 click 抢走）
+    }
+    if (e.pointerType === "mouse" && e.button !== 0) {
+      return;
+    }
+    vzDrag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, tx: vz.x, ty: vz.y };
+    try {
+      $("viewer").setPointerCapture(e.pointerId); // 拖出屏幕也还跟手
+    } catch (err) {
+      /* 个别浏览器不给设就算了，最差是拖出边界会断，不影响用 */
+    }
+  });
+  $("viewer").addEventListener("pointermove", function (e) {
+    if (!vzDrag || e.pointerId !== vzDrag.id || vz.s <= 1.001) {
+      return; // 没放大就不许拖：图会莫名其妙跑偏，用户还拽不回来
+    }
+    vz.x = vzDrag.tx + (e.clientX - vzDrag.x0);
+    vz.y = vzDrag.ty + (e.clientY - vzDrag.y0);
+    vzApply();
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach(function (n) {
+    $("viewer").addEventListener(n, function (e) {
+      if (vzDrag && e.pointerId === vzDrag.id) {
+        vzDrag = null;
+      }
+    });
+  });
+
+  // 触屏双指捏合：自己按两指距离比算。浏览器的默认行为是**整页**缩放（连黑底和按钮一起放大），
+  // 所以必须 preventDefault 按死，否则会两段一起放大、越捏越乱。
+  var vzPinch = null;
+  function vzTouchDist(t) {
+    var dx = t[0].clientX - t[1].clientX;
+    var dy = t[0].clientY - t[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+  $("viewer").addEventListener(
+    "touchstart",
+    function (e) {
+      if (e.touches.length === 2) {
+        vzPinch = { d: vzTouchDist(e.touches), s: vz.s };
+        vzDrag = null; // 两指落下，别再按单指平移算
+      }
+    },
+    { passive: true }
+  );
+  $("viewer").addEventListener(
+    "touchmove",
+    function (e) {
+      if (!vzPinch || e.touches.length !== 2) {
+        return;
+      }
+      e.preventDefault(); // 不拦就是浏览器整页跟着缩放
+      vzSetScale(vzPinch.s * (vzTouchDist(e.touches) / vzPinch.d), (e.touches[0].clientX + e.touches[1].clientX) / 2, (e.touches[0].clientY + e.touches[1].clientY) / 2);
+    },
+    { passive: false }
+  );
+  ["touchend", "touchcancel"].forEach(function (n) {
+    $("viewer").addEventListener(
+      n,
+      function (e) {
+        if (e.touches.length < 2) {
+          vzPinch = null;
+        }
+      },
+      { passive: true }
+    );
+  });
+
+  // iOS Safari 不吃 touch 的 preventDefault，双指走的是自家的 gesture 事件（另见 2756 行
+  // document 上那套：那边管的是整站，这里只管灯箱内，免得放大被 document 那层抢走）。
+  ["gesturestart", "gesturechange", "gestureend"].forEach(function (n) {
+    $("viewer").addEventListener(
+      n,
+      function (e) {
+        e.preventDefault();
+        if (n === "gesturestart") {
+          vzPinch = { d: 1, s: vz.s };
+        } else if (n === "gesturechange" && vzPinch) {
+          var r = $("viewer").getBoundingClientRect();
+          var px = typeof e.clientX === "number" ? e.clientX : r.left + r.width / 2;
+          var py = typeof e.clientY === "number" ? e.clientY : r.top + r.height / 2;
+          vzSetScale(vzPinch.s * e.scale, px, py);
+        }
+      },
+      { passive: false }
+    );
+  });
+
+  // 双击 = 放大/还原到 2.5 倍（以双击那一点为中心，手不用去找中心点）
+  $("viewer").addEventListener("dblclick", function (e) {
+    if (vz.s > 1.01) {
+      vzReset();
+    } else {
+      vzSetScale(VZ_DOUBLE, e.clientX, e.clientY);
+    }
+  });
+
   /**
    * 灯箱里显示第 idx 张。多张时给左右箭头（手机上滑来滑去容易误触，按钮更明确）；
    * 只有一张就藏起来 —— 摆两个按不动的箭头比没有更让人困惑。
@@ -2060,6 +2235,7 @@
    */
   function showViewerImage(v) {
     viewerImg = v;
+    vzReset(); // 换图就回到 100%：不然从放大状态翻到下一张，图是歪着的
     var total = v.names.length;
     var name = total ? v.names[v.idx] : "";
     $("viewerImg").src = imgUrl(v.code, name, "full");
@@ -2093,6 +2269,7 @@
     }
     viewerImg = { local: true, shot: i };
     $("viewerImg").src = s.url;
+    vzReset();
     $("viewerDel").style.display = "none";
     $("viewerRetake").style.display = "";
     // 还没上传的照片：左右切换先不给（下面那排小图本来就能直接点），但把序号显示出来
@@ -2149,7 +2326,10 @@
         if (state.detail && state.detail.code === v.code) {
           loadImages(v.code);
           renderList();
-          $("dCover").innerHTML = '<img src="' + imgUrl(v.code, "", "full") + '" alt="" />';
+          // 抢先占位一张（loadImages 是异步的，等它回来封面会空一下），但只能用 mid：
+          // 先用 full 占位等于为了几十毫秒的空白白下一张 7.9MB 原图，随即被 setCoverImg 顶掉。
+          // 占位与正路同尺寸，切换时不跳变；等清单到手 setCoverImg 会换成带文件名的那张。
+          $("dCover").innerHTML = '<img src="' + imgUrl(v.code, "", "mid") + '" alt="" />';
         }
         return invoke("loadAll");
       })
@@ -2209,7 +2389,7 @@
         bumpImg(d.code);
         loadImages(d.code);
         renderList(); // 列表里这张卡片的封面也用旧 URL，一起换掉（此时列表是隐藏的，图不会真去加载）
-        $("dCover").innerHTML = '<img src="' + imgUrl(d.code, "", "full") + '" alt="" />';
+        $("dCover").innerHTML = '<img src="' + imgUrl(d.code, "", "mid") + '" alt="" />';
       })
       .catch(function () {
         pushLog("❌删除失败（可能被别的机器占用）");
@@ -2510,7 +2690,8 @@
           toast("已上传 " + items.length + " 张");
           state.imgStatsLoaded = false; // 这个编号现在有图了，之前统计的作废
           if (state.detail && state.detail.code === code) {
-            $("dCover").innerHTML = '<img src="' + imgUrl(code, "", "full") + '" alt="" />';
+            // 同 deleteImageAt：占位只放 mid（full 原图 7.9MB，白下一顿），清单到手由 setCoverImg 换准
+            $("dCover").innerHTML = '<img src="' + imgUrl(code, "", "mid") + '" alt="" />';
             loadImages(code);
           }
           return invoke("loadAll");
