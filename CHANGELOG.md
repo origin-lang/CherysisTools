@@ -4,7 +4,7 @@ All notable changes to the "cherysis-tools" extension will be documented in this
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.0.30] - 2026-10-03
+## [0.0.31] - 2026-10-04
 
 **发版前置：`.vscodeignore` 之前会把自己的开发笔记和本机路径一起打给别人**。vsce 默认把仓库根所有文件都打进 vsix，而根目录的开发文档里写着实名路径（`C:\Users\<用户名>\...`、`\\<NAS 名>\...`）。这版把 `docs/` `scripts/` `patches/` `测试清单-本轮改造.md` `out/test/` 全部挡掉（清单从 117 条降到 74 条），并把这件事做成一道闸门：新增 `pnpm run check:package`，`pnpm run package` 结尾自动跑 —— 它用 `vsce ls` 拿**真实清单**，检查 ①必需的前端静态资源一个不少（fragment/client 是运行时从 `src/` 静态直读的，缺一个功能就**静默失效**）②该挡的都挡住了 ③内容里没有本机绝对路径/用户名。**这次的实名泄漏就是它逼出来的**：`CHANGELOG.md` 与 `scripts/autostart.ps1` 里各有一处实名/真实主机名，已改成 `<用户名>` / `<NAS主机名>`。
 

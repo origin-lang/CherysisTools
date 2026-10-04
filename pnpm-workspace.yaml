@@ -6,3 +6,10 @@ allowBuilds:
 patchedDependencies:
   lazystream@1.0.1: patches/lazystream@1.0.1.patch
   vsce-pnpm@0.1.0: patches/vsce-pnpm@0.1.0.patch
+# pnpm v10 起 overrides 从 package.json 搬到了这里（写在 package.json 里会被**静默忽略**）。
+# 之前一直留在 package.json 里，于是 pnpm 认定"配置与 lockfile 不一致"、每次 install
+# 都要清空 node_modules 重来；在无 TTY 环境里就卡在
+# ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY，打包链路整条走不通。
+overrides:
+  diff: ^8.0.4
+  serialize-javascript: ^7.0.6
