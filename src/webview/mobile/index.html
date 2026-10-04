@@ -40,7 +40,7 @@
           <option value="category">品类</option>
           <option value="series">系列</option>
         </select>
-        <!-- 搜索行只管「凭印象找一行」（子串匹配）；编号范围 L1~L33 是条件不是搜索，放在展开的筛选区里 -->
+        <!-- 搜索行只管「凭印象找一行」（子串匹配）；编号范围 A1~A33 是条件不是搜索，放在展开的筛选区里 -->
         <input id="q" class="grow2" type="search" placeholder="🔍 搜…" autocomplete="off" />
         <span id="count" class="muted"></span>
       </div>
@@ -92,8 +92,12 @@
       <header class="bar">
         <button id="btnBack" class="icon">‹ 返回</button>
         <span id="dTitle" class="title"></span>
-        <button id="btnUpload" class="primary">📷 传图</button>
-        <input id="filePick" type="file" accept="image/*" capture="environment" multiple hidden />
+        <!-- 只留一个「📷」按钮：它打开的 input **刻意不带 capture**，
+             这样 iOS/Android 会弹出系统自带的「相机 / 照片图库」选择器 ——
+             拍照和相册两条路都在里面，不用再摆第二个按钮。
+             （带 capture 会直接进相机、不给相册选项，那正是「只能拍照」的原因。） -->
+        <button id="btnUploadPick" class="icon" title="加图片（拍照 / 从相册选）">📷</button>
+        <input id="filePickGallery" type="file" accept="image/*" multiple hidden />
       </header>
       <div class="detailnav">
         <button id="btnPrevItem" class="mini">‹ 上一个</button>
@@ -121,7 +125,10 @@
             <label>品类<input id="fCategory" type="text" list="catList" /></label>
             <label>系列<input id="fSeries" type="text" /></label>
           </div>
-          <p class="muted small">改完自动保存（离开这一格就存，不用点按钮）。上下架点一下立刻生效。库存这一格就是"实际清点数"，直接写进去（与电脑版双击库存列同一口径）。改等级会按新等级的规则重算售价。</p>
+          <!-- 备注放最后：它是自由文本，多半是「客户说要改链条」这种临时话。
+               也是唯一允许带空格的文本字段（名称/品类/系列都禁空格，因为导入是按空白分列的）。 -->
+          <label>备注<textarea id="fRemark" rows="2" placeholder="随手记：客户要求 / 瑕疵 / 待办…"></textarea></label>
+          <p class="muted small">改完自动保存（离开这一格就存，不用点按钮）。上下架点一下立刻生效。库存这一格就是"实际清点数"，直接写进去（与电脑版双击库存列同一口径）。改等级会按新等级的规则重算售价。名称/品类/系列不能有空格（粘贴导入按空格分列，有空格会整行列位错开）；备注不受此限。</p>
         </div>
       </main>
     </section>
@@ -137,7 +144,7 @@
         <div class="card">
           <label>编号
             <div class="row2">
-              <input id="nCode" type="text" placeholder="L007" autocapitalize="characters" />
+              <input id="nCode" type="text" placeholder="A001" autocapitalize="characters" />
               <button id="btnNextCode" class="mini">用下一个空号</button>
             </div>
           </label>
@@ -153,9 +160,9 @@
             <label>售价<input id="nSale" type="number" inputmode="decimal" step="0.01" placeholder="留空按规则" /></label>
           </div>
           <label>期初库存<input id="nStock" type="number" inputmode="numeric" step="1" value="0" /></label>
-          <!-- 刚录入时手边就有实物：直接拍照，建完自动挂到这个编号下 -->
-          <button id="btnNewPick" class="wide" type="button">📷 拍照 / 选图</button>
-          <input id="newFilePick" type="file" accept="image/*" capture="environment" multiple hidden />
+          <!-- 刚录入时手边就有实物：点它弹系统的「相机 / 相册」选择器，建完自动挂到这个编号下 -->
+          <button id="btnNewPickGallery" class="wide" type="button" title="加图片（拍照 / 从相册选）">📷 加图片</button>
+          <input id="newFilePickGallery" type="file" accept="image/*" multiple hidden />
           <!-- 拍完当场就看见：点小图看大效果，✕ 删掉重拍 -->
           <div id="newShots" class="strip" style="display: none"></div>
           <p id="newPickInfo" class="muted small"></p>

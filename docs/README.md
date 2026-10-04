@@ -4,6 +4,8 @@ VSCode Webview 面板小工具集。每个工具 = `fragment.html`(UI) + `client
 
 在线索：`src/tools/<toolName>/`、`src/core/`（toolRegistry / toolContext / utils）、`src/webview/main.html`（壳 + 通用路由 + 日志区）。
 
+📦 **要出包发给别人**：照 **[打包发布.md](打包发布.md)** 做（抬版本 → `pnpm run package` → 确认产物）。那份文档也写清了哪些文件**刻意不进包**、为什么。
+
 | toolName | 中文名 | 一句话用途 | 文档 |
 | --- | --- | --- | --- |
 | imageBatchTool | 🗂️图片批量工具箱 | 批量建目录 / 序列重命名 / 按编号分发 / 追加标识导出 | [imageBatchTool.md](imageBatchTool.md) |

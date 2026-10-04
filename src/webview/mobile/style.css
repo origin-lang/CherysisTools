@@ -169,7 +169,8 @@ button .ico {
     box-shadow: inset 0 0 0 999px rgba(255, 255, 255, 0.12);
   }
 }input,
-select {
+select,
+textarea {
   font: inherit;
   /* 16px 是硬要求不是审美：iOS 聚焦到 font-size < 16px 的输入框时会自动把**整页**放大，
      放大之后再想缩回来就很别扭（尤其我们还为了「只缩内容区」拦了系统手势）。
@@ -1217,8 +1218,17 @@ input.bad {
   font-size: 13px;
 }
 #screen-detail .card input,
-#screen-detail .card select {
+#screen-detail .card select,
+#screen-detail .card textarea {
   min-height: 48px;
+}
+/* 备注是多行自由文本：别套 48px 的"大输入框"高度。
+   ⚠️ font-size 必须留 16px：iOS 聚焦到 <16px 的输入框会把整页放大（见上面基础输入框那条）。 */
+#screen-detail #fRemark {
+  min-height: 64px;
+  font-size: 16px;
+  line-height: 1.5;
+  resize: vertical;
 }
 /* 主角是数字：进价 / 售价 / 库存放大加粗，扫一眼就有数 */
 #screen-detail #fCost,

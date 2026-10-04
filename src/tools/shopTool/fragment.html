@@ -417,6 +417,20 @@
         gap: 8px;
         flex-wrap: wrap;
         margin-top: 8px;
+        /* 分页条是 #tabProducts（overflow:hidden 的定高 flex 列）的最后一个子元素。
+           flex 子项的 flex-shrink 默认是 1：空间一紧张它就会被压，而整列是 overflow:hidden，
+           压出去/顶出去就再也回不来，只能重开面板（用户报的就是这个）。
+           两条护栏把它钉在自己那一行上：
+           - flex: 0 0 auto —— 不参与收缩；
+           - min-height —— 连「被算成 0 高」都不允许（换行后自然高 54px，这里给 34px 兜底）。
+           注意**不要**在这里加 position:sticky 来兜底：sticky 的约束矩形就是 #tabProducts 自己，
+           元素一旦被挤出那个盒子，sticky 也拉不回来（等于白写），反而多了个 z-index 层级。 */
+        flex: 0 0 auto;
+        min-height: 34px;
+        padding: 6px 0;
+        /* 不透明底色 + 顶边线：画册内容滚到它后面时不和卡片糊在一起 */
+        background: var(--vscode-editor-background);
+        border-top: 1px solid var(--vscode-panel-border);
       }
       .tb-sep {
         width: 1px;

@@ -623,7 +623,13 @@
       state.imgStats = m.stats || {};
       state.imgStatsLoaded = true;
       if (state.panelOpen) {
-        renderFilter(); // 把「无图 N / 有图 M」填进圆片
+        // 只重画圆片：整块重画会把用户**正在输入**的编号表达式冲掉（手机上后端回得慢，
+        // 这个回包经常正好落在打字中间）。见 renderFilterCodeInput 上面那段说明。
+        // 用户正停在里面打字时干脆跳过这一下 —— 这只是一次「把数字填上」的美化更新，
+        // 不该拿它去打断输入；下一次打开面板或点筛选时数字自然是对的。
+        if (!filterBodyHasFocus()) {
+          refreshFilterGroups();
+        }
       }
       renderList(); // 已经勾了「无图」的话，这一下才筛得出来
     } else if (m.type === "rulesLoaded") {
@@ -678,7 +684,22 @@
     ["fStock", "stockTotal", "int"],
     ["fCategory", "category", "text"],
     ["fSeries", "series", "text"],
+    // 备注：唯一允许空格的文本字段，放最后
+    ["fRemark", "remark", "text"],
   ];
+
+  /**
+   * 详情页里**不允许出现空格**的文本字段 —— 与电脑版 FIELD_SPECS 的 noSpace 同一份口径
+   * （productFields.ts / client-core.js 里 name/category/series/purchase_link 都标了 noSpace）。
+   *
+   * 为什么必须有这一条：粘贴导入是按**空白**分列的（rowParse.ts 的 splitCells 用
+   * `[,;，；\s]+`），「每日销售」批量粘贴更是拿空格当分隔符。所以名称里一旦有空格，
+   * 导入时那一行会从空格处劈开、后面所有列整体错位。这不是审美要求，是导入的前提。
+   *
+   * 手机版原来没有这道校验，只能把值发给后端、被拒、再靠 toast 告诉用户；
+   * 现在在本地就拦下来，和电脑版"边输边提示"一致。
+   */
+  var NO_SPACE_TEXT_FIELDS = { name: 1, category: 1, series: 1, purchase_link: 1 };
 
   /**
    * delta 回来后把详情页表单同步一遍。
@@ -775,6 +796,22 @@
   var CODE_TERM_RE = /^([A-Za-z]?)(\d{1,4})\s*~\s*([A-Za-z]?)(\d{1,4})$/;
   var CODE_LIST_RE = /[,，、;；\n\r]+/;
   var CODE_HAS_RANGE_RE = /~/;
+
+  /**
+   * 把中文输入法打出来的全角符号规整成 ASCII 再去解析（与电脑版 client-product.js 的
+   * normalizeCodeQuery 逐字一致 —— 改一边必须改另一边，check-shopTool-parity 会比对）。
+   *
+   * 手机上是中文输入法，波浪号默认就是全角「～」，而 CODE_TERM_RE 只认 ASCII 的 ~（U+007E）。
+   * 于是同一个「A1～A33」在电脑键盘上筛得出来，在手机上直接判成写错、一个都不命中，
+   * 看着就是「填了没反应」—— 这就是「电脑没问题、手机不行」的真正原因。
+   */
+  function normalizeCodeQuery(raw) {
+    return String(raw === undefined || raw === null ? "" : raw)
+      .replace(/[\uFF5E\u301C]/g, "~")
+      .replace(/\uFF0C/g, ",")
+      .replace(/\u3001/g, ",")
+      .replace(/\u3000/g, " ");
+  }
   var CODE_BAD_HINT = {
     mixedPrefix: "两侧字母不一致：请用同一个字母，如 A1~A33",
     halfPrefix: "字母要么两端都写（A1~A33），要么两端都不写（1~33）",
@@ -803,7 +840,7 @@
   /** 解析编号表达式 → { terms, bad, msg }：逗号分段取并集；含 ~ 走区间，带字母单值走精确，其余走子串。 */
   function parseCodeQuery(raw) {
     var q = { terms: [], bad: false, msg: "" };
-    var groups = String(raw === undefined || raw === null ? "" : raw).split(CODE_LIST_RE);
+    var groups = normalizeCodeQuery(raw).split(CODE_LIST_RE);
     for (var i = 0; i < groups.length; i++) {
       var s = groups[i].trim();
       if (!s) {
@@ -1213,11 +1250,15 @@
   var TEXT_FIELDS = { name: 1 };
   var FIELD_LABEL = {
     name: "名称",
+    category: "品类",
+    series: "系列",
     cost_price: "进价",
     sale_price: "售价",
     grade: "等级",
     stock: "库存",
+    stockTotal: "库存",
     status: "状态",
+    remark: "备注",
   };
   // sheet 里那句话：说清楚这一格写的是什么、改了会连带什么（写在格子里没地方放）
   var FIELD_HINT = {
@@ -1357,6 +1398,14 @@
     if (ed.txt) {
       // 文本列（名称）：按字符串比较。留空当作「没改」—— 空名称在列表里就是一行没有名字，
       // 找不回来，宁可退回原值
+      // 空格：名称/品类/系列一律**去掉**（导入按空白分列，有空格会整行列位错开）——
+      // 与详情页 commitDetailField、wireNoSpaceInput 三处同一口径，也与电脑版 noSpace 同一份清单。
+      var norm0 = normalizeNoSpaceText(ed.field, raw);
+      if (norm0.changed) {
+        pushLog("✂️" + norm0.msg);
+        toast("已去掉 " + (raw.length - norm0.value.length) + " 个空格", false);
+        raw = norm0.value;
+      }
       v = raw;
       changed = submit && raw !== "" && v !== String(ed.orig);
       if (submit && raw === "") {
@@ -1620,14 +1669,48 @@
       });
   }
 
-  function renderFilter() {
-    // 编号范围是一组条件（L1~L33），不是搜索关键词，所以跟其它筛选放在一起
+  /**
+   * 编号范围输入框：**只在这里建**，别混进下面 renderFilterGroups 的重画里。
+   *
+   * 这里踩过一个坑，记下来免得改回去：原来整个筛选面板是一整块 innerHTML 重画的，
+   * 而「打开筛选」会紧接着 requestImgStats()，等 imageStatsLoaded 回来时又重画一次
+   * （见 onMessage 里那条）。手机上后端回得慢（几百毫秒），用户往往**已经开始在编号框里打字**了 ——
+   * 这一重画直接把人正打的那个 input 从 DOM 里换掉：字没了、焦点也没了，
+   * 而 state.codeQ 只收到过被打断前的那半截。表现就是「编号筛选填了没反应」，
+   * 在电脑上几乎遇不到（桌面版那个面板不是这么重画的），正是这个差异。
+   *
+   * 所以：输入框只建一次，异步回来的重画只碰下面那些圆片。
+   */
+  function renderFilterCodeInput() {
+    // 编号范围是一组条件（A1~A33），不是搜索关键词，所以跟其它筛选放在一起。
+    // 示例一律用 A 段：全仓库默认前缀就是 A（见 pricing.ts 的 canonicalCode），
+    // 举 L 的例子容易让人以为默认是 L。
     var html =
-      '<div class="fgroup"><div class="ftitle" data-label="编号范围">编号范围</div>' +
-      '<input id="codeQ" class="inline wide" type="search" placeholder="L1~L33 / 1~33 / L1" value="' +
+      '<div class="fgroup" id="codeQGroup"><div class="ftitle" data-label="编号范围">编号范围</div>' +
+      '<input id="codeQ" class="inline wide" type="search" placeholder="A1~A33 / 1~33 / A1" value="' +
       esc(state.codeQ) +
-      '" /><p class="muted small">L1~L33 是区间；单写一个 L1 = 精确匹配 L001；多段用逗号：A1~A33,L1~L22。' +
-      "想按编号子串找（比如 L007）用顶部搜索框，左边下拉选「编号」。</p></div>";
+      '" /><p class="muted small">A1~A33 是区间（全角「～」也认）；单写一个 A1 = 精确匹配 A001；' +
+      "多段用逗号：A1~A33,B1~B22。想按编号子串找（比如 A007）用顶部搜索框，左边下拉选「编号」。</p></div>";
+    return html;
+  }
+
+  /** 筛选面板：建输入框 + 画一遍圆片。只在「打开面板」和「state 变了要整体对齐」时调。 */
+  function renderFilter() {
+    refreshFilterGroups(); // 先把动态分组建出来
+    var body = $("filterBody");
+    if (body) {
+      body.insertAdjacentHTML("afterbegin", renderFilterCodeInput()); // 输入框插到最前
+    }
+    $("sortBy").value = state.sort;
+  }
+
+  /**
+   * 只重画圆片那部分，**不动编号输入框**。
+   * 异步回来的东西（图片统计数完了、点了一个「有图/无图」圆片要互斥）走这里，
+   * 否则会把用户正在输入的编号表达式冲掉。
+   */
+  function renderFilterGroups() {
+    var html = "";
     ENUM_COLS.forEach(function (c) {
       var field = c[0];
       var set = state.filters.enum[field];
@@ -1709,8 +1792,42 @@
         esc(r.max) +
         '" /></div></div>';
     });
-    $("filterBody").innerHTML = html;
-    $("sortBy").value = state.sort;
+    return html;
+  }
+
+  /**
+   * 筛选面板里是不是有输入类控件正拿着焦点（正在打字）。
+   * 用来让「异步回来的美化更新」避让用户输入 —— 数字区间那两个框
+   * （进价/售价/库存 最小~最大）也会被 refreshFilterGroups 重建，
+   * 手机上数图片的回包落在打字中间时，同样会把刚敲的字冲掉。
+   */
+  function filterBodyHasFocus() {
+    var body = $("filterBody");
+    var el = document.activeElement;
+    if (!body || !el || !body.contains(el)) {
+      return false;
+    }
+    var tag = (el.tagName || "").toLowerCase();
+    return tag === "input" || tag === "textarea" || el.isContentEditable === true;
+  }
+
+  /**
+   * 把重画好的圆片贴回面板：**编号输入框原地不动**。
+   * 先删掉上一轮那些动态分组（#codeQGroup 一个不留），再在末尾 append 新的一批。
+   */
+  function refreshFilterGroups() {
+    var body = $("filterBody");
+    if (!body) {
+      return;
+    }
+    body.querySelectorAll(".fgroup:not(#codeQGroup)").forEach(function (n) {
+      n.remove();
+    });
+    var holder = document.createElement("div");
+    holder.innerHTML = renderFilterGroups();
+    while (holder.firstChild) {
+      body.appendChild(holder.firstChild);
+    }
   }
 
   // ---------- 规则与设置（只读） ----------
@@ -1940,6 +2057,8 @@
         stockTotal: num(p.stockTotal),
         category: p.category || "",
         series: p.series || "",
+        // 备注是唯一允许空格的文本字段；留空当"没改"
+        remark: p.remark || "",
       },
     };
     $("dTitle").textContent = p.code + " " + (p.name || "");
@@ -1950,6 +2069,7 @@
     $("fStock").value = num(p.stockTotal);
     $("fCategory").value = p.category || "";
     $("fSeries").value = p.series || "";
+    $("fRemark").value = p.remark || "";
     syncStatusBtn();
     updateDetailNav();
     // 封面**不要**在这里先塞一张：此刻还不知道第一张叫什么，只能发"不带文件名"的 URL，
@@ -2279,7 +2399,7 @@
     $("viewer").classList.add("show");
   }
 
-  /** 重拍 = 丢掉这张 + 把相机重新调起来（省一步「先删再点拍照」） */
+  /** 重拍 = 丢掉这张 + 把选择器重新调起来（省一步「先删再点加图」） */
   function retakeShot() {
     var v = viewerImg;
     if (!v || !v.local) {
@@ -2291,7 +2411,8 @@
     $("viewerRetake").style.display = "none";
     viewerImg = null;
     removeNewShot(i);
-    $("newFilePick").click();
+    // 选择器本身就带「相机 / 相册」两项，重拍直接再调它一次
+    $("newFilePickGallery").click();
   }
 
   var viewerImg = null; // 灯箱当前这张：{ code, names, idx, cover } 或 { local, shot }
@@ -2398,6 +2519,29 @@
   }
 
   /**
+   * 文本字段的最终清洗（失焦提交那一刻的最后一道）。
+   *
+   * 空格在这一层是**去掉并说一声**，不是驳回 —— 与 wireNoSpaceInput 的口径一致。
+   * 若这里改成"报错退回原值"，就会出现两层打架：用户在输入框里打的空格已被当场去掉、
+   * 值正常提交，而程序化塞进去的空格却让整格回滚，用户看到的是"我明明改好了它自己变回去了"。
+   *
+   * @returns { ok, value, changed, msg } changed = 是否动过值（用来给提示）
+   */
+  function normalizeNoSpaceText(key, raw) {
+    if (!NO_SPACE_TEXT_FIELDS[key]) {
+      return { ok: true, value: raw, changed: false, msg: "" };
+    }
+    var cleaned = String(raw).replace(/\s+/g, "");
+    var n = String(raw).length - cleaned.length;
+    return {
+      ok: true,
+      value: cleaned,
+      changed: n > 0,
+      msg: n > 0 ? (FIELD_LABEL[key] || key) + "已去掉 " + n + " 个空格（导入是按空白分列的）" : "",
+    };
+  }
+
+  /**
    * 详情页改完一格就存一格（失焦即存），不再有「保存修改」按钮。
    * 刻意不 loadAll 整表回读：回读会重填整个表单，把用户正在改、还没保存的其它格子冲掉。
    * 后端改完会回一条 productsDelta，售价被规则重算后的新值从那里拿（见 syncDetailFromDelta）。
@@ -2410,11 +2554,31 @@
     var el = $(cfg[0]);
     var key = cfg[1];
     var kind = cfg[2];
-    var raw = String(el.value || "").trim();
+    var typed = String(el.value || "");
+    var raw = typed.trim();
     var cur = d.orig[key];
     var val;
     if (kind === "text") {
-      val = raw;
+      if (NO_SPACE_TEXT_FIELDS[key]) {
+        // 名称/品类/系列：首尾与内部空白一律**去掉并说一声**（导入按空白分列，有空格会整行列位错开）。
+        // 只走 normalizeNoSpaceText 这一个出口 —— 空格规则只有这一处实现，
+        // 免得"首尾"和"内部"两条提示各写一遍、日后改一条漏一条。
+        var norm = normalizeNoSpaceText(key, typed);
+        if (norm.changed) {
+          pushLog("✂️" + norm.msg);
+          toast("已去掉 " + (typed.length - norm.value.length) + " 个空格", false);
+          el.value = norm.value;
+        }
+        val = norm.value;
+      } else {
+        // 备注等自由文本：只去首尾（句子里的空格有意义，不能洗）。去掉了说一声，
+        // 免得用户以为值被改了。
+        if (typed !== raw) {
+          pushLog("✂️" + (FIELD_LABEL[key] || key) + "首尾的空格已自动去掉");
+          el.value = raw;
+        }
+        val = raw;
+      }
     } else {
       val = Number(raw);
       if (raw === "" || !Number.isFinite(val)) {
@@ -2463,10 +2627,71 @@
   }
 
   // ---------- 新建 ----------
+  /**
+   * 「不许有空格」的输入框接线。
+   *
+   * ⚠️ 这里踩过一个坑，别再改回去：**不要在 input 事件里实时改 el.value**。
+   * 第一版是「挂 input，一发现空格就当场 replace 并写回输入框」。看着很合理，实际把中文输入法
+   * 打散了 —— 拼音输入时 el.value 属于**组合（composition）中间态**，程序往里写一次值就等于告诉
+   * 浏览器"这次组合结束了"，输入法把当前拼音直接上屏、后面的键又从头开始组合，
+   * 用户看到的就是「打一句话多出好多字、完全没法用」。
+   *
+   * 所以改成**离开这个输入框时再去掉**（blur）—— 那时组合早就结束了，改值是安全的：
+   *
+   *  ① 打字：keydown 吃掉空格键（打不进空格）。**必须放过输入法组合期**：
+   *     拼音选词就是按空格/数字确认的，组合中拦掉它等于打不了中文。
+   *     `e.isComposing` 与 keyCode 229 是各浏览器通用的组合中标志。
+   *  ② 粘贴：keydown 拦不住 Ctrl+V / 长按粘贴 / 输入法上屏，所以交给 blur 那一步统一洗。
+   *  ③ 兜底：失焦提交时 normalizeNoSpaceText() 还会再洗一遍（程序化赋值、自动填充）。
+   *
+   * 为什么必须做：粘贴导入是按**空白**分列的（rowParse.ts 的 splitCells 用 `[,;，；\s]+`），
+   * 「每日销售」批量粘贴更是拿空格当分隔符 —— 名称里一个空格，导入时那一行会从空格处劈开、
+   * 后面所有列整体错位。所以这不是审美要求，是导入的前提。
+   *
+   * @param label 出提示时怎么称呼这个字段（"名称"/"系列"…）
+   */
+  function wireNoSpaceInput(id, label) {
+    var el = $(id);
+    if (!el) {
+      return;
+    }
+    el.addEventListener("keydown", function (e) {
+      // 输入法组合中一律不碰：拼音选词那几个键（空格/数字/回车）归输入法自己管
+      if (e.isComposing || e.keyCode === 229) {
+        return;
+      }
+      // 空格 / Tab / 回车不让直接打进输入框：会毁掉导入的就是这几类空白
+      if (e.key === " " || e.key === "Spacebar" || e.key === "Tab" || e.key === "Enter") {
+        e.preventDefault();
+      }
+    });
+    // 离开这一格才处理（那时输入法组合已结束）。改值 + 说一声，别默默改。
+    el.addEventListener("blur", function () {
+      if (!/\s/.test(el.value)) {
+        return;
+      }
+      var before = el.value;
+      el.value = before.replace(/\s+/g, "");
+      var n = before.length - el.value.length;
+      if (n > 0) {
+        pushLog("✂️" + label + "已去掉 " + n + " 个空格（导入是按空白分列的）");
+        toast("已去掉 " + n + " 个空格", false);
+      }
+    });
+  }
+
+  /**
+   * 「用下一个空号」：沿用当前输入里已有的字母段，没写字母就按 **A** 段。
+   *
+   * 默认必须是 A 不是 L —— 全仓库的编号默认前缀就是 A：
+   * `pricing.ts` 的 `canonicalCode()`（裸数字补前缀走它）、桌面版新建占位符写的是「如 A001 / L007」。
+   * 手机版这里原来写死 "L"，于是同一套库上手机点「用下一个空号」给的是 L001、电脑给的是 A001，
+   * 用户看到的就是「怎么冒出个 L」。
+   */
   function nextFreeCode() {
     var raw = String($("nCode").value || "").trim().toUpperCase();
     var m = /^([A-Z])(\d{1,4})$/.exec(raw);
-    var prefix = m ? m[1] : "L";
+    var prefix = m ? m[1] : "A";
     var used = {};
     state.products.forEach(function (p) {
       used[String(p.code || "").toUpperCase()] = 1;
@@ -2574,15 +2799,15 @@
       })
       .join("");
     box.style.display = pendingNewShots.length ? "" : "none";
-    var pick = $("btnNewPick");
-    if (pick) {
-      pick.textContent = pendingNewShots.length ? "📷 再拍 / 加图" : "📷 拍照 / 选图";
+    var pickGal = $("btnNewPickGallery");
+    if (pickGal) {
+      pickGal.textContent = pendingNewShots.length ? "📷 再加图片" : "📷 加图片";
     }
     var el = $("newPickInfo");
     if (el) {
       el.textContent = pendingNewShots.length
         ? "已选 " + pendingNewShots.length + " 张，保存后自动上传。点小图看效果，✕ 删掉重拍。"
-        : "可以先拍照，建成后自动上传（也可以建成后再去详情页传）。";
+        : "可以先拍照或从相册选，建成后自动上传（也可以建成后再去详情页传）。";
     }
   }
 
@@ -3074,8 +3299,10 @@
       }
       chip.classList.toggle("on");
       if (field === "img") {
-        // 互斥后另一个圆片要灭掉：整块重画最省事，也顺带刷新「无图 N」那个数字
-        renderFilter();
+        // 互斥后另一个圆片要灭掉：整块重画最省事，也顺带刷新「无图 N」那个数字。
+        // 走 refreshFilterGroups 而不是 renderFilter —— 后者会连带重建编号输入框，
+        // 用户正在那儿打字时会被冲掉。
+        refreshFilterGroups();
       }
       var g = chip.closest(".fgroup");
       var t = g && g.querySelector(".ftitle");
@@ -3262,6 +3489,11 @@
       $(f[0]).onchange = function () {
         commitDetailField(f);
       };
+      // 不许有空格的字段（名称/品类/系列）：打字直接打不进空格、粘贴当场去掉。
+      // 备注不在 NO_SPACE_TEXT_FIELDS 里，所以它不受影响，空格照常能打。
+      if (NO_SPACE_TEXT_FIELDS[f[1]]) {
+        wireNoSpaceInput(f[0], FIELD_LABEL[f[1]] || f[1]);
+      }
     });
     $("fStatus").onclick = function () {
       var d = state.detail;
@@ -3361,13 +3593,28 @@
       }
       closePanel();
     });
-    $("btnUpload").onclick = function () {
-      $("filePick").click();
-    };
-    $("filePick").onchange = function () {
-      uploadFiles($("filePick").files);
-      $("filePick").value = ""; // 同一个文件连传两次也要能触发 change
-    };
+    // 只留一个加图入口：它对应的 input **刻意不带 capture**，
+    // 这样系统会弹出自己的「相机 / 照片图库」选择器，拍照和相册两条路都在里面。
+    /**
+     * 把一个 file input 接到按钮上：点按钮 → 开选择器 → 拿到文件 → 回调 → 清空 value。
+     * 清空 value 是必须的：同一个文件连选两次不触发 change（用户想再传一遍同一张）。
+     */
+    function wirePicker(btnId, inputId, onFiles) {
+      var btn = $(btnId);
+      var inp = $(inputId);
+      if (!btn || !inp) {
+        return;
+      }
+      btn.onclick = function () {
+        inp.click();
+      };
+      inp.onchange = function () {
+        onFiles(inp.files);
+        inp.value = "";
+      };
+    }
+
+    wirePicker("btnUploadPick", "filePickGallery", uploadFiles);
     // 日志改成显式按钮：状态条整条可点的话，手指碰到底部就弹出一大片日志，很烦
     $("btnLog").onclick = function () {
       renderLogs();
@@ -3379,20 +3626,19 @@
     // ---- 新建页 ----
     $("nCode").oninput = checkNewCode;
     $("nCode").onblur = checkNewCode;
+    // 新建页的名称同样不许有空格（导入是按空白分列的）
+    wireNoSpaceInput("nName", FIELD_LABEL.name);
     $("btnNextCode").onclick = function () {
       nextFreeCode();
       checkNewCode();
     };
-    $("btnNewPick").onclick = function () {
-      $("newFilePick").click();
-    };
-    $("newFilePick").onchange = function () {
-      var n = addNewShots($("newFilePick").files);
-      $("newFilePick").value = ""; // 不清的话再选同一张照片不会触发 change
+    function addShotsAndToast(files) {
+      var n = addNewShots(files);
       if (n) {
         toast("加了 " + n + " 张，保存后上传");
       }
-    };
+    }
+    wirePicker("btnNewPickGallery", "newFilePickGallery", addShotsAndToast);
     // 小图那一排：点图看大效果，✕ 删掉
     $("newShots").onclick = function (e) {
       var rm = e.target.closest("[data-rm]");

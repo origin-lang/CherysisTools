@@ -70,6 +70,29 @@ const CODE_LIST_RE = /[,，、;；\n\r]+/;
 const CODE_HAS_RANGE_RE = /~/;
 
 /**
+ * 把中文输入法打出来的全角符号规整成 ASCII，再去解析。
+ *
+ * 手机上是中文输入法，波浪号默认就是全角「～」——而 `CODE_TERM_RE` 只认 ASCII 的 `~`（U+007E）。
+ * 于是同一个「A1～A33」在电脑键盘上（半角 ~）筛得出来，在手机上（全角 ～）直接判成写错、
+ * 一个都不命中，看着就是「填了没反应」。这是「电脑没问题、手机不行」的真正原因。
+ *
+ * 只归这几类**语义无歧义**的字符：
+ *  - ～ U+FF5E 全角波浪号、〜 U+301C 波折号 → ~（都是"到"）
+ *  - ，U+FF0C 全角逗号 → ,（分段）
+ *  - 、U+3001 顿号 → ,（分段，本来就在 CODE_LIST_RE 里，顺带统一）
+ *  - 全角空格 → 半角（~ 两侧的容错）
+ * 刻意**不**把 `-`/`—`/`到` 当区间符：编号里短横是常见字符，认成区间会把子串搜索悄悄改掉
+ * （数值区间那边认它们，因为「10-30」在数字语境里没有别的解释；编号不是这样）。
+ */
+function normalizeCodeQuery(raw) {
+  return String(raw ?? "")
+    .replace(/[\uFF5E\u301C]/g, "~")
+    .replace(/\uFF0C/g, ",")
+    .replace(/\u3001/g, ",")
+    .replace(/\u3000/g, " ");
+}
+
+/**
  * 单个编号词元 → {p,n}；字母可省（按 A 段），n ∈ 0~9999。非编号词元返回 null。
  * bareAsA=false 时要求必须带字母（排序沿用旧口径：裸数字不参与字母分组）。
  */
@@ -101,13 +124,15 @@ const CODE_BAD_HINT = {
  * 解析编号列筛选表达式 → { terms, bad, msg }。
  * 逗号分段，多段取并集。每段：
  *  - 含 ~ → 区间项（两端字母要么都有要么都没有，无字母按 A 段）；
+ *    全角「～/〜」、全角逗号「，」、顿号「、」、全角空格都当半角处理（见 normalizeCodeQuery），
+ *    手机上中文输入法打出来的就是全角，不归一会静默判成"写错"、一个都不命中；
  *  - 带字母的单值（A7 / l007）→ 精确编号项（lo=hi），补零口径与库里一致；
  *  - 其余（纯数字 7/007、文本 A、链…）→ 子串项，维持旧行为。
  * 含 ~ 但解析失败时 bad=true（0 结果 + 红框提示，不静默出空表）。
  */
 function parseCodeQuery(raw) {
   const q = { terms: [], bad: false, msg: "" };
-  const groups = String(raw ?? "").split(CODE_LIST_RE);
+  const groups = normalizeCodeQuery(raw).split(CODE_LIST_RE);
   for (const g of groups) {
     const s = g.trim();
     if (!s) {
@@ -762,6 +787,11 @@ function paginate(list) {
 // 分页条外壳只建一次，之后只改会变的几处（条数/页码/前后按钮禁用态/每页下拉的选中值），
 // 不再每次整条 innerHTML 重建：排序、筛选、改格子都会触发重渲染，重建 pager 是纯浪费，
 // 还会把用户正往跳页框里输的半截数字打断。
+//
+// 缓存必须能自愈：缓存里的节点一旦和当前 DOM 脱钩（容器被重建/被谁清空），
+// 后面每次 renderPager 都在改一堆**已经不在文档里**的节点 —— 表现就是「分页条没了，
+// 而且改什么都不回来，只能重开面板」。所以每次先确认缓存节点还挂在当前容器里，
+// 不挂就整条重建（重建只是白画一次，比永久消失便宜得多）。
 let pagerRefs = null;
 function renderPager(pd) {
   const el = $("productPager");
@@ -772,6 +802,13 @@ function renderPager(pd) {
   el.style.display = show ? "" : "none";
   if (!show) {
     return;
+  }
+  if (
+    pagerRefs
+    && (!pagerRefs.count || !pagerRefs.count.isConnected
+      || !el.contains(pagerRefs.count))
+  ) {
+    pagerRefs = null; // 缓存失效：重建
   }
   if (!pagerRefs) {
     el.innerHTML = `

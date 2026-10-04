@@ -340,7 +340,8 @@ function main() {
   {
     const deskFile = path.join(root, "src", "tools", "shopTool", "client-product.js");
     const mobFile = path.join(root, "src", "webview", "mobile", "app.js");
-    // 取「常量 + parseCodeTok + parseCodeQuery」这一整段：两个文件里顺序一致
+    // 取「常量 + normalizeCodeQuery + parseCodeTok + parseCodeQuery」这一整段：
+    // 两个文件里顺序一致，缺一段就说明有人动过结构，直接报错比静默跑偏好
     const sliceRules = (file, label) => {
       const src = fs.readFileSync(file, "utf8");
       const i = src.search(/(?:const|var|let) CODE_TERM_RE/);
@@ -349,8 +350,17 @@ function main() {
         fails.push(`${label}: 编号筛选语法段落定位失败`);
         return null;
       }
+      if (!/function normalizeCodeQuery/.test(src.slice(i, j))) {
+        fails.push(
+          `${label}: 编号筛选段落里找不到 normalizeCodeQuery（全角归一化）—— ` +
+            `手机中文输入法打出的全角「～」会被判成写错、一个都不命中`,
+        );
+        return null;
+      }
       try {
-        return new Function(src.slice(i, j) + "; return parseCodeQuery;")();
+        return new Function(
+          src.slice(i, j) + "; return { parseCodeQuery, matchCodeQuery: null, normalizeCodeQuery };",
+        )();
       } catch (e) {
         fails.push(`${label}: 编号筛选语法段落执行失败（${e && e.message}）`);
         return null;
@@ -359,12 +369,44 @@ function main() {
     const deskQ = sliceRules(deskFile, "client-product.js");
     const mobQ = sliceRules(mobFile, "webview/mobile/app.js");
     if (deskQ && mobQ) {
-      const raws = ["L1~L33", "1~33", "L1", "a1~a33", "A1~L9,L1~L9", "L9~L1", "A1~L9", "L1~33", "007", "A", "", "  L1 ~ L33  ", "L10000~L1"];
+      const raws = [
+        "L1~L33", "1~33", "L1", "a1~a33", "A1~L9,L1~L9", "L9~L1", "A1~L9", "L1~33",
+        "007", "A", "", "  L1 ~ L33  ", "L10000~L1",
+        // —— 全角：手机中文输入法打出来的就是这些（这几条是本轮踩坑补上的）——
+        "A1～A33", "1～33", "A1～A33，B1～B22", "A1、A2", "A1　～　A33", "347～348",
+      ];
       for (const r of raws) {
-        const a = JSON.stringify(deskQ(r));
-        const b = JSON.stringify(mobQ(r));
+        const a = JSON.stringify(deskQ.parseCodeQuery(r));
+        const b = JSON.stringify(mobQ.parseCodeQuery(r));
         if (a !== b) {
           fails.push(`编号筛选 parseCodeQuery(${JSON.stringify(r)}) 电脑版/手机版不一致：${a} ⇄ ${b}`);
+        }
+      }
+
+      // 全角必须真的等价于半角（只比两端一致还不够：两边一起漏改也会"一致"）
+      const sameParsed = (r) => {
+        const half = JSON.stringify(deskQ.parseCodeQuery(r.replace(/[\uFF5E\u301C]/g, "~").replace(/\uFF0C/g, ",")));
+        const full = JSON.stringify(deskQ.parseCodeQuery(r));
+        return half === full;
+      };
+      for (const r of ["A1～A33", "1～33", "A1～A33，B1～B22", "A1　～　A33", "347～348"]) {
+        if (!sameParsed(r)) {
+          fails.push(
+            `编号筛选：全角写法 ${JSON.stringify(r)} 与对应半角解析结果不同 —— ` +
+              `手机上用它就筛不出来（中文输入法的波浪号就是全角 U+FF5E）`,
+          );
+        }
+      }
+      // 全角波浪号必须解析成有效区间（bad=false），不能判成"写错"
+      const badFull = ["A1～A33", "347～348"].filter((r) => deskQ.parseCodeQuery(r).bad);
+      if (badFull.length) {
+        fails.push(`编号筛选：全角区间被判成写错（bad=true）：${badFull.join(" / ")}`);
+      }
+      // 反向：短横/「到」不许被当区间符（编号里短横是常见字符，认成区间会把子串搜索悄悄改掉）
+      for (const r of ["A1-3", "A1到A3"]) {
+        const p = deskQ.parseCodeQuery(r);
+        if (!p.bad && p.terms.some((t) => t.kind === "range")) {
+          fails.push(`编号筛选：${JSON.stringify(r)} 被当成了区间 —— 编号里的短横/「到」应保持子串搜索`);
         }
       }
     }

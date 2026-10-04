@@ -3,7 +3,7 @@
   "displayName": "Cherysis",
   "publisher": "Faye",
   "description": "small tools",
-  "version": "0.0.29",
+  "version": "0.0.30",
   "repository": {
     "type": "git",
     "url": "https://github.com/origin-lang/CherysisTools.git"
@@ -121,8 +121,9 @@
     "check:server": "node scripts/check-server-units.cjs",
     "check:mobile": "node scripts/check-mobile-wiring.cjs",
     "check:longtask": "node scripts/check-longtask-handlers.cjs",
+    "check:package": "node scripts/check-package.cjs",
     "test": "vscode-test",
-    "package": "vsce-pnpm package",
+    "package": "vsce-pnpm package && pnpm run check:package",
     "serve": "node out/server/index.js",
     "check:webserver": "node scripts/check-webServerTool.cjs"
   },

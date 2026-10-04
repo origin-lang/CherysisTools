@@ -22,12 +22,13 @@ vsc-extension-quickstart.md
 **/*.map
 **/.vscode-test.*
 testData/**
-# 排除ts源码，但保留webview静态html资源
+# 排除ts源码，但保留 webview 的静态资源（.html / .js）
+# ⚠️ 这里**不要**写 `!src/webview/**/*` 之类的反排除：那会把 src/webview/toolTree.ts
+#    这类**编译型** TS 又捞回包里（它是 `import "./webview/toolTree.js"` 用的，
+#    源码进包只会让人以为扩展是拿 .ts 跑的）。fragment/client 不在 src/**/*.ts 里，本来就进包。
 src/**/*.ts
 src/test/**
-!src/webview/**/*
-!src/tools/**/fragment.html
-!src/tools/**/client.js
+out/test/**
 
 # pnpm环境：vsce-pnpm(默认依赖解析模式)只会把生产依赖加入打包列表，node_modules无需排除
 
@@ -45,3 +46,30 @@ cherysis-server.config.json
 cherysis-server.config.demo.json
 # vsce-pnpm 打包时会在项目里建一个临时 store（.pnpm-store/），不是扩展的一部分
 .pnpm-store/**
+
+# ---- 发给别人之前必须挡住的：内部笔记与本机路径 ----
+# 这些是根目录的开发文档/脚本，扩展运行**不读**它们（扩展只读 src/** 与 out/**）。
+# 但 vsce 默认会把仓库根的所有文件打进去，而它们夹带本机绝对路径与用户名：
+#   - 测试清单-本轮改造.md   → 内部测试清单，与用户无关
+#   - docs/网页版-上手与自测.md / docs/shopTool-archive.md / docs/shopTool测试数据/
+#     → 含 C:\Users\<本机用户名>\... 与 \\<NAS 名>\... 这类真实路径
+#   - scripts/  → 开发工具链（check-*/seed-*/e2e-*），终端用户用不上
+# 改这里之前先确认：没有任何运行时代码去 repo 根读文档/脚本（见 docs/打包发布.md）。
+#
+# ⚠️ scripts/ 里有三个是**运行时**要用的，排除掉就会当场炸：
+#    四个 .cmd（启动/停止/设自启/取消自启）和面板的「▶ 启动」按钮最终都是
+#    `node scripts/serve-web.cjs`，另外两个是 stop-web.cjs 与 autostart.ps1。
+#    （0.0.30 第一次打出来就是漏了这三个，装上点启动直接 MODULE_NOT_FOUND）
+#    所以整目录排除之后必须逐个放回来 —— 别再手抖把这条删了。
+测试清单-本轮改造.md
+docs/**
+scripts/**
+!scripts/serve-web.cjs
+!scripts/stop-web.cjs
+!scripts/autostart.ps1
+patches/**
+*.vsix
+# 打包体检脚本自己产的临时件（check-package.cjs 会建了再删，这里兜个底）
+tmp-*.cjs
+tmp-vsce-ls.txt
+tmp-pkg-list.txt
