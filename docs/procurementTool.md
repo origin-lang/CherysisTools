@@ -1,6 +1,7 @@
 # 📦 供应商采购管理（procurementTool）
 
-> 本页为模块主线文档；**单次迭代的功能/技术变更归档**（复制、删除规则、撤销重做、组合框等）见 [procurementTool-archive.md](procurementTool-archive.md)。
+> 本页为模块主线文档。**维护要点/易踩坑**（组合框勿回退到 datalist、加字段联动清单、撤销水位等）见 [踩坑记录.md](踩坑记录.md) §六。
+> 单次迭代的功能变更流水账已删除，其中**还会再犯的坑**已抽进那份踩坑记录；其余细节看 `git log`。
 
 后端：`src/tools/procurementTool/index.ts` · 数据层：`src/tools/procurementTool/db.ts` · UI：`src/tools/procurementTool/fragment.html` · 前端：`src/tools/procurementTool/client.js`
 

@@ -1,7 +1,7 @@
 # 📥 1688订单提取（order1688Tool）
 
-> 设计稿 v0.1；单次迭代的功能/技术变更归档预留 `docs/order1688Tool-archive.md`（有迭代再建）。
-> 参考实现：`C:\Users\YFF\Desktop\1688进货\.agents\skills\extract-1688\scripts\`（`paste2order.py` 解析 + `append_order.py` 写表），本模块把这两部分移植进插件。
+> **维护要点/易踩坑**（同名函数静默覆盖、诊断埋点先别删）见 [踩坑记录.md](踩坑记录.md) §六。
+> 参考实现：`<1688进货目录>\.agents\skills\extract-1688\scripts\`（`paste2order.py` 解析 + `append_order.py` 写表），本模块把这两部分移植进插件。
 
 后端：`src/tools/order1688Tool/index.ts` · 数据层：`src/tools/order1688Tool/db.ts` · UI：`src/tools/order1688Tool/fragment.html` · 前端：`src/tools/order1688Tool/client.js`
 注册进 `toolRegistry`，模式照抄 `procurementTool`（SQLite + webview 面板）。

@@ -12,11 +12,20 @@ VSCode Webview 面板小工具集。每个工具 = `fragment.html`(UI) + `client
 | nineGridTool | 🧩九宫格工具箱 | 9 图合成九宫格大图、给九宫格加序号 | [nineGridTool.md](nineGridTool.md) |
 | excelAnalyzeTool | 📊Excel清洗统计绘图 | 正则分组清洗 + 聚合统计 + canvas 图表 + 导出 | [excelAnalyzeTool.md](excelAnalyzeTool.md) |
 | procurementTool | 📦供应商采购管理 | 供应商档案 + 采购订单 + 分析（SQLite 持久化） | [procurementTool.md](procurementTool.md) |
-| shopTool | 🏪商品店铺管理 | 商品档案(L编号/售价规则/库存/图片) + 每日销售 + 月结盈亏（SQLite） | [shopTool.md](shopTool.md) |
+| shopTool | 🏪商品店铺管理 | 商品档案(编号/售价规则/库存/图片) + 每日销售 + 月结盈亏（SQLite） | [shopTool.md](shopTool.md)・**用户手册：[shopTool-manual.md](shopTool-manual.md)** |
 | order1688Tool | 📥1688订单提取 | 粘贴1688订单文本自动解析 → 核对入库SQLite + 导出采集Excel（按订单号去重） | [order1688Tool.md](order1688Tool.md) |
-| **网页版（shopTool 手机版）** | 🌐浏览器 / 手机访问 | 同一套 handler 的另一层皮：HTTP 服务 + 手机版页面，手机录商品、盘点、看图 | **上手与自测（先看这篇）：[网页版-上手与自测.md](网页版-上手与自测.md)**；方案：[网页版方案-设计.md](网页版方案-设计.md)；使用与运维：[网页版-使用与运维.md](网页版-使用与运维.md) |
+| **网页版（shopTool 手机版）** | 🌐浏览器 / 手机访问 | 同一套 handler 的另一层皮：HTTP 服务 + 手机版页面，手机录商品、盘点、看图 | **上手与自测（先看这篇）：[网页版-上手与自测.md](网页版-上手与自测.md)**；使用与运维：[网页版-使用与运维.md](网页版-使用与运维.md)；方案（归档）：[archive/网页版方案-设计.md](archive/网页版方案-设计.md) |
 
-> 单次迭代的功能/技术变更归档（含本期复制/删除规则/撤销重做/组合框等）：[procurementTool-archive.md](procurementTool-archive.md)；shopTool 迭代归档（base64 封面 / 编号 3 位补零迁移 / 每日销售自动刷新与批量删除 / 趋势修复 / ⭐直播排品 / 800 压测种子 / 九宫格合成与焦点保护 / **直播排品收尾（删组·每组生成·星标点选填格·橙色图例）** / 全局 Toast / 800 封面补图脚本 / **性能与加载优化（封面缩略图·聚合缓存增量维护·封面请求限流·渲染减负）**）：[shopTool-archive.md](shopTool-archive.md)；order1688Tool 迭代归档（预览空白根因=JS 同名函数覆盖 / 回车触发解析 / 右栏日志折叠）：[order1688Tool-archive.md](order1688Tool-archive.md)
+**开发时要看的另外三份**：
+
+- **[踩坑记录.md](踩坑记录.md)** —— 别改回去的决定、试过不成立的路（**改代码前值得扫一眼**）
+- **[手工测试清单.md](手工测试清单.md)** —— 只能人工验的项（多机共享、真实占用、真中文输入法）
+- **[打包发布.md](打包发布.md)** —— 发版流程
+
+> 历史迭代流水账（含逐轮功能变更与当轮踩坑）统一收在 `archive/`：
+> [archive/shopTool-archive.md](archive/shopTool-archive.md)（411 行，最全的一份）。
+> 更早的 procurement / order1688 / 2026-09 流水账、以及一次性设计讨论稿已删除，
+> 其中**还会再犯的坑已抽进 [踩坑记录.md](踩坑记录.md)**；其余细节看 `git log`/`git show`。
 
 ## 通用架构速记（每个工具一样，不重复写进各工具文档）
 

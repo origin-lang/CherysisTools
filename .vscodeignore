@@ -50,8 +50,7 @@ cherysis-server.config.demo.json
 # ---- 发给别人之前必须挡住的：内部笔记与本机路径 ----
 # 这些是根目录的开发文档/脚本，扩展运行**不读**它们（扩展只读 src/** 与 out/**）。
 # 但 vsce 默认会把仓库根的所有文件打进去，而它们夹带本机绝对路径与用户名：
-#   #   - docs/网页版-上手与自测.md / docs/shopTool-archive.md / docs/shopTool测试数据/
-#     → 含 C:\Users\<本机用户名>\... 与 \\<NAS 名>\... 这类真实路径
+#   - docs/**  → 含 C:\Users\<本机用户名>\... 与 \\<NAS 名>\... 这类真实路径
 #   - scripts/  → 开发工具链（check-*/seed-*/e2e-*），终端用户用不上
 # 改这里之前先确认：没有任何运行时代码去 repo 根读文档/脚本（见 docs/打包发布.md）。
 #
