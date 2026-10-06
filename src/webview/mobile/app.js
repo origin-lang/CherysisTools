@@ -1699,7 +1699,15 @@
     refreshFilterGroups(); // 先把动态分组建出来
     var body = $("filterBody");
     if (body) {
-      body.insertAdjacentHTML("afterbegin", renderFilterCodeInput()); // 输入框插到最前
+      // ⚠️ 编号那一组是**单例**：已经建过就不能再插一次。
+      //    第一版直接 insertAdjacentHTML("afterbegin", ...)，结果每打开一次筛选面板就多一组
+      //    （开 3 次出现 3 个编号框），因为这里只加不删。
+      //    所以：**没有才建**；已经有就把值按 state 同步一下（setCodeQ 就是干这个的，
+      //    而且不能在 $("codeQ") 不存在时调它 —— 那才是"建完再同步"的顺序）。
+      if (!$("codeQGroup")) {
+        body.insertAdjacentHTML("afterbegin", renderFilterCodeInput());
+      }
+      setCodeQ(state.codeQ); // 面板重开时把当前筛选值回填（用户上次输的不会丢）
     }
     $("sortBy").value = state.sort;
   }
