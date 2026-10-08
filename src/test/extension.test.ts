@@ -2253,8 +2253,8 @@ suite('九宫格 / 星标总览：并发读图不打乱位置、单格失败不�
 	}
 
 	/**
-	 * 采样每格里的一个点（取格内 10% 处，避开灰底占位那张"无图"文字，它在格子正中）。
-	 * 纯色块任何点都一样，取 10% 只是为了让灰底那格不采到字上。
+	 * 采样每格里的一个点（取格内 10% 处，避开格子底部的标注文字）。
+	 * 纯色块任何点都一样，取 10% 只是为了不采到标注字上。
 	 */
 	async function sampleCells(outFile: string, tile = 300, cols = 3) {
 		const { data, info } = await sharp(outFile).raw().toBuffer({ resolveWithObject: true });
@@ -2302,7 +2302,7 @@ suite('九宫格 / 星标总览：并发读图不打乱位置、单格失败不�
 		}
 	});
 
-	test('九宫格：某一格读不到图时灰底占位，其余照常出图（不再整组失败）', async function () {
+	test('九宫格：某一格读不到图时纯白占位，其余照常出图（不再整组失败）', async function () {
 		this.timeout(15000);
 		const root = makeRoot('grid-broken-');
 		const files = await seedColored(path.join(root, 'imgs'));
@@ -2318,8 +2318,8 @@ suite('九宫格 / 星标总览：并发读图不打乱位置、单格失败不�
 
 		const { at } = await sampleCells(out);
 		assert.ok(
-			near(at(4), { r: 214, g: 214, b: 214 }, 30),
-			`读不到的那格应该是灰底占位（#d6d6d6），实际 ${JSON.stringify(at(4))}`,
+			near(at(4), { r: 255, g: 255, b: 255 }, 10),
+			`读不到的那格应该是纯白占位，实际 ${JSON.stringify(at(4))}`,
 		);
 		assert.ok(near(at(0), COLORS[0]), '前后的好格子必须照常出图');
 		assert.ok(near(at(8), COLORS[8]), '最后一格也要在（并发下最容易漏的就是它）');

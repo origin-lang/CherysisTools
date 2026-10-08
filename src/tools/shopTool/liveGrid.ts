@@ -16,17 +16,16 @@ export function localStamp(): string {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-function greyCellSvg(w: number, h: number): string {
+function emptyCellSvg(w: number, h: number): string {
   return `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
-  <rect width="100%" height="100%" fill="#d6d6d6"/>
-  <text x="50%" y="50%" fill="#8a8a8a" font-size="${Math.round(h / 8)}" font-family="'Segoe UI',sans-serif" text-anchor="middle" dominant-baseline="middle">无图</text>
+  <rect width="100%" height="100%" fill="#ffffff"/>
   </svg>`;
 }
 
 function labelSvg(w: number, h: number, text: string): string {
-  const fs = Math.max(24, Math.round(Math.min(w, h) * 0.13));
+  const fs = Math.max(16, Math.round(Math.min(w, h) * 0.08));
   return `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
-  <text x="50%" y="${Math.round(h * 0.93)}" font-family="'Consolas','Segoe UI',monospace" font-weight="900" font-size="${fs}" fill="#ffffff" stroke="#000000" stroke-width="${Math.max(14, Math.round(fs * 0.32))}" stroke-linejoin="round" paint-order="stroke fill" text-anchor="middle" dominant-baseline="bottom">${text}</text>
+  <text x="50%" y="${Math.round(h * 0.93)}" font-family="'Consolas','Segoe UI',monospace" font-weight="500" font-size="${fs}" fill="#ffffff" stroke="#000000" stroke-width="${Math.max(6, Math.round(fs * 0.18))}" stroke-linejoin="round" paint-order="stroke fill" text-anchor="middle" dominant-baseline="bottom">${text}</text>
   </svg>`;
 }
 
@@ -109,13 +108,13 @@ async function mapCellsLimited<T, R>(
 }
 
 // 直播排品九宫格：cells 长度 9，每项 { code, img }；缺图/缺码显示灰底占位。
-// labelMode：num＝底部标「N号」；code＝标商品真实编号；none＝不标任何文字。
+// labelMode：num＝底部标「N号」；code＝标商品真实编号；both＝「N号 编号」两段同标；none＝不标任何文字。
 // tile 尺寸按第一张有图商品等比 clamp（长边 ≤1024、短边 ≥256），避免 canvas 超 sharp 像素上限。
 export async function renderLiveGrid(
   cells: Array<{ code: string; img: string | null }>,
   outDir: string,
   groupNo: number,
-  labelMode: "num" | "code" | "none" = "num",
+  labelMode: "num" | "code" | "both" | "none" = "num",
 ): Promise<string> {
   let tileW = 300;
   let tileH = 300;
@@ -158,14 +157,15 @@ export async function renderLiveGrid(
     const cell = cells[idx];
     // 读失败/缺图的那一格灰底占位，别的格子照常出图。
     // 原来是「读不到就整组抛错失败」——网络抖一下一组白跑，比少一格糟得多。
-    const input = inputs[idx] ?? Buffer.from(greyCellSvg(tileW, tileH), "utf-8");
+    const input = inputs[idx] ?? Buffer.from(emptyCellSvg(tileW, tileH), "utf-8");
     layers.push({
       input,
       left: col * tileW,
       top: row * tileH,
     });
     if (labelMode !== "none" && cell?.code) {
-      const text = labelMode === "code" ? cell.code : `${startNum + idx}号`;
+      const num = `${startNum + idx}号`;
+      const text = labelMode === "code" ? cell.code : labelMode === "both" ? `${num} ${cell.code}` : num;
       layers.push({
         input: Buffer.from(labelSvg(tileW, tileH, text), "utf-8"),
         left: col * tileW,
@@ -240,7 +240,7 @@ export async function renderStarOverviewBuffer(
   const inputs = await mapCellsLimited(rows, IMG_READ_CONCURRENCY, async (cell) => {
     const src = cell.img ? await srcOf(cell.code, cell.img) : null;
     if (!src) {
-      return Buffer.from(greyCellSvg(tileW, tileH), "utf-8");
+      return Buffer.from(emptyCellSvg(tileW, tileH), "utf-8");
     }
     try {
       // limitInputPixels:false 让超大源图也能 resize；失败则该格灰底占位
@@ -250,7 +250,7 @@ export async function renderStarOverviewBuffer(
           .toBuffer(),
       );
     } catch {
-      return Buffer.from(greyCellSvg(tileW, tileH), "utf-8");
+      return Buffer.from(emptyCellSvg(tileW, tileH), "utf-8");
     }
   });
   const layers: Parameters<sharp.Sharp["composite"]>[0] = [];
@@ -259,7 +259,7 @@ export async function renderStarOverviewBuffer(
     const row = Math.floor(idx / cols);
     const cell = rows[idx];
     layers.push({
-      input: inputs[idx] ?? Buffer.from(greyCellSvg(tileW, tileH), "utf-8"),
+      input: inputs[idx] ?? Buffer.from(emptyCellSvg(tileW, tileH), "utf-8"),
       left: col * tileW,
       top: row * tileH,
     });

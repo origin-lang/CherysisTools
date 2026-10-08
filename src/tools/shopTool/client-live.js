@@ -2,7 +2,7 @@
 // 拆分自原 src/tools/shopTool/client.js，逻辑未改动
     function liveLabelMode() {
       const v = String(state.settings.live_grid_label || "num");
-      return v === "code" || v === "none" ? v : "num";
+      return v === "code" || v === "both" || v === "none" ? v : "num";
     }
 
     // ===== 九宫格生成的加载态 =====
@@ -718,7 +718,7 @@
       const labelSel = $("liveGridLabel");
       if (labelSel) {
         const saved = String(state.settings.live_grid_label || "num");
-        labelSel.value = saved === "code" || saved === "none" ? saved : "num";
+        labelSel.value = saved === "code" || saved === "both" || saved === "none" ? saved : "num";
         labelSel.onchange = () => {
           state.settings.live_grid_label = labelSel.value;
           post({ type: "saveSettings", key: "live_grid_label", value: labelSel.value });

@@ -352,8 +352,10 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
           }
         }
         const onlyGroups = Array.isArray(msg.groups) ? new Set((msg.groups as any[]).map(Number)) : null;
-        const labelMode: "num" | "code" | "none" =
-          msg.labelMode === "code" || msg.labelMode === "none" ? msg.labelMode : "num";
+        const labelMode: "num" | "code" | "both" | "none" =
+          msg.labelMode === "code" || msg.labelMode === "both" || msg.labelMode === "none"
+            ? msg.labelMode
+            : "num";
         let groupNos = [...groups.keys()].sort((a, b) => a - b);
         if (onlyGroups) {
           groupNos = groupNos.filter((g) => onlyGroups.has(g));
