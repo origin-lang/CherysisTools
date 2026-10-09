@@ -644,7 +644,9 @@
     } else if (m.type === "toast") {
       pushLog(m.text);
     } else if (m.type === "dbOpError") {
+      // 后端把「改了但没落库」说清楚（如改号时图片文件夹改名冲突）：日志照写，同时弹给用户看
       pushLog("❌" + m.message);
+      toast(m.message, true);
     }
   }
 
@@ -675,6 +677,8 @@
 
   // 详情页表单 ↔ 商品字段的对应表：[输入框 id, 字段名, 文本/数字/整数]
   var DETAIL_FIELDS = [
+    // 编号排第一格：它是图片文件夹名/导入锚点，平时基本不动，但需要能改（改号会连带改图片夹）
+    ["fCode", "code", "text"],
     ["fName", "name", "text"],
     ["fCost", "cost_price", "num"],
     ["fSale", "sale_price", "num"],
@@ -740,6 +744,14 @@
     });
     d.status = num(up.status) === 1 ? 1 : 0;
     syncStatusBtn();
+    // 编号变了（改号成功，或改号冲突被后端退回）：标题和图片目录都得跟着换，
+    // 否则标题还挂着旧编号、图还指着旧文件夹。
+    var newCode = String(up.code || "");
+    if (newCode && newCode !== d.code) {
+      d.code = newCode;
+      $("dTitle").textContent = newCode + " " + (up.name || "");
+      loadImages(newCode);
+    }
   }
 
   function pushLog(text) {
@@ -1249,6 +1261,7 @@
   // 同类以后要加文本列（品类/系列）就往 TEXT_FIELDS 里加，数字列不用登记。
   var TEXT_FIELDS = { name: 1 };
   var FIELD_LABEL = {
+    code: "编号",
     name: "名称",
     category: "品类",
     series: "系列",
@@ -2057,6 +2070,7 @@
       status: p.status === 1 ? 1 : 0,
       imgs: [], // 这个商品的图片文件名（loadImages 填），灯箱左右切换要用
       orig: {
+        code: p.code || "",
         name: p.name || "",
         cost_price: num(p.cost_price),
         sale_price: num(p.sale_price),
@@ -2070,6 +2084,8 @@
       },
     };
     $("dTitle").textContent = p.code + " " + (p.name || "");
+    // 编号可改：它是图片目录名/导入锚点，改号时后端会把图片文件夹一起改名（格式/重复这里先拦）。
+    $("fCode").value = p.code || "";
     $("fName").value = p.name || "";
     $("fCost").value = num(p.cost_price);
     $("fSale").value = num(p.sale_price);
@@ -2098,6 +2114,8 @@
     }
     var all = filtered();
     $("dPos").textContent = d.idx + 1 + " / " + all.length;
+    // 底条那根细进度条：翻到哪一目了然（位置指示光有数字不够直观）
+    $("dProg").style.width = all.length > 0 ? ((d.idx + 1) * 100) / all.length + "%" : "0%";
     $("btnPrevItem").disabled = d.idx <= 0;
     $("btnNextItem").disabled = d.idx >= all.length - 1;
   }
@@ -2121,7 +2139,9 @@
   function syncStatusBtn() {
     var off = state.detail && state.detail.status === 1;
     var b = $("fStatus");
-    b.textContent = off ? "已下架（点一下上架）" : "在售（点一下下架）";
+    // 按钮现在长得像开关（轨道+圆点，见 style.css），文字只留状态本身；
+    // 动作说明（"点一下上/下架"）太长得塞不下，也啰嗦，去掉。
+    b.textContent = off ? "已下架" : "在售";
     b.className = "toggle" + (off ? " off" : "");
   }
 
@@ -2143,7 +2163,7 @@
           setCoverImg(code, names[0] || "");
         }
         if (!names.length) {
-          box.innerHTML = '<span class="muted small">这个商品还没有图片，点右上「📷 传图」拍一张。</span>';
+          box.innerHTML = "";
           return;
         }
         box.innerHTML = names
@@ -2566,6 +2586,25 @@
     var raw = typed.trim();
     var cur = d.orig[key];
     var val;
+    // 编号：先本地规范 + 查重再发。后端还会再查一遍（并把图片文件夹一起改名），
+    // 但「格式不对 / 撞号」在这格就说得清，不用等一趟往返；当场把 7 显示成 A007。
+    if (key === "code") {
+      var canon = canonicalCode(raw);
+      if (!canon) {
+        toast("编号格式不对（1 个字母 + 数字，最多 4 位，如 A001 / L007）", true);
+        el.value = String(cur || "");
+        return;
+      }
+      var owner = findCodeOwner(canon);
+      if (owner && num(owner.id) !== num(d.id)) {
+        toast("编号 " + canon + " 已被" + (owner.name ? "「" + owner.name + "」" : "别的商品") + "占用", true);
+        el.value = String(cur || "");
+        return;
+      }
+      typed = canon;
+      raw = canon;
+      el.value = canon;
+    }
     if (kind === "text") {
       if (NO_SPACE_TEXT_FIELDS[key]) {
         // 名称/品类/系列：首尾与内部空白一律**去掉并说一声**（导入按空白分列，有空格会整行列位错开）。
@@ -2712,6 +2751,33 @@
       }
     }
     pushLog("❌这个前缀的编号用满了");
+  }
+
+  /**
+   * 编号规范：与后端 pricing.ts 的 canonicalCode 同一口径 ——
+   * 1 个字母前缀 + 数字补零到 3 位（1~9999），纯数字按 A 段；只 trim，不剥内部分隔符。
+   * 例：L7→L007、a7→A007、1044→A1044；A-001 / L 7 一律不合法（返回 null）。
+   */
+  function canonicalCode(raw) {
+    var s = String(raw === undefined || raw === null ? "" : raw).trim();
+    var m = /^([A-Za-z])(\d{1,4})$/.exec(s);
+    var prefix = "A";
+    var digits;
+    if (m) {
+      prefix = m[1].toUpperCase();
+      digits = m[2];
+    } else {
+      m = /^(\d{1,4})$/.exec(s);
+      if (!m) {
+        return null;
+      }
+      digits = m[1];
+    }
+    var n = Number(digits);
+    if (!isFinite(n) || Math.floor(n) !== n || n < 1 || n > 9999) {
+      return null;
+    }
+    return prefix + String(n).padStart(3, "0");
   }
 
   /**
@@ -3464,6 +3530,22 @@
     });
     $("btnBack").onclick = function () {
       closePanel();
+    };
+    // 详情页签：基本信息 / 价格库存 / 备注说明。切页前把正在编辑的那一格结算掉
+    // （点页签也会让输入框失焦，但 iOS 上先补一道，别把改动丢了）。
+    $("dTabs").onclick = function (e) {
+      var b = e.target.closest(".tab");
+      if (!b) {
+        return;
+      }
+      flushDetailEdits();
+      var tabs = this.querySelectorAll(".tab");
+      for (var i = 0; i < tabs.length; i++) {
+        tabs[i].classList.toggle("on", tabs[i] === b);
+      }
+      ["dPaneBase", "dPanePrice", "dPaneRemark"].forEach(function (id) {
+        $(id).style.display = id === b.dataset.pane ? "" : "none";
+      });
     };
     $("btnPrevItem").onclick = function () {
       flushDetailEdits();

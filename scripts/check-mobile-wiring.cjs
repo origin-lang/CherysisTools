@@ -17,7 +17,7 @@ const jsFile = path.join(mobileDir, "app.js");
 const htmlFile = path.join(mobileDir, "index.html");
 
 /** JS 动态创建、HTML 里本来就没有的 id */
-const DYNAMIC_IDS = new Set(["codeQ", "fsInput"]);
+const DYNAMIC_IDS = new Set(["codeQ", "codeQGroup", "fsInput"]);
 
 /**
  * 服务端能发的事件名（唯一出处：events.ts 的 HubEvent 注释 + index.ts 的 publish 调用 +
