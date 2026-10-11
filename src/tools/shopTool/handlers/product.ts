@@ -1135,7 +1135,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         mode: plan.mode as string,
       });
       // 只把这批动过的商品推回去，不整库重读重推（共享盘上那是几秒的等待）。
-      // 漏斗重建前端挂在 productsDelta 上（新分类/新系列靠它出现），规则新建的
+      // 筛选面板重建前端挂在 productsDelta 上（新分类/新系列靠它出现），规则新建的
       // 时候也顺手推一份 —— 以前这两样都是整表推送顺带做的。
       if (touched.length > 0) {
         h.postProductsDelta(touched);

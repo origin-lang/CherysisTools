@@ -150,7 +150,7 @@
         max-height: none;
       }
       /* 原来这里要用 :not(.filter-row) 把那一行常驻筛选控件排除掉；
-         筛选改成表头漏斗之后 tbody 里再没有别的行，多余的判断留着只会误导 */
+         筛选控件早就搬走了，tbody 里再没有别的行，多余的判断留着只会误导 */
       #tabProducts .data-table tbody tr td {
         padding-top: 0;
         padding-bottom: 0;
@@ -225,35 +225,6 @@
       .data-table th:has(.th-label[data-sort="code"]) {
         width: 1%;
         min-width: var(--code-col-min);
-      }
-      /* 表头漏斗：平时压暗到几乎看不见，这一列正在筛选时才点亮 + 角标计数。
-         删掉常驻那一行控件之后，用户判断「现在筛了几列」全靠这几个点亮的标记。
-         float:right 让它贴到列的右边缘对齐成一竖条，宽列上不会浮在标题旁边；
-         <th> 仍是普通表格单元格，列宽算法和 .th-label 的排序区都不受影响。
-         浮动元素不吃 vertical-align 也不撑高行盒（浮动不参与行盒高度计算），
-         所以 13px 图标那 1px 的溢出只是落进 th 的下内边距里，看不出来，
-         留 2px 上下 padding 换取更大的点击热区 */
-      .data-table .th-filter {
-        display: inline-flex;
-        align-items: center;
-        float: right;
-        margin: 0 0 0 4px;
-        padding: 2px 3px;
-        border-radius: 3px;
-        cursor: pointer;
-        opacity: 0.4;
-      }
-      .data-table .th-filter:hover {
-        opacity: 1;
-        background: var(--vscode-toolbar-hoverBackground);
-      }
-      .data-table .th-filter.on {
-        opacity: 1;
-        color: var(--vscode-textLink-foreground);
-      }
-      .data-table .fp-badge {
-        font-size: 11px;
-        line-height: 1;
       }
       .data-table th:hover {
         background: var(--vscode-list-hoverBackground);
@@ -472,8 +443,8 @@
         background: var(--vscode-panel-border);
         margin: 0 2px;
       }
-      /* 全局搜索框：跟 .fp-panel .fp-in-wrap 同一个道理，✕ 单独一层做定位上下文，
-         这样 right/top 锚的是输入框本身，不会因为工具栏换行而飘 */
+      /* 全局搜索框：✕ 单独一层做定位上下文，这样 right/top 锚的是输入框本身，
+         不会因为工具栏换行而飘 */
       .tb-search {
         position: relative;
         display: flex;
@@ -518,11 +489,14 @@
       .tb-search[hidden] {
         display: none;
       }
-      /* 「搜哪一列=状态」时顶替搜索框的那个下拉：取值只有在售/已下架两种，
+      /* 「搜哪一列」选到状态/品类/等级时，顶替搜索框的那个下拉：这几列取值封闭，
          让用户手打中文既慢又容易打成别的字（打错了就是一张空表）。
-         选项由 client-product.js 的 STATUS_LABELS 生成，那里是「在售/已下架」的唯一出处 */
-      #keywordStatus {
-        width: 84px;
+         选项由 client-product.js 的 scopeSelectOptions() 生成（状态取自 STATUS_LABELS，
+         品类/等级取自 enumOptions，都是「库里现存那几个值」的唯一出处）。
+         不写死宽度：让它按最长选项自己撑（「全部状态」四个字就这么宽），
+         只用 max-width 兜住长品类名，免得把右边一排按钮挤掉。 */
+      #keywordSelect {
+        max-width: 160px;
         padding: 5px 4px;
       }
       /* 画册卡片尺寸：宽度和图片高度都由 --card-w / --card-h 驱动，值由工具栏那个
@@ -1470,123 +1444,247 @@
         padding: 0 5px;
         font-size: 11px;
       }
-      /* 表头筛选面板：挂在 body 上（不是表头里），用完即删。
-         不跟着表格滚动，也不会被滚动容器裁掉 */
-      .fp-panel {
-        position: fixed;
-        z-index: 200;
-        min-width: 190px;
-        max-width: 280px;
-        padding: 6px;
-        font-size: 12px;
-        background: var(--vscode-editorWidget-background);
-        border: 1px solid var(--vscode-editorWidget-border);
-        border-radius: 6px;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-      }
-      .fp-panel input[type="text"] {
-        width: 100%;
-        box-sizing: border-box;
-        font-size: 12px;
-      }
-      .fp-panel .fp-list {
-        max-height: 244px;
-        overflow-y: auto;
-        margin: 4px 0;
-        padding: 2px 0;
-        border-top: 1px solid var(--vscode-panel-border);
-        border-bottom: 1px solid var(--vscode-panel-border);
-      }
-      .fp-panel .fp-item {
+      /* ===== 筛选条：生效条件摊在明面上 =====
+         只在有条件时出现（「筛选」按钮搬到工具栏搜索行右边之后，没条件时这条就整条收掉，
+         不留一条空荡荡的 26px 横杠把表格往下顶）。min-height 钉住：有条件的那些时候
+         条件多一条少一条不会跳高跳低 —— 表格位置稳，点起来才不飘。 */
+      .filterbar {
         display: flex;
         align-items: center;
         gap: 6px;
-        padding: 2px 4px;
+        min-height: 26px;
+        margin: 0 0 6px;
+        flex-wrap: wrap;
+      }
+      .filterbar.none {
+        display: none;
+      }
+      .filterbar .fb-label {
+        color: var(--vscode-descriptionForeground);
+        font-size: 11px;
+      }
+      .filterbar .fb-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      /* 胶囊：跟工具栏那些按钮长得不一样 —— 它是"条件"不是"按钮"，
+         所以用灰底胶囊 + 一个 ✕，不描边、不抢视线 */
+      .filterbar .fb-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        max-width: 320px;
+        padding: 1px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        background: var(--vscode-button-secondaryBackground, #3a3d41);
+        color: var(--vscode-button-secondaryForeground, #ffffff);
+        overflow: hidden;
+        text-overflow: ellipsis;
         white-space: nowrap;
+      }
+      .filterbar .fb-chip .fb-x {
+        flex: none;
+        cursor: pointer;
+        opacity: 0.7;
+        font-style: normal;
+      }
+      .filterbar .fb-chip .fb-x:hover {
+        opacity: 1;
+      }
+      .filterbar .fb-fill {
+        flex: 1 1 auto;
+      }
+      /* 编号写法警告（比如半截的「A1~」、反着的「L9~L1」）：它不是"一条能撤掉的条件"，
+         所以**没有 ✕**，用琥珀色跟灰色胶囊区分开 —— 别让人以为它是"筛了编号"。
+         要撤它就去把搜索框清空。 */
+      .filterbar .fb-warn {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        max-width: 420px;
+        padding: 1px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        background: rgba(206, 145, 30, 0.16);
+        color: var(--vscode-editorWarning-foreground, #cca700);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      /* ===== 筛选抽屉：所有可筛列收在一个面板里 =====
+         跟商品详情抽屉同宽同款（440px 右侧滑出）。字号从 --table-font-size 派生，
+         用户在设置里调「字号」时它跟着一起变（跟 #productDrawer 同一条规矩）。 */
+      #filterDrawer {
+        position: fixed;
+        top: 0;
+        right: 0;
+        height: 100vh;
+        width: 440px;
+        max-width: 92vw;
+        background: var(--vscode-editor-background);
+        border-left: 1px solid var(--vscode-panel-border);
+        box-shadow: -4px 0 16px rgba(0, 0, 0, 0.35);
+        z-index: 46;
+        display: flex;
+        flex-direction: column;
+        box-sizing: border-box;
+        --fd-fs: var(--table-font-size, 13px);
+        --fd-fs-tag: max(11px, calc(var(--fd-fs) - 1px));
+      }
+      #filterDrawer .fd-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--vscode-panel-border);
+        background: var(--vscode-sideBar-background);
+      }
+      #filterDrawer .fd-title {
+        flex: 1 1 auto;
+        font-size: var(--fd-fs);
+        font-weight: 600;
+        color: var(--vscode-foreground);
+      }
+      #filterDrawer .fd-body {
+        flex: 1 1 auto;
+        overflow-y: auto;
+        padding: 10px 12px 24px;
+      }
+      /* 一组一张浅底卡（跟详情抽屉的分区同款） */
+      #filterDrawer .fd-group {
+        margin: 0 0 10px;
+        padding: 8px 10px 10px;
+        border-radius: 6px;
+        background: var(--vscode-textBlockQuote-background);
+      }
+      /* 组标题：加粗 + 正文色 + 左侧品牌绿竖标 —— 跟详情抽屉的分区标题同一条规矩。
+         ⚠️ 千万别退回 descriptionForeground：在 Light Modern 下那跟字段标签同字号同色，
+            整片灰上加灰（套装抽屉那轮已经栽过一次）。
+         它还是**折叠开关**（点一下折/展），所以给上 pointer 手感。 */
+      #filterDrawer .fd-group-title {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        font-size: var(--fd-fs);
+        font-weight: 600;
+        color: var(--vscode-foreground);
+        border-left: 3px solid #23a884;
+        padding-left: 8px;
+        margin: 0 0 8px;
+        cursor: pointer;
+        user-select: none;
+      }
+      #filterDrawer .fd-group-title .fd-t {
+        flex: none;
+      }
+      /* 折叠箭头：展开时转 90°（▸ 变 ▾）。用 transform 不换字形 ——
+         两个字形宽度不一样的话，折/展时标题会横向跳一下。 */
+      #filterDrawer .fd-group-title .fd-chev {
+        flex: none;
+        font-weight: 400;
+        color: var(--vscode-descriptionForeground);
+        transition: transform 0.12s;
+      }
+      #filterDrawer .fd-group:not(.folded) .fd-group-title .fd-chev {
+        transform: rotate(90deg);
+      }
+      /* 折起来的一组：内容体整个收掉；标题底下那 8px 空档也一起去掉，
+         否则相邻两组标题之间的距离会显得忽宽忽窄。 */
+      #filterDrawer .fd-group.folded .fd-gbody {
+        display: none;
+      }
+      #filterDrawer .fd-group.folded .fd-group-title {
+        margin-bottom: 0;
+      }
+      /* 标题右边写"这组现在筛了啥"：值多的时候省略号收尾，别把标题挤成两行 */
+      #filterDrawer .fd-group-title .fd-sum {
+        flex: 1 1 auto;
+        text-align: right;
+        font-size: var(--fd-fs-tag);
+        font-weight: 400;
+        color: var(--vscode-descriptionForeground);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      /* 离散值的勾选清单：限高 + 自己滚（系列可能几十个值，不限高会把整页顶长） */
+      #filterDrawer .fd-list {
+        max-height: 148px;
+        overflow-y: auto;
+        margin-top: 4px;
+        padding: 2px 0;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 4px;
+        background: var(--vscode-editor-background);
+      }
+      #filterDrawer .fd-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 6px;
+        font-size: var(--fd-fs);
         cursor: pointer;
       }
-      .fp-panel .fp-item:hover {
+      #filterDrawer .fd-item:hover {
         background: var(--vscode-list-hoverBackground);
       }
-      .fp-panel .fp-item.fp-all {
+      #filterDrawer .fd-item.fd-all {
         font-weight: 500;
+        border-bottom: 1px solid var(--vscode-panel-border);
       }
-      .fp-panel .fp-name {
+      #filterDrawer .fd-name {
         flex: 1 1 auto;
         overflow: hidden;
         text-overflow: ellipsis;
+        white-space: nowrap;
       }
-      .fp-panel .fp-n {
+      #filterDrawer .fd-n {
         color: var(--vscode-descriptionForeground);
         font-variant-numeric: tabular-nums;
       }
-      .fp-panel .fp-none {
+      #filterDrawer .fd-none {
         display: none;
-        padding: 6px 4px;
+        padding: 6px;
+        font-size: var(--fd-fs-tag);
         color: var(--vscode-descriptionForeground);
       }
-      .fp-panel .fp-foot {
-        display: flex;
-        align-items: center;
-        gap: 6px;
+      #filterDrawer .fd-search {
+        width: 100%;
+        box-sizing: border-box;
+        font-size: var(--fd-fs-tag);
       }
-      .fp-panel .fp-sel {
-        flex: 1 1 auto;
+      /* 表达式/区间输入框：✕ 只包住输入框那一层，别让底下的报错文案把它顶跑 */
+      #filterDrawer .fd-in-wrap {
+        position: relative;
+      }
+      #filterDrawer .fd-input {
+        width: 100%;
+        box-sizing: border-box;
+        padding-right: 22px;
+        font-size: var(--fd-fs-tag);
+      }
+      #filterDrawer .fd-input.err {
+        border-color: #e0404b;
+      }
+      #filterDrawer .fd-clear {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        right: 4px;
+        border: none;
+        background: transparent;
         color: var(--vscode-descriptionForeground);
+        cursor: pointer;
+        padding: 0 3px;
       }
-      .fp-panel .fp-ok {
-        background: var(--vscode-button-background);
-        color: var(--vscode-button-foreground);
-        border-color: var(--vscode-button-background);
-      }
-      .fp-panel .fp-ok:hover {
-        background: var(--vscode-button-hoverBackground);
-      }
-      /* 编号那套 ~ 区间语法写岔了就地报错，不用等点确定才被告知不行 */
-      .fp-panel .fp-hint {
-        min-height: 14px;
+      #filterDrawer .fd-hint {
+        min-height: 13px;
         padding-top: 2px;
         font-size: 11px;
         color: #e0404b;
-      }
-      .fp-panel .fp-input.err {
-        border-color: #e0404b;
-      }
-      /* ✕ 的定位上下文只包住输入框：.fp-hint 是 .fp-expr 里的块级兄弟节点，
-         报错文案一出现容器就变高，✕ 跟着飘就偏了 */
-      .fp-panel .fp-in-wrap {
-        position: relative;
-      }
-      /* 给 ✕ 腾出位置，不然长条件会一路顶到按钮底下 */
-      .fp-panel .fp-input {
-        padding-right: 22px;
-      }
-      /* 字形沿用仓库既有的 ✕（.d-close、.lb-cls 都是它），跟占位符里的 ⏎ 一样不是按钮文字的一部分 */
-      .fp-panel .fp-clear {
-        position: absolute;
-        top: 50%;
-        right: 4px;
-        transform: translateY(-50%);
-        width: 16px;
-        height: 16px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0;
-        font-size: 11px;
-        line-height: 1;
-        color: var(--vscode-descriptionForeground);
-        background: transparent;
-        border: none;
-        border-radius: 3px;
-        cursor: pointer;
-      }
-      .fp-panel .fp-clear:hover {
-        color: var(--vscode-foreground);
-        background: var(--vscode-button-hoverBackground);
-      }
-      .fp-panel .fp-clear[hidden] {
-        display: none;
       }
     </style>
   </head>
@@ -1614,20 +1712,21 @@
         <span class="tb-sep"></span>
         <button id="colSetBtn">字段显示</button>
         <span class="tb-sep"></span>
-        <select id="keywordScope" title="选要搜哪一列。默认「全部」是编号/名称/品类/系列拼起来一起做子串匹配；选定某一列就只搜那一列。选「状态」时右边的输入框会换成一个下拉框（状态只有在售/已下架两种，不用手打）。和下面列头的漏斗是叠加关系，同一列被两边筛取交集，不是二选一。">
+        <select id="keywordScope" title="选要搜哪一列。默认「全部」是编号/名称/品类/系列拼起来一起做子串匹配；选定某一列就只搜那一列。选「编号」时右边的框改吃区间语法（A1~A33，回车生效）；选「状态 / 品类 / 等级」时右边换成一个下拉（这几列取值封闭，选比打字准）。和左边的「筛选」面板是叠加关系，不是二选一（状态/品类/等级这三列两边写的是同一份值）。">
           <option value="all">全部</option>
           <option value="code">编号</option>
           <option value="name">名称</option>
           <option value="category">品类</option>
           <option value="series">系列</option>
+          <option value="grade">等级</option>
           <option value="status">状态</option>
         </select>
         <div class="tb-search" id="keywordSearchWrap">
-          <input id="keywordSearch" type="text" placeholder="🔍 编号 / 名称 / 品类 / 系列" title="快速找一行：按编号/名称/品类/系列做子串匹配（不区分大小写）。和列头漏斗是叠加关系不是替代——漏斗筛「一批」，这里找「一行」。回车立即生效，Esc 或 ✕ 清空。" />
+          <input id="keywordSearch" type="text" placeholder="🔍 编号 / 名称 / 品类 / 系列" title="快速找一行：按编号/名称/品类/系列做子串匹配（不区分大小写）。和左侧筛选面板是叠加关系不是替代——面板筛「一批」，这里找「一行」。回车立即生效，Esc 或 ✕ 清空。" />
           <button id="keywordSearchX" class="tb-search-x" type="button" title="清空搜索" aria-label="清空搜索" hidden>✕</button>
         </div>
-        <select id="keywordStatus" title="按状态筛：全部 / 在售 / 已下架。选完立即生效，不用按回车。和列头状态列的漏斗是叠加关系（两边都筛就是交集）。" hidden></select>
-        <button id="clearFilterBtn" class="btn-danger" style="display: none">清除筛选</button>
+        <select id="keywordSelect" title="这一列的取值是封闭的几个，直接选；选完立即生效。（选中「编号」时这里换成区间输入框，吃 A1~A33 语法）" hidden></select>
+        <button id="filterOpenBtn" class="mini-btn" title="打开筛选面板：所有可筛列收在一个面板里，勾一下就生效">筛选</button>
         <span class="tb-sep"></span>
         <button id="starMenuBtn" title="星标操作：只看/复制清单/总览图预览/全部取消">⭐ 星标 ▾</button>
         <span class="toolbar-fill"></span>
@@ -1641,6 +1740,19 @@
         <button id="readOnlyBtn" class="mini-btn" title="只读模式：锁上以后，商品/销售/结算/图片/排品一律不写共享库（读取、刷新、导出、生成图照常）。同一时间只让一台机器写，别的机器点这个锁上最稳。">🔓 可写</button>
       </div>
       <div id="readOnlyHint" class="muted" style="display: none; margin: -4px 0 6px">🔒 只读模式：可以看、刷新、导出、生成九宫格和星标总览；改数据前先点顶栏的 🔓。</div>
+      <!-- ===== 筛选条 =====
+           为什么要有这一条：筛了四五个条件之后「现在到底筛着什么」得能一眼看见，
+           不用挨个点开筛选抽屉去核对。这条把生效条件摊在明面上，每条一个 ✕ 就地撤。
+           ⚠️ 「筛选」按钮**不在这儿** —— 它在工具栏搜索行的右边（跟手机版一个位置）。
+              所以没条件时整条收掉（display:none），不留一条空荡荡的 26px 横杠。
+           ⚠️ 它常驻在有条件的时候，min-height 钉住：条件多一条少一条不跳高跳低，
+              表格位置才稳。列表和画册都在它下面，两个视图共用同一条。 -->
+      <div id="filterBar" class="filterbar none">
+        <span class="fb-label">生效中</span>
+        <div id="filterChips" class="fb-chips"></div>
+        <span class="fb-fill"></span>
+        <button id="clearFilterBtn" class="mini-btn fb-clear" style="display: none">清除全部</button>
+      </div>
       <div id="productListView"></div>
       <div id="productGalleryView"></div>
       <div id="productPager"></div>
@@ -1992,5 +2104,11 @@ L032,1"></textarea>
     </div>
   <div id="drawerBackdrop" class="drawer-mask" style="display: none"></div>
     <div id="productDrawer" style="display: none"></div>
+    <!-- 筛选抽屉：跟商品详情抽屉同宽同款（440px 右侧滑出）。
+         ⚠️ 单独一个元素、不复用 #productDrawer —— 两个抽屉内容/状态完全不同，
+            共用一个容器就得在里面判断"现在是谁"，反而更容易出岔子。
+            两者不会同时开：openFilterDrawer / openProductDrawer 互相关对方。 -->
+    <div id="filterDrawerMask" class="drawer-mask" style="display: none"></div>
+    <div id="filterDrawer" style="display: none"></div>
   </body>
 </html>

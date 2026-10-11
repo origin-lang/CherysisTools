@@ -30,7 +30,6 @@ function bindEvents() {
     viewMode = "list";
     $("viewListBtn").classList.add("btn-teal");
     $("viewGalleryBtn").classList.remove("btn-teal");
-    closeFilterPanel();
     syncGallerySizeVisibility();
     renderProducts();
   };
@@ -38,8 +37,6 @@ function bindEvents() {
     viewMode = "gallery";
     $("viewGalleryBtn").classList.add("btn-teal");
     $("viewListBtn").classList.remove("btn-teal");
-    // 切画册时列表整个隐藏了，面板要是还开着就会浮在画布上
-    closeFilterPanel();
     syncGallerySizeVisibility();
     renderProducts();
   };
@@ -106,53 +103,21 @@ function bindEvents() {
   const kwInput = $("keywordSearch");
   const kwX = $("keywordSearchX");
   const kwScopeSel = $("keywordScope");
-  const kwStatusSel = $("keywordStatus");
-  const kwWrap = $("keywordSearchWrap");
-  // 「搜哪一列」选到状态时，输入框整块换成下拉：状态只有在售/已下架两种取值，
-  // 让用户手打中文等于让他去猜系统内部存的是哪两个字，打错一个就是个空表。
-  // 选项数据在 client-product.js 的 STATUS_FILTER_OPTIONS（在售/已下架的唯一出处）。
-  const isStatusScope = () => kwScope === "status";
-  /** 当前搜索条件从哪个控件读：状态看下拉，其余看输入框。两个控件的值各自保留，
-      切回来时还在，但生效的永远只有当前这一列的那个。 */
-  const activeKeywordRaw = () =>
-    isStatusScope() ? (kwStatusSel ? kwStatusSel.value : "") : kwInput.value.trim();
-  if (kwStatusSel && kwStatusSel.options.length === 0 && typeof STATUS_FILTER_OPTIONS !== "undefined") {
-    for (const o of STATUS_FILTER_OPTIONS) {
-      const opt = document.createElement("option");
-      opt.value = o.value;
-      opt.textContent = o.label;
-      kwStatusSel.appendChild(opt);
-    }
-  }
-  // ✕ 有字才出现，空框上摆个清空按钮纯属多余；状态模式整块输入框都藏了，✕ 自然也不该露
+  const kwSelect = $("keywordSelect");
+  // 「搜哪一列」选到哪一类，右边就换什么控件。形态与控件值由 client-product.js 的
+  // syncSearchRow() 摆（kwScope / filters / 各列选项的出处都在那边），这里只管接线。
+  // 状态/品类/等级走下拉那一类：取值封闭，让用户手打中文等于让他去猜系统内部存的是哪两个字，
+  // 打错一个就是个空表。选项数据在 client-product.js 的 scopeSelectOptions()。
+  const isSelectScope = () => KW_SELECT_SCOPES.has(kwScope);
+  /** 生效的搜索词。下拉那几列的条件**不在搜索框里** —— 它们直接写进列筛选
+      filters.f_<列>（跟筛选面板同一份），所以这里必须回空串；不然切到「状态」时
+      上一段文字还留在 filters.keyword 里继续筛，列表会莫名其妙少一片。 */
+  const activeKeywordRaw = () => (isSelectScope() ? "" : kwInput ? kwInput.value.trim() : "");
+  // ✕ 有字才出现，空框上摆个清空按钮纯属多余；换了下拉时整块输入框都藏了，✕ 自然也不该露
   const syncKwX = () => {
     if (kwX) {
-      kwX.hidden = isStatusScope() || !kwInput.value;
+      kwX.hidden = isSelectScope() || !kwInput.value;
     }
-  };
-  // 下拉选的是哪一列，直接写到输入框的 placeholder 和 title 上。
-  // 目的是没法「忘了自己选了名称」——占位符一直摆在那儿，不用点一下才想起来。
-  // 单列模式的差异（不再跨字段空格、不再去零兜底）也必须写进 title：
-  // 它跟「全部」模式的结果集不一样，光看结果猜不出原因。
-  const syncKeywordUI = () => {
-    const status = isStatusScope();
-    if (kwWrap) {
-      kwWrap.hidden = status;
-    }
-    if (kwStatusSel) {
-      kwStatusSel.hidden = !status;
-    }
-    if (status) {
-      // 下拉自带「全部状态 / 在售 / 已下架」和 title，输入框那套占位符文案在这儿没有落点
-      return;
-    }
-    const all = kwScope === "all";
-    // 标签表在 client-product.js（KW_SCOPE_LABEL），那边是唯一定义处，这里别再抄一份
-    const label = KW_SCOPE_LABEL[kwScope] || kwScope;
-    kwInput.placeholder = all ? "🔍 编号 / 名称 / 品类 / 系列" : `🔍 在${label}中搜索`;
-    kwInput.title = all
-      ? "子串匹配，不区分大小写。四个字段用空格拼成一句话一起找，所以「200ml 个护」能命中「名称尾=200ml 且 品类=个护」的行（打法的空格得正好对上两个字段之间那道缝）。和列头漏斗是叠加关系不是替代——漏斗筛「一批」，这里找「一行」。回车立即生效，Esc 或 ✕ 清空。"
-      : `只搜${label}一列，子串匹配，不区分大小写。四个字段不再拼在一起（多个词要这一列里字面含那个空格），也不再按编号去零兜底。和列头漏斗是叠加关系——同一列被两边筛取交集，漏斗勾「已下架」再搜「在售」会一个都不剩。`;
   };
   const applyKeyword = () => {
     const v = activeKeywordRaw();
@@ -169,6 +134,12 @@ function bindEvents() {
   kwInput.oninput = () => {
     // ✕ 立刻跟手，只有重画列表才防抖
     syncKwX();
+    // 编号模式**不能边打边筛**：区间语法有中间态（A → A1 → A1~），一路筛列表会来回闪，
+    // 而且中间态常常被判成"写法有问题"（0 结果 + 红框）。提交走回车 / 失焦 ——
+    // 跟手机版和筛选面板同一个口径。
+    if (kwScope === "code") {
+      return;
+    }
     applyKeywordSoon();
   };
   kwInput.onkeydown = (ev) => {
@@ -186,6 +157,12 @@ function bindEvents() {
       applyKeyword();
     }
   };
+  // 电脑上回车是习惯动作，编号模式点别处同样该生效 —— 否则就是当年那条「编号筛选填了没反应」
+  kwInput.onblur = () => {
+    if (kwScope === "code") {
+      applyKeyword();
+    }
+  };
   // ✕ 走同步路径，不然点了之后还得等 200ms 才变
   if (kwX) {
     kwX.onclick = () => {
@@ -193,35 +170,39 @@ function bindEvents() {
       applyKeyword();
     };
   }
-  if (kwStatusSel) {
-    // 下拉没有「回车才生效」的说法，选完就是选完了，立刻重画
-    kwStatusSel.onchange = applyKeyword;
+  if (kwSelect) {
+    // 下拉没有「回车才生效」的说法，选完就是选完了（跟手机版一致）。
+    // 写进列筛选那一份，所以跟筛选抽屉是同一个条件，天然联动。
+    kwSelect.onchange = () => {
+      const v = kwSelect.value;
+      applyFilterValue(kwScope, v ? [v] : []);
+      // 面板开着的话，那一组的勾和摘要跟着走
+      renderFilterDrawerIfOpen();
+    };
   }
-  // 换搜索范围。要不要重画看「生效的搜索词」变没变：原先只看输入框里有没有字，
-  // 是因为那时候切列不改变 input 的值；现在进/出「状态」会换一个控件取值
-  // （在搜「香薰」时切到状态列，它一个都匹配不上），必须按新控件重算一次。
+  // 换搜索范围一定要重算一次：进/出「状态」是换了个控件取值（正搜着「香薰」时切到状态列，
+  // 它一个都匹配不上），进/出「编号」是换了一套解析（子串 → 区间语法）。
   if (kwScopeSel) {
     kwScopeSel.onchange = () => {
       kwScope = kwScopeSel.value;
-      syncKeywordUI();
-      if ((filters.keyword || "") !== activeKeywordRaw()) {
-        applyKeyword();
-      }
+      syncSearchRow();
+      applyKeyword();
     };
   }
   // 浏览器刷新（F5）会恢复 input/select 的控件值，但 filters 是空的。
-  // 以控件当前值为准对齐一次，别让占位符和实际搜索范围对不上。
-  // 这里只同步状态不调 renderProducts()，首刷发生在 initDom 之后。
+  // 以控件当前值为准对齐一次。这里只摆控件与占位符，不调 renderProducts() ——
+  // 首刷发生在 initDom 之后。
   if (kwScopeSel) {
     kwScope = kwScopeSel.value;
   }
-  syncKeywordUI();
+  syncSearchRow();
   const initKeyword = activeKeywordRaw();
   if (initKeyword) {
     filters.keyword = initKeyword;
     syncClearFilterBtn();
   }
   syncKwX();
+  // 「清除全部」在筛选条上（原来在工具栏里）。行为没变：清搜索词 + 所有列筛选。
   $("clearFilterBtn").onclick = () => {
     for (const k of Object.keys(filters)) {
       delete filters[k];
@@ -229,24 +210,45 @@ function bindEvents() {
     // 状态在 filters 里、输入框里的字不在，清完状态得把框和 ✕ 也抹平，
     // 否则框里还留着字、列表却是全量，看着像筛选没生效
     kwInput.value = "";
-    // 状态下拉也归位（它就是「状态」这一列的筛选值，不清就等于没清干净）
-    if (kwStatusSel) {
-      kwStatusSel.value = "";
-    }
+    // 搜索行那个下拉也归位（它就是状态/品类/等级这三列的筛选值，不清就等于没清干净）；
     // 「搜哪一列」那个下拉不复位：它是偏好（和「字段显示」同类）不是筛选条件，
     // 而空框上 placeholder 会一直写着当前搜哪一列，漏不掉。
+    syncSearchRow();
     syncKwX();
     syncClearFilterBtn();
+    // 面板开着的话，里面的勾/输入框也得跟着归位（否则面板还显示着已经清掉的旧条件）
+    renderFilterDrawerIfOpen();
     renderProducts();
   };
-  // 筛选面板挂在 body 上，切了子标签它不会跟着消失，会浮到新标签上。
-  // 挂在 .sub-tab-bar 上用事件委托，5 个标签一次覆盖。
-  document.querySelector(".sub-tab-bar")?.addEventListener("click", () => closeFilterPanel());
   $("starMenuBtn").onclick = (e) => showStarMenu(e.currentTarget);
   const drawerBackdrop = $("drawerBackdrop");
   if (drawerBackdrop) {
     drawerBackdrop.onclick = closeProductDrawer;
   }
+  // ===== 筛选条 / 筛选抽屉 =====
+  // 胶囊上的 ✕ 用事件委托：胶囊是 renderFilterBar 整块重画的，
+  // 逐个绑 onclick 会在每次重画后丢光。
+  $("filterChips").addEventListener("click", (e) => {
+    const x = e.target.closest("[data-fb-x]");
+    if (x) {
+      clearOneFilter(x.dataset.fbX);
+    }
+  });
+  $("filterOpenBtn").onclick = openFilterDrawer;
+  const filterMask = $("filterDrawerMask");
+  if (filterMask) {
+    filterMask.onclick = closeFilterDrawer;
+  }
+  // Esc 关筛选抽屉。关着的时候是空操作，不会去抢别处的 Esc（图片大图、右键菜单那些）。
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key === "Escape" && filterDrawerOpen) {
+        closeFilterDrawer();
+      }
+    },
+    true,
+  );
 
   $("productListView").addEventListener("dblclick", (e) => {
     const td = e.target.closest("td[data-edit]");
@@ -948,8 +950,8 @@ function onMessage(msg) {
           refreshLiveMeta();
         }
       }
-      // 增量也会带进新产品（新导入的行是 push 进来的），筛选漏斗要跟着重建，
-      // 否则新分类/新系列在漏斗里点不出来 —— 以前这条路径只由整库 productsLoaded 兜
+      // 增量也会带进新产品（新导入的行是 push 进来的），筛选面板要跟着重建，
+      // 否则新分类/新系列在面板里点不出来 —— 以前这条路径只由整库 productsLoaded 兜
       populateFilters();
       break;
     }

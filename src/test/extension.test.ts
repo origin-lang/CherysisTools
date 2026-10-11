@@ -2066,7 +2066,7 @@ suite('前端契约：状态下拉与画册卡片大小', () => {
 		assert.ok(
 			/const STATUS_LABELS = \{ on: "在售", off: "已下架" \}/.test(prod) &&
 				/p\.status === 1 \? STATUS_LABELS\.off : STATUS_LABELS\.on/.test(prod),
-			'「在售/已下架」只能有 STATUS_LABELS 一处定义，cellValue 从它取（否则漏斗与下拉会各叫各的）',
+			'「在售/已下架」只能有 STATUS_LABELS 一处定义，cellValue 从它取（否则面板与下拉会各叫各的）',
 		);
 		assert.ok(
 			/STATUS_FILTER_OPTIONS/.test(prod) && /STATUS_FILTER_OPTIONS/.test(main),
