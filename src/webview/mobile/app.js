@@ -5,6 +5,36 @@
   "use strict";
 
   var TOKEN_KEY = "cherysis_token";
+
+  /**
+   * 筛选里所有**离散值列**（点一下选中的那些）。
+   *
+   * ⚠️ 这份清单是**唯一出处**：初始状态和「清除全部」都从它生成，别再各写一份字面量。
+   * 原来的写法是在两处各写一遍 `{category:{},series:{},grade:{},status:{},img:{}}`，
+   * 加「只看套装」时只改了初始那份、漏了「清除全部」那份 —— 于是点过「清除全部」之后
+   * `state.filters.enum.kind` 变成 undefined，再点「套装」圆片就是 `undefined["1"]` 直接抛错：
+   * 圆片不亮、列表不动，看起来就是「筛选坏了、只能筛一个、清除全部也没用」。
+   *
+   * 注意 status / img / kind 这三个不在 ENUM_COLS 里（它们各有专门的界面与判定），
+   * 但同样属于"离散列"，所以都必须出现在这份清单里。
+   */
+  var ENUM_FIELDS = [
+    "category",
+    "series",
+    "grade",
+    "status",
+    "img",
+    "kind", // ===== 套装（可整体移除）=====
+  ];
+  /** 一份全空的离散筛选条件（每次新建对象，别共用同一个引用） */
+  function emptyEnumFilters() {
+    var o = {};
+    ENUM_FIELDS.forEach(function (f) {
+      o[f] = {};
+    });
+    return o;
+  }
+
   var state = {
     products: [],
     rules: [],
@@ -17,7 +47,7 @@
     sort: "code",
     panelOpen: false, // 筛选展开区是否展开（在当前屏内展开，不切屏）
     // 漏斗筛选：enum 是「勾哪几个看哪几个」，num 是数值区间。空 = 不筛
-    filters: { enum: { category: {}, series: {}, grade: {}, status: {}, img: {} }, num: {} },
+    filters: { enum: emptyEnumFilters(), num: {} },
     // 每个编号有几张图（后端扫目录得来，按需要一次）。图片不在数据库里，只能这么知道
     imgStats: {},
     imgStatsLoaded: false,
@@ -26,6 +56,13 @@
     detail: null, // { id, code, idx, orig: {...}, status: 0 }
     logs: [],
     setTab: "sys", // 设置页停在哪个页签（只在内存里：进设置时用，刷新回到系统配置）
+    // ===== 套装（可整体移除）=====
+    // 每个套装的「含 N 件 / 合计进价 / 合计售价」，随 productsLoaded 一起下来。
+    // 合计是**派生值**：它跟着子商品的当前进价/售价走，后端每次现算，前端只管展示。
+    setSummaries: {},
+    setItems: [], // 当前打开的这个套装的子商品清单（setMembers 回包填）
+    setOf: [], // 当前这个商品属于哪些套装（子商品详情页显示"属于 T001、T002"）
+    newKind: 0, // 新建页当前选的是普通商品(0)还是套装(1)
   };
   var PAGE_SIZE = 50;
   // ---------- 显示大小（只放大表格） ----------
@@ -608,12 +645,23 @@
     if (m.type === "productsLoaded") {
       state.products = m.products || [];
       state.alert = num(m.stockAlert);
+      // ===== 套装（可整体移除）===== 套装的含 N 件/合计跟着整表一起来，画册卡片和列表要用
+      state.setSummaries = m.setSummaries || {};
       renderList();
       resyncDetailPos(); // 正在看详情时，翻页按钮的位置和边界要跟着新数据重算
       fillCategoryList();
       // 手里已经是全表最新的一份了，「有改动」角标就该收起来。
       // 不管是"我自己点的重读"还是"别人重读时广播给我的" —— 两种情况数据都新了。
       clearStale();
+      // ===== 套装（可整体移除）=====
+      // 正开着套装详情时顺手把清单再要一遍：子商品可能刚被别人改过价，
+      // 合计区那三个数（含N件/合计进价/合计售价）是现算的，得跟着刷新 ——
+      // 不然"整表都新了、就合计区还是旧数"，这种局部陈旧最容易误导人。
+      if (state.detail && num(state.detail.kindOf) === 1) {
+        invoke("setMembers", { code: state.detail.code }).catch(function () {
+          /* 连不上就算了，日志里有 */
+        });
+      }
     } else if (m.type === "productsDelta") {
       // 后端改完一条只回传这一条（不是整表），详情页失焦即存就靠它同步售价 ——
       // 改进价/等级时后端会按规则重算售价，但不会告诉前端算成了多少，
@@ -647,6 +695,21 @@
       // 后端把「改了但没落库」说清楚（如改号时图片文件夹改名冲突）：日志照写，同时弹给用户看
       pushLog("❌" + m.message);
       toast(m.message, true);
+    } else if (m.type === "setMembers") {
+      // ===== 套装（可整体移除）===== 套装详情页的主数据：子商品清单 + 现算出来的三个合计。
+      // 顺手把 state.setSummaries 更新掉，画册卡片上的「含 N 件」才跟着变。
+      state.setItems = m.items || [];
+      state.setSummaries[m.code] = {
+        count: num(m.count),
+        sumCost: num(m.sumCost),
+        sumSale: num(m.sumSale),
+      };
+      renderSet();
+      renderList();
+    } else if (m.type === "setOfCode") {
+      // ===== 套装（可整体移除）===== 这个商品被哪些套装用了（子商品详情页顶部那一行）
+      state.setOf = m.sets || [];
+      renderSetOf();
     }
   }
 
@@ -673,6 +736,13 @@
     renderList();
     resyncDetailPos();
     syncDetailFromDelta(products);
+    // ===== 套装（可整体移除）=====
+    // 套装的价格区有个「比合计」= 本套装售价 − 子商品合计售价。改了售价（或被后端重算）之后
+    // 那一行得跟着变，否则会一直显示改之前的差额 —— 那种"界面在说谎"最难被发现。
+    // 只刷合计区：改售价不会改动清单，没必要把清单重画一遍。
+    if (state.detail && num(state.detail.kindOf) === 1) {
+      renderSetSum();
+    }
   }
 
   // 详情页表单 ↔ 商品字段的对应表：[输入框 id, 字段名, 文本/数字/整数]
@@ -938,6 +1008,12 @@
     if (field === "status") {
       return num(p.status) === 1 ? "off" : "on";
     }
+    // ===== 套装（可整体移除）=====
+    // 「只看套装」走的就是这一条：kind 当普通离散列处理，用同一套勾选机制，
+    // 天然与其它条件 AND 叠加（决策 8：不加第三种视图，把它做成筛选）。
+    if (field === "kind") {
+      return num(p.kind) === 1 ? "1" : "0";
+    }
     if (field === "img") {
       var c = state.imgStats[p.code];
       // 还没统计过就返回空串：这时「无图」不该把人筛掉（否则一开筛选就空表，看着像坏了）
@@ -1090,9 +1166,16 @@
         list
           .map(function (p) {
             var off = p.status === 1;
+            // ===== 套装（可整体移除）=====
+            // 套装卡片和普通卡片长得几乎一样（它也是有图的东西），只多两处：左上角「套」角标、
+            // 库存那一行换成"含 N 件"。进价那一格显示**子商品进价合计**（合进）—— 套装的
+            // 进价本来就是派生值，显示 0 会让人以为这套不要钱。
+            var isSet = num(p.kind) === 1;
+            var ss = isSet ? setSumOf(p.code) : null;
             return (
               '<div class="card' +
               (off ? " off" : "") +
+              (isSet ? " is-set" : "") +
               '" data-id="' +
               p.id +
               '" data-open="1">' +
@@ -1103,6 +1186,7 @@
               '<div><span class="code">' +
               esc(p.code) +
               "</span>" +
+              (isSet ? '<span class="badge set">套</span>' : "") +
               (off ? '<span class="badge">已下架</span>' : "") +
               "</div>" +
               "<div>" +
@@ -1111,16 +1195,15 @@
               // 第一行只放两个价（进多少、卖多少），库存单独一行：挤在一行时小卡片上
               // 三个数会连成一团，库存是另外一件事，换行更好扫
               "<div>" +
-              '<span class="cost">进 ' +
-              money(p.cost_price) +
+              '<span class="cost">' +
+              (isSet ? "合进 " : "进 ") +
+              money(isSet && ss ? ss.sumCost : p.cost_price) +
               "</span> → " +
               money(p.sale_price) +
               "</div>" +
-              '<div class="stk' +
-              (isLow(p) ? " low" : "") +
-              '">库存 ' +
-              num(p.stockTotal) +
-              "</div>" +
+              (isSet
+                ? '<div class="stk set">含 ' + (ss ? ss.count : "…") + " 件</div>"
+                : '<div class="stk' + (isLow(p) ? " low" : "") + '">库存 ' + num(p.stockTotal) + "</div>") +
               "</div></div>"
             );
           })
@@ -1190,6 +1273,15 @@
 
   function rowHtml(p) {
     var off = p.status === 1;
+    // ===== 套装（可整体移除）=====
+    // 套装有三格是"没有的东西"，这里按**只读展示**处理（不给 data-ed，点不开编辑框）：
+    //   进价 → 子商品进价合计（派生值，手填没有意义，填了还会跟子商品对不上）
+    //   等级 → 不参与算价（售价手填），显示「—」
+    //   库存 → 套装不记库存，显示「—」而不是 0
+    // 为什么不是"显示 0/空"就完了：可编辑的格子和只读的格子必须长得不一样，
+    // 否则用户点开一个派生格、填个数就把真相覆盖了 —— 那是真正的坑。
+    var isSet = num(p.kind) === 1;
+    var ss = isSet ? setSumOf(p.code) : null;
     return (
       '<tr data-id="' +
       p.id +
@@ -1198,17 +1290,22 @@
       ">" +
       '<td class="open" data-open="1" title="' + esc(p.code) + '">' +
       esc(p.code) +
+      (isSet ? '<span class="badge set">套</span>' : "") +
       "</td>" +
       '<td class="nm ed' + selClass(p, "name") + '" data-ed="name" title="' + esc(p.name || "") + '">' +
       esc(p.name) +
       "</td>" +
-      '<td class="num ed' +
-      selClass(p, "cost_price") +
-      '" data-ed="cost_price" title="' +
-      esc(money(p.cost_price)) +
-      '">' +
-      money(p.cost_price) +
-      "</td>" +
+      (isSet
+        ? '<td class="num mut" title="子商品进价合计（现算，不落库）">' +
+          (ss ? "合 " + money(ss.sumCost) : "…") +
+          "</td>"
+        : '<td class="num ed' +
+          selClass(p, "cost_price") +
+          '" data-ed="cost_price" title="' +
+          esc(money(p.cost_price)) +
+          '">' +
+          money(p.cost_price) +
+          "</td>") +
       '<td class="num ed' +
       selClass(p, "sale_price") +
       '" data-ed="sale_price" title="' +
@@ -1217,21 +1314,25 @@
       money(p.sale_price) +
       "</td>" +
       // 等级可改：后端改等级会按新规则重算售价（product.ts 的 grade 分支），所以这里改了就生效
-      '<td class="num ed' +
-      selClass(p, "grade") +
-      '" data-ed="grade" title="' +
-      esc(gradeText(p)) +
-      '">' +
-      esc(gradeText(p)) +
-      "</td>" +
-      '<td class="num ed' +
-      (isLow(p) ? " low" : "") +
-      selClass(p, "stock") +
-      '" data-ed="stock" title="库存 ' +
-      num(p.stockTotal) +
-      '">' +
-      num(p.stockTotal) +
-      "</td>" +
+      (isSet
+        ? '<td class="num mut" title="套装没有等级（售价手填）">—</td>'
+        : '<td class="num ed' +
+          selClass(p, "grade") +
+          '" data-ed="grade" title="' +
+          esc(gradeText(p)) +
+          '">' +
+          esc(gradeText(p)) +
+          "</td>") +
+      (isSet
+        ? '<td class="num mut" title="套装不记库存">—</td>'
+        : '<td class="num ed' +
+          (isLow(p) ? " low" : "") +
+          selClass(p, "stock") +
+          '" data-ed="stock" title="库存 ' +
+          num(p.stockTotal) +
+          '">' +
+          num(p.stockTotal) +
+          "</td>") +
       '<td class="ed' +
       (off ? " low" : "") +
       '" data-ed="status" title="' +
@@ -1556,6 +1657,10 @@
     if (field === "img") {
       return v === "0" ? "无图" : "有图";
     }
+    // ===== 套装（可整体移除）=====
+    if (field === "kind") {
+      return v === "1" ? "套装" : "普通";
+    }
     return v === "" ? "（空）" : v;
   }
 
@@ -1568,7 +1673,7 @@
     if (state.codeQ.trim()) {
       out.push({ c: "code", t: "编号 " + state.codeQ.trim() });
     }
-    ENUM_COLS.concat([["img", "图片"]]).forEach(function (c) {
+    ENUM_COLS.concat([["img", "图片"]]).concat([["kind", "类型"]]).forEach(function (c) {
       var set = state.filters.enum[c[0]];
       Object.keys(set).forEach(function (v) {
         out.push({ c: "enum:" + c[0] + ":" + v, t: c[1] + "：" + enumLabel(c[0], v) });
@@ -1633,7 +1738,10 @@
   /** 撤掉一个条件。改完要把输入框/圆片同步回去，不然界面和 state 会各说各话 */
   function clearOne(code) {
     if (code === "all") {
-      state.filters = { enum: { category: {}, series: {}, grade: {}, status: {}, img: {} }, num: {} };
+      // ⚠️ 必须走 emptyEnumFilters()。这里原先是第二份写死的清单，
+      // 加「只看套装」时漏改它 → 点过「清除全部」之后 enum.kind 变 undefined，
+      // 再点套装圆片就是 undefined["1"] 抛错（圆片不亮、列表不动、"清除全部失效"都是这一处）。
+      state.filters = { enum: emptyEnumFilters(), num: {} };
       state.q = "";
       state.codeQ = "";
       $("q").value = "";
@@ -1762,6 +1870,33 @@
         (chips || '<span class="muted small">（没有可选值）</span>') +
         "</div></div>";
     });
+    // ===== 套装（可整体移除）=====
+    // 「只看套装」是**筛选**不是第三种视图：套装在语义上属于画册（它也是有图的东西），
+    // 单开一档等于把"筛选"伪装成"视图"，以后想加"只看在售"又要开一档。这里做成一个圆片组，
+    // 与品类/系列/状态那些完全同构，跟别的条件 AND 叠加 —— 复用同一套 matchEnum，没有新逻辑。
+    var kindSet = state.filters.enum.kind || {};
+    var setN = 0;
+    var plainN = 0;
+    state.products.forEach(function (p) {
+      if (num(p.kind) === 1) {
+        setN++;
+      } else {
+        plainN++;
+      }
+    });
+    html +=
+      '<div class="fgroup"><div class="ftitle" data-label="类型">类型</div><div class="chips">' +
+      '<button type="button" class="chip' +
+      (kindSet["1"] ? " on" : "") +
+      '" data-field="kind" data-v="1">套装 ' +
+      setN +
+      "</button>" +
+      '<button type="button" class="chip' +
+      (kindSet["0"] ? " on" : "") +
+      '" data-field="kind" data-v="0">普通 ' +
+      plainN +
+      "</button>" +
+      "</div></div>";
     // 「图片」：有图 / 无图 互斥，用来找还没传图的商品去补图。
     // 数量要后端扫目录才知道，扫完之前只给两个不带数字的圆片。
     var imgSet = state.filters.enum.img || {};
@@ -2039,12 +2174,353 @@
     sel.value = String(g);
   }
 
+  // ===== 套装（可整体移除）=====
+  // 手机版这一整块：详情页的"合计 + 子商品清单 + 添加/移出"、子商品页的"属于哪些套装"。
+  // 想整体去掉套装：删本块 + 上面 state 里带同标记的几行 + handlePost 里两个分支
+  // + index.html/style.css 里带同标记的那几处 + 后端 handlers/sets.ts（见 docs/套装-设计方案.md）。
+
+  /** 套装的合计（后端每次现算；还没拿到就返回 null，调用方自己兜底） */
+  function setSumOf(code) {
+    return state.setSummaries[code] || null;
+  }
+
+  /** 当前详情这个商品的 kind（0 普通 / 1 套装） */
+  function detailKindOf(id) {
+    var p = findProduct(id);
+    return p ? num(p.kind) : 0;
+  }
+
+  /** 左滑露出「移出」的宽度（px）—— 与 style.css 的 .setrow-x 宽度必须一致 */
+  var SET_SWIPE_W = 76;
+
+  /**
+   * 套装的两块数据分两处放（照 docs/套装-设计方案.md 五·5.1 的页签分工）：
+   *   · 合计区   → 「价格库存」页，**售价正下方**（#dSetSum）
+   *   · 子商品清单 → 「基本信息」页，表单卡下面（#dSetListCard）
+   * 为什么分开放：合计进价/合计售价/比合计是**钱**的信息，跟售价挤在同一页才有用；
+   * 清单回答的是"这一套由什么组成"，跟名称/品类/系列是一类信息。硬塞成一屏的后果，
+   * 就是「比合计 = 售价 − 合计售价」这两个最该相邻的数中间隔了别的东西（改版前隔着备注页）。
+   *
+   * 为什么合计是现算的：套装的进价/合计根本不是"存在某个字段里的值"，而是子商品当前值的和。
+   * 只要落了库，子商品一调价这边就是旧数字 —— 这类系统的经典坑，所以一律现算、只读展示。
+   * 比合计 = 本套装售价 − 子商品合计售价：负数是让利（绿），正数是比拆开买还贵（红）。
+   */
+
+  /** 合计区那三个数。差额只在两边都有数的时候说，否则"比合计 ¥0.00"会被当成结论 */
+  function renderSetSum() {
+    var sum = $("dSetSum");
+    if (!sum) {
+      return;
+    }
+    var items = state.setItems || [];
+    var sumCost = 0;
+    var sumSale = 0;
+    items.forEach(function (it) {
+      sumCost += num(it.cost_price);
+      sumSale += num(it.sale_price);
+    });
+    sumCost = Math.round(sumCost * 100) / 100;
+    sumSale = Math.round(sumSale * 100) / 100;
+    var mySale = num($("fSale") ? $("fSale").value : 0);
+    var diff = Math.round((mySale - sumSale) * 100) / 100;
+    var diffHtml = "";
+    if (mySale > 0 && sumSale > 0) {
+      if (diff === 0) {
+        diffHtml = '<div class="v">同价</div>';
+      } else if (diff < 0) {
+        diffHtml = '<div class="v g">− ' + money(-diff) + "</div>";
+      } else {
+        diffHtml = '<div class="v r">+ ' + money(diff) + "</div>";
+      }
+      diffHtml = '<div class="b"><div class="k">比合计</div>' + diffHtml + "</div>";
+    }
+    sum.innerHTML =
+      '<div><div class="k">合计进价</div><div class="v">' +
+      money(sumCost) +
+      "</div></div>" +
+      '<div><div class="k">合计售价</div><div class="v">' +
+      money(sumSale) +
+      "</div></div>" +
+      diffHtml;
+  }
+
+  /**
+   * 子商品清单。**只改「N 件」那个数和行的容器** —— 标题行、添加框、底部那句提示
+   * 都是 index.html 里静态的。这样重画清单不会把输入框的焦点和「＋ 添加编号」的展开状态
+   * 冲掉：原来的写法是整块 innerHTML 重建，用户正在输子商品编号时回包就会打断他。
+   */
+  function renderSetList() {
+    var list = $("dSetList");
+    if (!list) {
+      return;
+    }
+    var items = state.setItems || [];
+    var cnt = $("dSetCount");
+    if (cnt) {
+      cnt.textContent = "子商品 · " + items.length + " 件";
+    }
+    list.innerHTML = items.length
+      ? items
+          .map(function (it) {
+            return (
+              '<div class="setrow" data-code="' +
+              esc(it.code) +
+              '">' +
+              // ⚠️ 进详情的入口**只在编号上**（data-open-child 挂在 .sc 上，不在整行）——
+              // 整行可点太容易误触（2026-10-11 三改）。行里其它地方点了不进详情。
+              '<div class="setrow-in">' +
+              '<span class="sc" data-open-child="' +
+              esc(it.code) +
+              '">' +
+              esc(it.code) +
+              "</span>" +
+              '<span class="sn">' +
+              esc(it.name || "") +
+              "</span>" +
+              '<span class="sp">进 ' +
+              money(it.cost_price) +
+              " / 售 " +
+              money(it.sale_price) +
+              "</span>" +
+              "</div>" +
+              '<button type="button" class="setrow-x" data-remove="' +
+              esc(it.code) +
+              '">移出</button>' +
+              "</div>"
+            );
+          })
+          .join("")
+      : '<p class="muted small">还没加子商品 —— 点右上「编辑」，把这一套由哪几件组成填进来。</p>';
+  }
+
+  /**
+   * 两处一起刷。清单变了合计必然也变，但反过来不成立 —— 只改了售价时只调 renderSetSum
+   * 就够（见 applyDelta），不必顺手把清单重画一遍。
+   */
+  function renderSet() {
+    renderSetSum();
+    renderSetList();
+  }
+
+  /** 数据还没回来时的占位：合计区别显示 ¥0.00 —— 那看着像个结论，其实还没读到 */
+  function renderSetLoading() {
+    var sum = $("dSetSum");
+    if (sum) {
+      sum.innerHTML = '<span class="muted small">合计读取中…</span>';
+    }
+    var cnt = $("dSetCount");
+    if (cnt) {
+      cnt.textContent = "子商品";
+    }
+    var list = $("dSetList");
+    if (list) {
+      list.innerHTML = '<p class="muted small">子商品读取中…</p>';
+    }
+  }
+
+  /** 换成普通商品：把上一件套装留下的内容清掉。CSS 已经把这两块藏了，这里只是不留脏数据 */
+  function clearSetBox() {
+    var sum = $("dSetSum");
+    if (sum) {
+      sum.innerHTML = "";
+    }
+    var cnt = $("dSetCount");
+    if (cnt) {
+      cnt.textContent = "";
+    }
+    var list = $("dSetList");
+    if (list) {
+      list.innerHTML = "";
+    }
+  }
+
+  /** 子商品详情页顶部：它被哪些套装用了。每个编号可点，点了跳到那个套装。 */
+  function renderSetOf() {
+    var el = $("dSetOf");
+    if (!el) {
+      return;
+    }
+    var sets = state.setOf || [];
+    if (!sets.length) {
+      el.style.display = "none";
+      el.innerHTML = "";
+      return;
+    }
+    el.style.display = "";
+    el.innerHTML =
+      '<span class="muted small">属于：</span>' +
+      sets
+        .map(function (c) {
+          return '<button type="button" class="pill-link" data-goto="' + esc(c) + '">' + esc(c) + "</button>";
+        })
+        .join("");
+  }
+
+  /**
+   * 进详情时按 kind 切换形态：
+   *  · 套装：三个页签**照常显示**（2026-10-11 改定），页签里的分工是
+   *          基本信息 = 名称/品类/系列 + 子商品清单；价格库存 = 状态/售价 + 合计区；备注说明 = 备注。
+   *          另外去后端要子商品清单 —— 合计和清单都是从它算出来的。
+   *  · 普通：页签照旧；只多问一句"它被哪些套装用了"，有才显示。
+   *
+   * **两个分支都停在第一页「基本信息」** —— 跟普通商品一致，不给套装做"第一页是价格"那种特例
+   * （否则手机版和电脑端都要各记一套"第一页是哪页"）。代价是进套装改价要多点一次。
+   *
+   * 为什么套装不另做一套表单：DETAIL_FIELDS 和"失焦即存"那套机制绑在固定的 DOM id 上
+   * （fName/fSale/fRemark）。重做一套等于把"改完自动保存"再实现一遍。
+   *
+   * 那两块的显隐**交给 CSS**（style.css 的 #screen-detail.set 那几条），JS 不碰它们的 display ——
+   * 这里少写一处 state，就少一个"忘记复位"的地方。
+   */
+  function applyDetailKind(p) {
+    var isSet = num(p.kind) === 1;
+    $("screen-detail").classList.toggle("set", isSet);
+    state.setItems = [];
+    state.setOf = [];
+    var of = $("dSetOf");
+    of.style.display = "none";
+    of.innerHTML = "";
+    // 换商品就回到第一页：不把上一件停在哪一页带过来（跟普通商品原来的行为一致）
+    ["dPaneBase", "dPanePrice", "dPaneRemark"].forEach(function (id, idx) {
+      $(id).style.display = idx === 0 ? "" : "none";
+    });
+    var tabs = $("dTabs").querySelectorAll(".tab");
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].classList.toggle("on", i === 0);
+    }
+    // 编辑态也退出，别把上一件留下的展开状态带过来（顺带复位按钮文字、清掉没输完的编号）
+    setSetEditing(false);
+    if (isSet) {
+      renderSetLoading();
+      invoke("setMembers", { code: p.code }).catch(function () {
+        /* 连不上时 invoke 已经写过日志了 */
+      });
+    } else {
+      clearSetBox();
+      invoke("setOfCode", { code: p.code }).catch(function () {
+        /* 同上 */
+      });
+    }
+  }
+
+  /** 把子商品加进当前这个套装（后端会校验：存在 / 不是套装 / 不是自己 / 不重复） */
+  function addSetMember() {
+    var d = state.detail;
+    var inp = $("setAddCode");
+    if (!d || !inp) {
+      return;
+    }
+    var child = inp.value.trim();
+    if (!child) {
+      toast("先填子商品编号", true);
+      return;
+    }
+    invoke("setAddMember", { code: d.code, childCode: child }).catch(function () {
+      /* 失败原因已进日志并弹 toast */
+    });
+    inp.value = "";
+  }
+
+  /** 从套装里移出（**只删关联，不删商品**；不在高频动线上，所以确认一次） */
+  function removeSetMember(childCode) {
+    var d = state.detail;
+    if (!d) {
+      return;
+    }
+    if (!window.confirm("把 " + childCode + " 从 " + d.code + " 移出？\n（只是不再属于这个套装，商品本身不会被删）")) {
+      return;
+    }
+    invoke("setRemoveMember", { code: d.code, childCode: childCode }).catch(function () {
+      /* 同上 */
+    });
+  }
+
+  /**
+   * 进出编辑态。**一个 .editing class 管三件事**（添加区显示 / 左滑能不能跑 / 行点击认不认），
+   * 所以进出只改这一个 class —— 别在别处再各记一个状态位（那样就会出现"能左滑但不能加"）。
+   * 切进编辑态**不自动 focus 输入框**：编辑态同时服务"移出"和"添加"，
+   * 为移出而来的人不该被弹出来的键盘怼一脸。
+   */
+  function setSetEditing(on) {
+    var card = $("dSetListCard");
+    if (!card) {
+      return;
+    }
+    card.classList.toggle("editing", !!on);
+    var btn = $("setEditToggle");
+    if (btn) {
+      btn.textContent = on ? "取消编辑" : "编辑";
+    }
+    if (!on) {
+      // 退出编辑：把推开的行、没输完的编号都收干净
+      closeSetRows();
+      var inp = $("setAddCode");
+      if (inp) {
+        inp.value = "";
+      }
+      closeSetMenu();
+    }
+  }
+
+  /** 有没有"鼠标"这种精细指针（决定右键菜单要不要放行；触屏长按也会触发 contextmenu，得挡住） */
+  function hasFinePointer() {
+    return (
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(hover: hover) and (pointer: fine)").matches
+    );
+  }
+
+  /**
+   * 摆出电脑端右键菜单。**只有"编辑态 + 点在某一行的行上"才会走到这里**（见 contextmenu），
+   * 所以菜单永远只有一项：「移出 编号」。
+   * （不给"添加子商品"：编辑态下面本来就有输入框，右键再给一遍是重复；
+   *   浏览态则压根不出菜单 —— 这就是 A 方案，跟手机端"进了编辑态才左滑得出移出"一致。）
+   */
+  function openSetMenu(x, y, code) {
+    var menu = $("setMenu");
+    if (!menu) {
+      return;
+    }
+    menu.innerHTML =
+      '<button type="button" data-menu="remove" data-code="' +
+      esc(code) +
+      '" class="danger">移出 ' +
+      esc(code) +
+      "</button>";
+    // 先显示再量尺寸，然后把坐标 clamp 进可视区（在右下角右键时别让菜单跑出屏幕）
+    menu.style.display = "block";
+    var maxX = window.innerWidth - menu.offsetWidth - 6;
+    var maxY = window.innerHeight - menu.offsetHeight - 6;
+    menu.style.left = Math.max(6, Math.min(x, maxX)) + "px";
+    menu.style.top = Math.max(6, Math.min(y, maxY)) + "px";
+  }
+
+  /** 关掉右键菜单（点别处 / Esc / 滚动 / 退出编辑态时都调它） */
+  function closeSetMenu() {
+    var menu = $("setMenu");
+    if (menu && menu.style.display !== "none") {
+      menu.style.display = "none";
+    }
+  }
+
+  /** 关掉所有"左滑推开"的行（点别处、翻商品、切页签时都要收回去） */
+  function closeSetRows() {
+    var list = $("dSetList");
+    if (!list) {
+      return;
+    }
+    list.querySelectorAll(".setrow.open").forEach(function (n) {
+      n.classList.remove("open");
+    });
+  }
+
   // ---------- 详情 ----------
   /** 从画册/列表点进来：先在**当前筛选结果**里定位 —— 前后翻就按这个顺序走，不是按全库顺序。 */
   function openDetail(id) {
     var all = filtered();
     for (var i = 0; i < all.length; i++) {
       if (num(all[i].id) === num(id)) {
+        detailBack.length = 0; // ===== 套装（可整体移除）===== 从列表点进来 = 一段新的浏览，来路清空
         openDetailAt(i);
         return;
       }
@@ -2063,10 +2539,22 @@
       state.page = want;
       renderList();
     }
+    renderDetail(p, idx, false);
+  }
+
+  /**
+   * 真正把一屏详情画出来。
+   * `off = true` 表示这个商品**不在当前筛选结果里**（从套装点进来的子商品就可能这样）：
+   * 这时「上一个/下一个」没有意义，两个按钮都停掉，返回键走 detailBack 那条栈。
+   */
+  function renderDetail(p, idx, off) {
     state.detail = {
       id: p.id,
       code: p.code,
-      idx: idx,
+      idx: off ? -1 : idx,
+      off: !!off,
+      // ===== 套装（可整体移除）===== 记下类型：delta 回来时要据此决定动不动套装那块
+      kindOf: num(p.kind),
       status: p.status === 1 ? 1 : 0,
       imgs: [], // 这个商品的图片文件名（loadImages 填），灯箱左右切换要用
       orig: {
@@ -2095,6 +2583,8 @@
     $("fSeries").value = p.series || "";
     $("fRemark").value = p.remark || "";
     syncStatusBtn();
+    closeSetRows(); // ===== 套装（可整体移除）===== 翻到下一件时把上一件留下的"左滑推开"收回去
+    applyDetailKind(p); // ===== 套装（可整体移除）===== 按 kind 决定页签形态 + 拉子商品清单/所属套装
     updateDetailNav();
     // 封面**不要**在这里先塞一张：此刻还不知道第一张叫什么，只能发"不带文件名"的 URL，
     // 而清单回来后又会换成带文件名的 —— 等于每次进详情把那张大图下载两遍（好几 MB）。
@@ -2104,12 +2594,89 @@
       cv.innerHTML = '<span class="muted small">封面读取中…</span>';
     }
     show("screen-detail");
+    updateBackLabel(); // ===== 套装（可整体移除）===== 返回键上写清"这一下退到哪儿"
     loadImages(p.code);
+  }
+
+  // ===== 套装（可整体移除）=====
+  /**
+   * 从套装点进子商品时记的"来路"，返回键先回这里（栈式）。
+   * 为什么需要：套装里的子商品点开后，用户改完价、看完图，按返回应该是"回那个套装"，
+   * 而不是被扔回列表再重新翻。存**编号**不存 id —— 编号才是这套系统的锚点，
+   * 日志和图片夹都按它对，出问题时能直接对上。
+   */
+  var detailBack = [];
+
+  /** 按编号开详情（可能不在当前筛选结果里，所以绕开 filtered） */
+  function openDetailByCode(code, pushBack) {
+    var want = String(code || "").toUpperCase();
+    var p = null;
+    for (var i = 0; i < state.products.length; i++) {
+      if (String(state.products[i].code || "").toUpperCase() === want) {
+        p = state.products[i];
+        break;
+      }
+    }
+    if (!p) {
+      toast("找不到 " + code, true);
+      return;
+    }
+    var cur = state.detail;
+    if (pushBack && cur && cur.code) {
+      // ⚠️ 去重是**必须的**，不是优化。
+      // 套装里能点进子商品、子商品上又能点回套装，用户可以就这么 A→B→A→B 来回点。
+      // 一路 push 的话，返回键要按十来下才回得到列表 —— 那种"回不去"的感觉就是这么来的。
+      // 照浏览器历史那条规矩办：目标已经在栈里 → 把栈截到它那儿（它自己成为当前页），
+      // 于是"A 跳 B、B 跳回 A" = 回到 A 且栈清空，返回键一下就回列表。
+      var at = -1;
+      for (var k = 0; k < detailBack.length; k++) {
+        if (String(detailBack[k]).toUpperCase() === want) {
+          at = k;
+          break;
+        }
+      }
+      if (at >= 0) {
+        detailBack.length = at;
+      } else {
+        detailBack.push(cur.code);
+      }
+    }
+    // 在当前筛选结果里能找到就还按老路走（保住「上一个/下一个」），找不到就单独开一屏
+    var all = filtered();
+    for (var j = 0; j < all.length; j++) {
+      if (num(all[j].id) === num(p.id)) {
+        openDetailAt(j);
+        return;
+      }
+    }
+    renderDetail(p, -1, true);
+  }
+
+  /**
+   * 返回键上写清楚这一下会退到哪儿。
+   * 原来固定写「商品」，可是从套装点进子商品之后，这一下其实是回那个**套装** ——
+   * 套装和子商品互相点过几次，用户就完全不知道返回键会把他带到哪儿。
+   * 栈里有来路就显示那个编号，没有就是回列表（「商品」）。
+   */
+  function updateBackLabel() {
+    var el = $("backText");
+    if (!el) {
+      return;
+    }
+    el.textContent = detailBack.length ? String(detailBack[detailBack.length - 1]) : "商品";
   }
 
   function updateDetailNav() {
     var d = state.detail;
     if (!d) {
+      return;
+    }
+    // ===== 套装（可整体移除）===== 不在筛选结果里（从套装点进来的子商品）：翻页无意义，停掉
+    if (d.off) {
+      $("dPos").textContent = "—";
+      $("dProg").style.width = "0%";
+      $("btnPrevItem").disabled = true;
+      $("btnNextItem").disabled = true;
       return;
     }
     var all = filtered();
@@ -2130,9 +2697,13 @@
     for (var i = 0; i < all.length; i++) {
       if (num(all[i].id) === num(d.id)) {
         d.idx = i;
-        break;
+        d.off = false; // ===== 套装（可整体移除）===== 之前是"绕开筛选"开的屏，现在能找到了就归位
+        updateDetailNav();
+        return;
       }
     }
+    // ===== 套装（可整体移除）===== 兜底：整表重读后这个商品已经不在筛选结果里了
+    d.off = true;
     updateDetailNav();
   }
 
@@ -2735,10 +3306,17 @@
    * 手机版这里原来写死 "L"，于是同一套库上手机点「用下一个空号」给的是 L001、电脑给的是 A001，
    * 用户看到的就是「怎么冒出个 L」。
    */
-  function nextFreeCode() {
+  /**
+   * 找这个前缀下一个没用过的编号。
+   * `prefix` 可传：新建页切到「套装」时要直接找 T 段的下一个空号（套装编号必须 T 开头）。
+   * 不传就沿用输入框里当前那个前缀 —— 与老行为一致（打了 L007 就顺着 L 段往下找）。
+   */
+  function nextFreeCode(prefix) {
     var raw = String($("nCode").value || "").trim().toUpperCase();
     var m = /^([A-Z])(\d{1,4})$/.exec(raw);
-    var prefix = m ? m[1] : "A";
+    if (!prefix) {
+      prefix = m ? m[1] : "A";
+    }
     var used = {};
     state.products.forEach(function (p) {
       used[String(p.code || "").toUpperCase()] = 1;
@@ -2816,8 +3394,59 @@
     return owner;
   }
 
-  // 新建页先选好照片，保存成功后再传（没编号就传不了，图片挂在编号目录下）。
-  // 每项 { file, url }：url 是本地预览用的 objectURL —— 拍完当场就能看见效果、能删能重拍，
+  // ===== 套装（可整体移除）=====
+  /**
+   * 新建页：切「普通商品 / 套装」。
+   * 只做两件事：① 决定发给后端的 kind（后端只认 kind，不认编号长得像不像 T）；
+   * ② 切换表单 —— 套装自动填 T 段下一个空号，并把等级/进价/期初库存三格收掉。
+   * 编号和类型**当场对齐**：错开一格就发出去，后端会拒（这是刻意的，两边都守同一口径）。
+   */
+  function applyNewKind(k) {
+    state.newKind = k === 1 ? 1 : 0;
+    var isSet = state.newKind === 1;
+    var seg = $("nKind");
+    if (seg) {
+      var bs = seg.querySelectorAll("button");
+      for (var i = 0; i < bs.length; i++) {
+        bs[i].classList.toggle("on", num(bs[i].dataset.kind) === state.newKind);
+      }
+    }
+    if ($("nTitle")) {
+      $("nTitle").textContent = isSet ? "＋ 新建套装" : "＋ 新建商品";
+    }
+    var sc = $("screen-new");
+    if (sc) {
+      sc.querySelectorAll("[data-set-hide]").forEach(function (n) {
+        n.style.display = isSet ? "none" : "";
+      });
+    }
+    if ($("nSale")) {
+      $("nSale").placeholder = isSet ? "手填（打包价）" : "留空按规则";
+    }
+    var inp = $("nCode");
+    if (inp) {
+      var cur = String(inp.value || "").trim().toUpperCase();
+      var curIsT = /^T\d{1,4}$/.test(cur);
+      // 对不上就清掉重找：套装必须 T 开头、普通商品不能 T 开头。
+      // 只在"确实对不上"时动它，别把用户刚手打的 A 段号冲掉。
+      if (cur && curIsT !== isSet) {
+        inp.value = "";
+      }
+      if (isSet && !String(inp.value || "").trim()) {
+        nextFreeCode("T");
+      }
+    }
+    checkNewCode();
+    if (isSet) {
+      $("ruleHint").textContent =
+        "套装不记库存、不参与等级算价：售价手填（打包价），进价是子商品进价之和。" +
+        "建好后进它的详情页点「＋ 添加编号」，把子商品一个一个加进来。";
+    } else {
+      updateRuleHint();
+    }
+  }
+
+  // 新建页先选好照片，保存成功后再传（没编号就传不了，图片挂在编号目录下）。  // 每项 { file, url }：url 是本地预览用的 objectURL —— 拍完当场就能看见效果、能删能重拍，
   // 不用等上传完才知道拍糊了。移除或上传完必须 revoke，否则那张原图一直占着内存。
   var pendingNewShots = [];
 
@@ -2896,6 +3525,19 @@
       toast("编号 " + code + " 已经有了，换一个", true);
       return Promise.resolve();
     }
+    // ===== 套装（可整体移除）=====
+    // 前缀和类型必须在**发出去之前**就对上：后端两道都校验（T 开头必须是套装、套装必须 T 开头），
+    // 本地先拦一次省得白跑一趟，也让错误当场出现而不是回来才弹。
+    var isSet = state.newKind === 1;
+    var codeIsT = /^T(\d{1,4})$/i.test(code);
+    if (isSet && !codeIsT) {
+      toast("套装的编号要以 T 开头（现在是 " + code + "）", true);
+      return Promise.resolve();
+    }
+    if (!isSet && codeIsT) {
+      toast(code + " 是 T 开头的编号，T 是套装专用：请把上面切到「套装」，或换个编号", true);
+      return Promise.resolve();
+    }
     var payload = {
       code: code,
       name: $("nName").value.trim(),
@@ -2907,6 +3549,7 @@
       initialStock: num($("nStock").value),
       purchaseLink: "",
       remark: "",
+      kind: isSet ? 1 : 0,
     };
     return invoke("addProduct", payload).then(function (j) {
       // 成功的判据：handler 会 post 一条 toast「✅已新建 …」，失败只写日志
@@ -3529,9 +4172,16 @@
       openFieldSheet(row, cell);
     });
     $("btnBack").onclick = function () {
+      // ===== 套装（可整体移除）===== 从套装点进子商品的来路栈：有来路就先回上一步
+      // （改完子商品的价、看完图，按返回应该回那个套装，而不是被扔回列表重新翻）
+      if (detailBack.length) {
+        flushDetailEdits();
+        openDetailByCode(detailBack.pop(), false);
+        return;
+      }
       closePanel();
     };
-    // 详情页签：基本信息 / 价格库存 / 备注说明。切页前把正在编辑的那一格结算掉
+    // 详情页签：基本信息 / 价格库存 / 备注说明（套装也是这三个）。切页前把正在编辑的那一格结算掉
     // （点页签也会让输入框失焦，但 iOS 上先补一道，别把改动丢了）。
     $("dTabs").onclick = function (e) {
       var b = e.target.closest(".tab");
@@ -3539,6 +4189,9 @@
         return;
       }
       flushDetailEdits();
+      // 离开/进入清单那一页时把"左滑推开"的行收回去：不然推开着切走、再切回来，
+      // 那一行还是推开的，看着像是界面自己动过
+      closeSetRows();
       var tabs = this.querySelectorAll(".tab");
       for (var i = 0; i < tabs.length; i++) {
         tabs[i].classList.toggle("on", tabs[i] === b);
@@ -3547,14 +4200,217 @@
         $(id).style.display = id === b.dataset.pane ? "" : "none";
       });
     };
+    // ===== 套装（可整体移除）=====
+    // 子商品清单的交互。全部**委派**到 #dSetListCard 上（不是每一行）：清单的行是
+    // renderSetList 用 innerHTML 重建的，逐个元素挂事件每次重建都会掉。
+    // 委派挂在**卡**上而不是行容器上，「编辑」和「添加」按钮也在同一张卡里，
+    // 一个监听就够；点在卡里但不在行上的地方（标题行、提示语）不会触发左滑（见下面的判断）。
+    //
+    // 两个状态（2026-10-11 三改）：卡上有 `.editing` = 编辑态，**一个 class 管三件事** ——
+    // 添加区显示（CSS）、左滑能不能跑（touchstart 先看它）、行点击要不要认（click 里看它）。
+    (function () {
+      var card = $("dSetListCard");
+      if (!card) {
+        return;
+      }
+      var drag = null; // { x0, y0, row, inner, base, moved }
+      var justSwiped = false; // 刚左滑过 → 紧接着那下 click 不该当"点进子商品"
+      var SWIPE = SET_SWIPE_W;
+      function isEditing() {
+        return card.classList.contains("editing");
+      }
+
+      card.addEventListener(
+        "touchstart",
+        function (e) {
+          // 只有编辑态才响应左滑：浏览态是"干净的只读样子"，左滑不该出东西。
+          // （电脑端根本不会触发 touchstart —— 鼠标没有触摸事件，所以移出只走右键菜单。
+          //  原先那条"有指针就整段不跑"的 NO_SWIPE 判断，随常驻样式一起删了。）
+          if (!isEditing()) {
+            drag = null;
+            return;
+          }
+          var row = e.target.closest(".setrow");
+          if (!row || e.target.closest(".setrow-x")) {
+            drag = null;
+            return;
+          }
+          var t = e.touches[0];
+          drag = {
+            x0: t.clientX,
+            y0: t.clientY,
+            row: row,
+            inner: row.querySelector(".setrow-in"),
+            base: row.classList.contains("open") ? -SWIPE : 0,
+            moved: false,
+          };
+        },
+        { passive: true },
+      );
+      card.addEventListener(
+        "touchmove",
+        function (e) {
+          if (!drag) {
+            return;
+          }
+          var t = e.touches[0];
+          var dx = t.clientX - drag.x0;
+          var dy = t.clientY - drag.y0;
+          // 竖向为主 = 用户在滚清单，不是左滑：直接放弃这次手势。
+          // 这里**绝不 preventDefault**（也不敢），横向的主动权交给 CSS 的 touch-action:
+          // pan-y —— 它告诉浏览器"横向这块我自己处理"，所以横拖时页面不会跟着滚。
+          if (!drag.moved && Math.abs(dy) > Math.abs(dx)) {
+            drag = null;
+            return;
+          }
+          if (Math.abs(dx) < 8) {
+            return;
+          }
+          drag.moved = true;
+          var off = drag.base + dx;
+          if (off > 0) {
+            off = 0;
+          }
+          if (off < -SWIPE) {
+            off = -SWIPE;
+          }
+          drag.inner.classList.add("dragging");
+          drag.inner.style.transform = "translateX(" + off + "px)";
+        },
+        { passive: true },
+      );
+      card.addEventListener(
+        "touchend",
+        function () {
+          if (!drag) {
+            return;
+          }
+          var d = drag;
+          drag = null;
+          if (!d.moved) {
+            return; // 只是点了一下，交给 click 处理
+          }
+          justSwiped = true;
+          setTimeout(function () {
+            justSwiped = false;
+          }, 300);
+          var at = d.inner.style.transform || "";
+          var m = /translateX\((-?[\d.]+)px\)/.exec(at);
+          var off = m ? Number(m[1]) : 0;
+          d.inner.classList.remove("dragging");
+          d.inner.style.transform = "";
+          // 推过一半就"卡住"开着，否则弹回去
+          d.row.classList.toggle("open", off < -SWIPE / 2);
+        },
+        { passive: true },
+      );
+
+      card.addEventListener("click", function (e) {
+        // ①「移出」：这是**关联**，商品本身不删。不在高频动线上，确认一次（决策 12）
+        var x = e.target.closest("[data-remove]");
+        if (x) {
+          removeSetMember(x.dataset.remove);
+          return;
+        }
+        // ②「编辑 / 取消编辑」：切编辑态（切进去不自动 focus 输入框，理由见 setSetEditing）
+        if (e.target.closest("#setEditToggle")) {
+          setSetEditing(!isEditing());
+          return;
+        }
+        // ③「添加」
+        if (e.target.closest("#setAddBtn")) {
+          addSetMember();
+          return;
+        }
+        // ④ 点**编号** → 跳那个子商品的详情。只有编号带 data-open-child（见 renderSetList），
+        //    所以点行内其它地方不会跳 —— 这正是这次要的"别再一点整行就窜走"。
+        //    编辑态里**整行点击一律无效**（点编号也不进详情）：要进详情先退出编辑。
+        var go = e.target.closest("[data-open-child]");
+        if (go) {
+          if (isEditing() || justSwiped) {
+            return;
+          }
+          var row = go.closest(".setrow");
+          if (row && row.classList.contains("open")) {
+            row.classList.remove("open"); // 已经推开着，点一下先收回去，别跳
+            return;
+          }
+          openDetailByCode(go.dataset.openChild, true);
+          return;
+        }
+        // ⑤ 点空白处：把推开的行收回去
+        closeSetRows();
+      });
+      // 添加框里按回车 = 点「添加」（手机上单手输完号直接回车最顺）
+      card.addEventListener("keydown", function (e) {
+        if (e.target && e.target.id === "setAddCode" && e.key === "Enter") {
+          e.preventDefault();
+          addSetMember();
+        }
+      });
+
+      // 电脑端右键：子商品行的「移出」在这里（手机版页面在鼠标设备上没有左滑手势）。
+      // ⚠️ 触屏设备长按也会触发 contextmenu —— 用"精细指针 + 能悬停"把触屏挡在外面，
+      //    否则手机上长按一行会平白冒出一个菜单。
+      // ⚠️ **只有编辑态才出菜单**（A 方案）：跟手机端一致 —— 手机也是进了编辑态才左滑得出
+      //    「移出」。浏览态右键只是把浏览器原生菜单挡掉，不出东西（不然 Web App 里会弹出
+      //    "另存为 / 查看源代码"，比没反应还怪）。
+      card.addEventListener("contextmenu", function (e) {
+        if (!hasFinePointer()) {
+          return;
+        }
+        e.preventDefault();
+        var row = e.target.closest(".setrow");
+        if (!isEditing() || !row) {
+          return; // 浏览态（或没点在行上）→ 不出菜单
+        }
+        openSetMenu(e.clientX, e.clientY, row.dataset.code);
+      });
+    })();
+
+    // ===== 套装（可整体移除）=====
+    // 右键菜单本体。菜单是静态 DOM（index.html 的 #setMenu），这里只管"点菜单项干活"和"什么时候关掉"。
+    (function () {
+      var menu = $("setMenu");
+      if (!menu) {
+        return;
+      }
+      menu.addEventListener("click", function (e) {
+        var it = e.target.closest("button[data-menu]");
+        if (!it) {
+          return;
+        }
+        var code = it.dataset.code || "";
+        closeSetMenu(); // 先收菜单再干活：确认框弹出来时菜单不该还糊在上面
+        removeSetMember(code);
+      });
+      // 点别处 / 按 Esc / 滚页面 → 关掉
+      document.addEventListener("click", closeSetMenu);
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") {
+          closeSetMenu();
+        }
+      });
+      window.addEventListener("scroll", closeSetMenu, true);
+    })();
+    // 子商品详情页顶部「属于 T001」：点一下跳到那个套装（同一条来路栈，返回键能回来）
+    $("dSetOf").onclick = function (e) {
+      var b = e.target.closest("[data-goto]");
+      if (!b) {
+        return;
+      }
+      openDetailByCode(b.dataset.goto, true);
+    };
     $("btnPrevItem").onclick = function () {
       flushDetailEdits();
+      detailBack.length = 0; // 一按「上一个/下一个」就是"顺着列表翻"，来路作废
       if (state.detail) {
         openDetailAt(state.detail.idx - 1);
       }
     };
     $("btnNextItem").onclick = function () {
       flushDetailEdits();
+      detailBack.length = 0;
       if (state.detail) {
         openDetailAt(state.detail.idx + 1);
       }
@@ -3714,6 +4570,14 @@
       $("logPanel").classList.remove("show");
     };
     // ---- 新建页 ----
+    // ===== 套装（可整体移除）===== 普通 / 套装开关：切之前先把当前那一格结算掉（编号/名称可能刚打完）
+    $("nKind").onclick = function (e) {
+      var b = e.target.closest("button[data-kind]");
+      if (!b) {
+        return;
+      }
+      applyNewKind(num(b.dataset.kind));
+    };
     $("nCode").oninput = checkNewCode;
     $("nCode").onblur = checkNewCode;
     // 新建页的名称同样不许有空格（导入是按空白分列的）
@@ -3760,6 +4624,7 @@
   }
   applyZoom(); // 无论有没有存过：按当前视图决定这三个按钮在不在
   bind();
+  applyNewKind(state.newKind); // ===== 套装（可整体移除）===== 新建页按当前类型摆一次（默认普通）
   // 实时推送在读完第一遍之后再连：先让页面有数据可看，连不上也不耽误用
   connectEvents();
   pushLog("⏳读取商品…");

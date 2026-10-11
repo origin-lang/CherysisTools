@@ -9,6 +9,8 @@ import {
   normInt,
 } from "../productFields.js";
 import { splitCells, isHeaderRow, codeFromCell } from "../rowParse.js";
+// ===== 套装（可整体移除）===== looksLikeSet 是「T 前缀」约定的唯一判定处（定义在 sets.ts），别在这边另写 startsWith
+import { looksLikeSet } from "./sets.js";
 
 /** 商品可编辑字段 key → 中文名（撤销提示里显示改的是哪个字段） */
 const PRODUCT_FIELD_LABELS: Record<string, string> = {
@@ -101,6 +103,8 @@ interface PendingImportPlan {
   skipped: number;
   bad: string[];
   dup: string[];
+  // ===== 套装（可整体移除）===== 因「T 开头」被挡下的行（导入不做套装，但要让用户知道是哪几行、为什么）
+  setBlocked: string[];
 }
 let pendingImport: PendingImportPlan | null = null;
 
@@ -122,6 +126,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
     skipped: number;
     bad: string[];
     dupLines: string[];
+    setBlocked: string[];
     displayRows: Array<{
       kind: "new" | "update";
       code: string;
@@ -150,6 +155,12 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
     const gradesToEnsure = new Set<number>();
     const bad: string[] = [];
     const dupLines: string[] = [];
+    // ===== 套装（可整体移除）=====
+    // 导入表是「一行一个商品、一列一个字段」，而"谁包含谁"是**关系**不是字段，
+    // 硬塞进某一列会让语义变脏（商家原话："这个组成不是字段吧"）。所以导入整条链路不做套装。
+    // 但必须堵住 T 开头的行：否则它会以"看着像套装、其实是普通商品"的样子躺进画册，
+    // 把「T = 套装」这个给人看的约定破坏掉。单独一个列表，日志里理由才说得清楚。
+    const setBlocked: string[] = [];
     // 同一批粘贴内的编号去重：预览不落库，库里查不到的同号两行都会判"新增"，
     // 提交时第二行走身份复检又被跳过——预览与结果不一致。约定：只取第一条，其余计入跳过。
     const newCodes = new Set<string>();
@@ -176,6 +187,13 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       const code = codeFromCell(parts[0]);
       if (!code) {
         bad.push(`行${i + 1}: ${raw}`);
+        continue;
+      }
+      // ===== 套装（可整体移除）=====
+      // T 开头的行一律不收（新增和更新都不收）：更新行更危险 —— 导入表的字段里没有"类型"，
+      // 一行 T001 的"更新"根本没法定它到底该不该是套装。让用户手工建，代价最低。
+      if (looksLikeSet(code)) {
+        setBlocked.push(`行${i + 1}: ${code} 是 T 开头的编号，导入不含套装 —— 请用「新建 → 套装」手工建`);
         continue;
       }
       const exist = db.getProductByCode(code);
@@ -342,6 +360,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       skipped,
       bad,
       dupLines,
+      setBlocked,
       displayRows,
     };
   };
@@ -351,6 +370,18 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       const code = canonicalCode(msg.code);
       if (!code) {
         log("❌编号格式错误（应形如 A001 或 L007：1 个字母 + 数字，3 位补零，最多 4 位）");
+        return;
+      }
+      // ===== 套装（可整体移除）=====
+      // 新建时就把「编号前缀」和「kind」拧成一致：套装必须 T 开头，T 开头的必须是套装。
+      // 只在入口守一次，之后（改号、导入）都沿用同一条口径，前缀与 kind 就永远不会打架。
+      const isSet = Number(msg.kind) === 1;
+      if (isSet && !looksLikeSet(code)) {
+        log(`❌套装的编号必须以 T 开头（现在是 ${code}）`);
+        return;
+      }
+      if (!isSet && looksLikeSet(code)) {
+        log(`❌${code} 是 T 开头的编号，T 是套装专用。请把类型选成「套装」，或换个编号`);
         return;
       }
       if (db.getProductByCode(code)) {
@@ -395,25 +426,32 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       }
       const snap = h.snapshot();
       const custom = grade.value === 0;
-      if (!custom && db.ensureRule(grade.value)) {
+      // 套装不参与等级算价，别为一个"反正会丢掉"的等级白建一条规则
+      if (!isSet && !custom && db.ensureRule(grade.value)) {
         log(`ℹ️等级 ${grade.value} 无规则，已自动创建默认规则（cost*1.5 → +0.88）`);
       }
       const isManual = custom || sale.value > 0;
+      // ===== 套装（可整体移除）=====
+      // 套装跟普通商品在一个入口建，但落库的形态不同：
+      //   等级固定 0（不参与算价）、进价固定 0（它是派生值，落库必然跟子商品对不上）、
+      //   售价手填且恒 price_manual=1、不记期初库存。
+      // 子商品的关联由界面上「＋ 添加编号」逐个加（走 setAddMember），建壳这一步不涉及。
       const pid = db.addProduct({
         code,
         name: nameR.value,
         category: categoryR.value,
         series: seriesR.value,
-        grade: grade.value,
-        cost_price: cost.value,
-        sale_price: isManual ? sale.value : calcPrice(cost.value, custom ? undefined : db.getRules().find((r) => r.grade === grade.value)),
-        price_manual: isManual ? 1 : 0,
+        grade: isSet ? 0 : grade.value,
+        cost_price: isSet ? 0 : cost.value,
+        sale_price: isSet ? sale.value : isManual ? sale.value : calcPrice(cost.value, custom ? undefined : db.getRules().find((r) => r.grade === grade.value)),
+        price_manual: isSet ? 1 : isManual ? 1 : 0,
         purchase_link: linkR.value,
         status: 0,
         remark: remarkR.value,
         stock_manual: 0,
+        kind: isSet ? 1 : 0,
       });
-      if (initialStock.value > 0) {
+      if (!isSet && initialStock.value > 0) {
         db.addStockIn({
           product_id: pid,
           qty: initialStock.value,
@@ -421,8 +459,17 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
           remark: "期初入库",
         });
       }
-      h.pushUndo(snap, `新建商品 ${code} ${nameR.value}（期初库存 +${initialStock.value}）`);
-      log(`✅已新建 ${code} ${nameR.value}（库存 +${initialStock.value}）`);
+      h.pushUndo(
+        snap,
+        isSet
+          ? `新建套装 ${code} ${nameR.value}`
+          : `新建商品 ${code} ${nameR.value}（期初库存 +${initialStock.value}）`,
+      );
+      log(
+        isSet
+          ? `✅已新建套装 ${code} ${nameR.value}（还没加子商品，去详情页点「＋ 添加编号」）`
+          : `✅已新建 ${code} ${nameR.value}（库存 +${initialStock.value}）`,
+      );
       post({ type: "toast", text: `✅已新建 ${code}` });
       h.loadAll();
     },
@@ -443,6 +490,18 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
           log("❌编号格式错误（应形如 A001 或 L007：1 个字母 + 数字，3 位补零，最多 4 位）");
           return;
         }
+        // ===== 套装（可整体移除）=====
+        // 禁止跨类型改号：套装只能改成 T 开头的，普通商品不能改成 T 开头。
+        // 理由见 docs/套装-设计方案.md 决策 3 —— 改号会连带重命名图片文件夹，一旦还顺带
+        // 换了商品身份，事后无法追查；锁住这一点，前缀和 kind 就永远不会打架。
+        if (looksLikeSet(code) !== looksLikeSet(product.code)) {
+          log(
+            Number(product.kind) === 1
+              ? `❌${product.code} 是套装，只能改成 T 开头的编号`
+              : `❌T 开头的编号是套装专用，普通商品不能改成 ${code}`,
+          );
+          return;
+        }
         const exist = db.getProductByCode(code);
         if (exist && exist.id !== id) {
           log(`❌编号 ${code} 已存在`);
@@ -461,6 +520,8 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
           return;
         }
         db.updateProductField(id, "code", code);
+        // ===== 套装（可整体移除）===== 关联表里存的是编号，改号必须跟着改，否则套装清单会指向旧编号
+        db.renameSetCodes(oldCode, code);
       } else if (field === "name" || field === "category" || field === "series" || field === "purchase_link" || field === "remark") {
         const r = normText(field, msg.value);
         if (!r.ok) {
@@ -561,6 +622,22 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       if (p) {
         await h.preOpBackup();
       }
+      // ===== 套装（可整体移除）=====
+      // 硬删除不可逆，删之前先把"会连带丢掉的关联"记下来 —— db.deleteProduct 的事务里会
+      // 顺手清掉 set_items（它作为套装被删 → 整份清单没了；作为子商品被删 → 从所有套装里摘掉），
+      // 这里只负责把代价说出来，别让用户删完才发现套装少了个零件。
+      // 注意 p 必须在 db.deleteProduct 之前读，删完就查不到了。
+      let setNote = "";
+      if (p) {
+        const inSets = db.setsOfCode(p.code);
+        const childCnt = Number(p.kind) === 1 ? db.listSetMembers(p.code).length : 0;
+        if (inSets.length) {
+          setNote += `，已从套装 ${inSets.join("、")} 中移出`;
+        }
+        if (childCnt) {
+          setNote += `，其 ${childCnt} 个子商品的关联一并清除（商品本身不受影响）`;
+        }
+      }
       const snap = h.snapshot();
       if (p) {
         // 先删图片文件夹（删不掉也不阻塞删商品，但会打印完整路径），再删商品
@@ -569,7 +646,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       }
       db.deleteProduct(id);
       h.pushUndo(snap, `删除商品 ${p ? p.code : id}（含其销售/入库记录）`);
-      log(`🗑已删除 ${p ? p.code : id}（含其销售记录与入库记录）`);
+      log(`🗑已删除 ${p ? p.code : id}（含其销售记录与入库记录）${setNote}`);
       h.refreshSales(todayStr());
       h.postProductsDelta([], [id]);
       h.postLiveState();
@@ -784,10 +861,18 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       const snap = h.snapshot();
       let n = 0;
       const deleted: string[] = [];
+      // ===== 套装（可整体移除）===== 批量删同样要把套装关联的代价汇总出来（见 deleteProduct 的说明）
+      const setsAffected = new Set<string>();
       for (const id of ids) {
         const p = db.getProductById(id);
         if (p) {
           deleted.push(p.code);
+          for (const sc of db.setsOfCode(p.code)) {
+            setsAffected.add(sc);
+          }
+          if (Number(p.kind) === 1) {
+            setsAffected.add(p.code);
+          }
         }
         db.deleteProduct(id);
         n++;
@@ -803,7 +888,11 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         log(`🗑已同时清理 ${imgCleaned} 个商品图片文件夹`);
       }
       h.pushUndo(snap, `批量删除商品 ${n} 个`);
-      log(`✅删除商品 ${n} 个${deleted.length ? `：${deleted.slice(0, 8).join("、")}${deleted.length > 8 ? " 等" : ""}` : ""}`);
+      log(
+        `✅删除商品 ${n} 个${deleted.length ? `：${deleted.slice(0, 8).join("、")}${deleted.length > 8 ? " 等" : ""}` : ""}` +
+          // ===== 套装（可整体移除）=====
+          (setsAffected.size ? `（涉及其中的套装 ${Array.from(setsAffected).slice(0, 6).join("、")}）` : ""),
+      );
       h.refreshSales(todayStr());
       h.postProductsDelta([], ids);
       h.postLiveState();
@@ -901,6 +990,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         skipped: plan.skipped,
         bad: plan.bad,
         dup: plan.dupLines,
+        setBlocked: plan.setBlocked,
       };
       post({
         type: "importPreview",
@@ -912,6 +1002,8 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         bad: plan.bad,
         duplicates: plan.dupLines.length,
         duplicateLines: plan.dupLines,
+        // ===== 套装（可整体移除）===== 让预览弹窗能把「哪几行是 T 开头、为什么没收」列出来
+        setBlocked: plan.setBlocked,
         rows: plan.displayRows.slice(0, IMPORT_PREVIEW_ROW_LIMIT),
         total: plan.displayRows.length,
         truncated: plan.displayRows.length > IMPORT_PREVIEW_ROW_LIMIT,
@@ -920,10 +1012,14 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         `🔍预览商品导入：将新增 ${plan.newRows.length}、将更新 ${plan.updateRows.length}` +
           (plan.skipped ? `，将跳过 ${plan.skipped}` : "") +
           (plan.dupLines.length ? `，其中重复编号 ${plan.dupLines.length} 行已忽略` : "") +
+          (plan.setBlocked.length ? `，${plan.setBlocked.length} 行 T 开头（导入不做套装）` : "") +
           (plan.bad.length ? `，无法解析 ${plan.bad.length} 行` : ""),
       );
       for (const d of plan.dupLines) {
         log(`  ⚠️${d}`);
+      }
+      for (const s of plan.setBlocked) {
+        log(`  ⚠️${s}`);
       }
     },
 
@@ -980,6 +1076,8 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
             status: row.status,
             remark: "",
             stock_manual: 0,
+            // 导入永远只建普通商品：T 开头的行在解析阶段就已经被挡下了（见 buildImportPlan）
+            kind: 0,
           });
           touched.push(id);
           created++;
@@ -1002,6 +1100,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       log(
         `📥商品导入（${plan.modeLabel}）：新增 ${created}，更新 ${updated}` +
           (skipped ? `，跳过 ${skipped}` : "") +
+          (plan.setBlocked.length ? `，${plan.setBlocked.length} 行 T 开头未导入` : "") +
           (plan.bad.length ? `，无法解析 ${plan.bad.length} 行` : ""),
       );
       if (identitySkipped > 0) {
@@ -1012,6 +1111,10 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       }
       for (const d of plan.dup) {
         log(`  ⚠️${d}`);
+      }
+      // ===== 套装（可整体移除）=====
+      for (const s of plan.setBlocked) {
+        log(`  ⚠️${s}`);
       }
       if (created > 0 || updated > 0) {
         h.pushUndo(snap, `商品导入（${plan.modeLabel} 新增 ${created}、更新 ${updated}）`);
@@ -1027,6 +1130,8 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         // 字段形状跟 importPreview 保持一致（duplicates 计数 / duplicateLines 明细）
         duplicates: plan.dup.length,
         duplicateLines: plan.dup,
+        // ===== 套装（可整体移除）=====
+        setBlocked: plan.setBlocked,
         mode: plan.mode as string,
       });
       // 只把这批动过的商品推回去，不整库重读重推（共享盘上那是几秒的等待）。

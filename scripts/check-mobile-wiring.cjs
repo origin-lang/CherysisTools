@@ -17,6 +17,8 @@ const jsFile = path.join(mobileDir, "app.js");
 const htmlFile = path.join(mobileDir, "index.html");
 
 /** JS 动态创建、HTML 里本来就没有的 id */
+// 注：套装那块（#dSetSum / #dSetListCard / dSetCount / dSetList / setAddToggle / setAddBtn / setAddCode）
+// 现在**骨架全在 index.html 里**，不再由 renderSetList 拼 —— 所以不在豁免名单里，会被正常核对。
 const DYNAMIC_IDS = new Set(["codeQ", "codeQGroup", "fsInput"]);
 
 /**
@@ -43,8 +45,21 @@ for (const m of js.matchAll(/\$\("([A-Za-z0-9_-]+)"\)/g)) {
   used.add(m[1]);
 }
 const have = new Set();
+const idCount = {};
 for (const m of html.matchAll(/\sid="([A-Za-z0-9_-]+)"/g)) {
   have.add(m[1]);
+  idCount[m[1]] = (idCount[m[1]] || 0) + 1;
+}
+// ---------- ①b 重复 id ----------
+// 也是"不报错"的一类，刚踩过：把 #dSetOf 挪到封面之上时，index.html 里留下了**两份**
+// <div id="dCover">。$("dCover") 只会拿到第一个 —— 于是封面渲染在一处、另一个空壳占着版面
+// （.cover 有 min-height，看着就是凭空多出一块空白），浏览器一句警告都不给。
+for (const id of Object.keys(idCount).sort()) {
+  if (idCount[id] > 1) {
+    fails.push(
+      `index.html 里 id="${id}" 出现了 ${idCount[id]} 次：$("${id}") 只会拿到第一个，其余是空壳（占版面、不报错）`,
+    );
+  }
 }
 if (used.size < 20) {
   fails.push(`app.js 里只认出 ${used.size} 个 $("...")（正常应有 80 多个）：写法变了？这条闸门就失效了`);
@@ -193,6 +208,55 @@ if (!codeInputFn || !renderFilterFn || !refreshGroupsFn) {
           + "同样会被重画，用户正打字时不该被冲掉",
       );
     }
+  }
+}
+
+// ---------- ④b 套装详情页：页签不许被藏起来，那两块的显隐归 CSS 管 ----------
+// 2026-10-11 改定：套装**也走三个页签**（原先那版是 `#screen-detail.set #dTabs{display:none}`，
+// 一屏到底）。改的原因很实在 ——「售价」和「比合计（= 售价 − 合计售价）」是同一个决定的两个面，
+// 必须挨着看。这条闸门钉住改定后的两条约束：
+//   ① style.css 里不许再出现"把套装的页签藏起来"的规则。真藏了，合计区和子商品清单会**同时**
+//      铺在一屏上（一块在价格卡里、一块在基本信息卡里），界面直接乱掉。
+//   ② #dSetSum / #dSetListCard 的显隐必须由 CSS 按 .set 类控制，**JS 不许直接改它们的 display**：
+//      否则普通商品切到「价格库存」页时会露出一块空的浅底合计框。
+{
+  if (/#screen-detail\.set\s+#dTabs\s*\{[^}]*display:\s*none/.test(css)) {
+    fails.push(
+      "style.css 里又有「套装把 #dTabs 藏起来」的规则了：套装现在也走三个页签，"
+        + "藏掉之后合计区和子商品清单会同时铺在一屏上（2026-10-11 已改定）",
+    );
+  }
+  for (const id of ["dSetSum", "dSetListCard"]) {
+    if (!new RegExp(`#screen-detail\\.set\\s+#${id}\\s*\\{[^}]*display:`).test(css)) {
+      fails.push(
+        `style.css 里缺少 "#screen-detail.set #${id}" 的 display 规则：套装那一块的显隐没了着落`,
+      );
+    }
+    if (new RegExp(`\\$\\("${id}"\\)\\.style\\.display`).test(js)) {
+      fails.push(
+        `app.js 里直接改了 #${id} 的 style.display：应该交给 CSS（#screen-detail.set ...），`
+          + "否则切到普通商品时要靠人记得复位",
+      );
+    }
+  }
+  // 合计区必须落在「价格库存」那张卡里（不能又挂到表单最后）——判据：合计区在 dPanePrice 之后、
+  // dPaneRemark 之前。位置错了这条改动的意义就没了（售价和比合计又分家了）。
+  const sumAt = html.indexOf('id="dSetSum"');
+  const priceAt = html.indexOf('id="dPanePrice"');
+  const remarkAt = html.indexOf('id="dPaneRemark"');
+  if (!(priceAt >= 0 && remarkAt >= 0 && sumAt > priceAt && sumAt < remarkAt)) {
+    fails.push(
+      "index.html 里 #dSetSum 没落在「价格库存」页里（应在 #dPanePrice 之后、#dPaneRemark 之前）："
+        + "合计区必须挨着售价，否则「比合计 = 售价 − 合计售价」这两个数又分家了",
+    );
+  }
+  if (!(sumAt > 0 && html.indexOf('id="fSale"') > priceAt && html.indexOf('id="fSale"') < sumAt)) {
+    fails.push("index.html 里 #dSetSum 应在售价输入框（#fSale）**之后**：合计区要在售价正下方");
+  }
+  // 清单必须落在「基本信息」页里（dPaneBase 之后、dPanePrice 之前）
+  const listAt = html.indexOf('id="dSetListCard"');
+  if (!(listAt > html.indexOf('id="dPaneBase"') && listAt < priceAt)) {
+    fails.push("index.html 里 #dSetListCard 没落在「基本信息」页里（应在 #dPaneBase 之后、#dPanePrice 之前）");
   }
 }
 
@@ -382,7 +446,7 @@ if (fails.length > 0) {
   process.exit(1);
 }
 console.log(
-  `✅ check-mobile-wiring：app.js 引用的 ${used.size} 个 id 在 index.html 里全部存在` +
+  `✅ check-mobile-wiring：app.js 引用的 ${used.size} 个 id 在 index.html 里全部存在、且 ${Object.keys(idCount).length} 个 id 无重复` +
     `（豁免 ${DYNAMIC_IDS.size} 个 JS 动态生成的：${[...DYNAMIC_IDS].join(" / ")}）；` +
     `SSE 事件名 ${SERVER_EVENTS.length} 个（${SERVER_EVENTS.join(" / ")}）与服务端一致；` +
     `宽屏抽屉断点前后端一致（${cssBreak ? cssBreak[1] : "?"}px）；` +

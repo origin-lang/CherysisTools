@@ -92,13 +92,16 @@
       <header class="bar">
         <!-- 返回做成 iOS 风格的绿色幽灵按钮（‹ 商品）：跟右上那个带框的 📷 一眼区分开，
              也跟底下「上一个/下一个」彻底分开——那组是翻商品，这个是退出详情，不是一回事。
-             文字用"商品"= 回到的那一屏的标题（列表页标题就是 🏪 商品）。 -->
+             文字用"商品"= 回到的那一屏的标题（列表页标题就是 🏪 商品）。
+             **文字会变**：从套装点进子商品后，这里显示的是"要回到的那个编号"
+             （‹ T001）—— 否则用户不知道这一下会退到哪儿，套装和子商品互相点几次就更晕。
+             见 app.js 的 updateBackLabel。 -->
         <button id="btnBack" class="back" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M15 18l-6-6 6-6" />
           </svg>
-          商品
+          <span id="backText">商品</span>
         </button>
         <span id="dTitle" class="title"></span>
         <!-- 只留一个「📷」按钮：它打开的 input **刻意不带 capture**，
@@ -109,13 +112,26 @@
         <input id="filePickGallery" type="file" accept="image/*" multiple hidden />
       </header>
       <main class="content">
+        <!-- ===== 套装（可整体移除）=====
+             #dSetOf —— 这个商品是**子商品**：它被哪些套装用了。位置照
+                        docs/套装-界面示意.html 第 ④ 屏，放在**最上面、封面之上**
+                        （"属于 T001、T002"是这一屏最先要交代的事），编号可点、点了跳过去。
+             套装另外两块不在这儿：合计区在 #dPanePrice 的售价正下方（#dSetSum），
+             子商品清单在 #dPaneBase 的表单卡下面（#dSetListCard）。
+             页签分工见 docs/套装-设计方案.md 五·5.1。 -->
+        <div id="dSetOf" class="setof" style="display: none"></div>
         <!-- ① 封面 + 缩略图：常驻在所有页签上方（它就是"这个商品长什么样"），
              翻到价格 / 备注页也看得见；页签只管下面表单怎么分组。 -->
         <div id="dCover" class="cover"></div>
         <div id="dImages" class="strip"></div>
         <!-- 三个页签：粘在滚动区顶部（往下滑也钉住，见 style.css #dTabs）。原来所有字段
              一张长卡、得一路滑到底才能填完，商家嫌麻烦；拆成小页后每页一眼到底。
-             顺序按商家动线：先看名称 → 再改价格库存 → 备注/说明。 -->
+             顺序按商家动线：先看名称 → 再改价格库存 → 备注/说明。
+             套装**也走这三个页签**（2026-10-11 改定，原先那版是"套装不显示页签、一屏到底"）：
+               基本信息 = 名称/品类/系列 + 子商品清单
+               价格库存 = 状态/售价 + 合计区
+               备注说明 = 备注
+             默认停「基本信息」，跟普通商品一致 —— 不给套装做"第一页是价格"那种特例。 -->
         <div class="tabs" id="dTabs">
           <button class="tab on" type="button" data-pane="dPaneBase">基本信息</button>
           <button class="tab" type="button" data-pane="dPanePrice">价格库存</button>
@@ -137,6 +153,36 @@
             </div>
             <p class="muted small">编号＝图片文件夹名/导入锚点，改号会连带改图片夹。名称/品类/系列不能有空格（粘贴导入按空格分列，有空格会整行列位错开）；备注不受此限。</p>
           </div>
+          <!-- ===== 套装（可整体移除）=====
+               子商品清单归「基本信息」这一页：它回答的是"**这一套由什么组成**"，跟名称/品类/系列
+               是同一类信息（见 docs/套装-设计方案.md 五·5.1 的页签分工表）。
+               单独一张卡、不塞进上面那张表单卡：清单可能十来行，混在一起就看不出边界了。
+               整块**骨架是静态的**（标题行 / 清单容器 / 添加框都在 HTML 里），
+               renderSetList 只改「N 件」那个数和清单的行 —— 静态输入框不会被重画冲掉焦点，
+               编辑态的展开（.editing）也就能自然保留。
+               普通商品时整块不显示（见 style.css 的 #screen-detail.set 那几条）。
+
+               ⚠️ **两个状态**（2026-10-11 三改；一个 .editing class 管住下面三件事）：
+                 · 浏览态（默认，干净的只读样子）：行里**只有编号能点**进详情，
+                   没有移出按钮、没有添加框；右上角是「编辑」。
+                 · 编辑态：#setEditToggle 变「取消编辑」；下面露出添加框；
+                   **整行点击一律无效**（点编号也不进详情 —— 要进详情先退出编辑）；
+                   手机上**左滑**才露出「移出」，不左滑不显示。
+               电脑端（鼠标）没有左滑 → 移出**走右键菜单**（见 #setMenu 与 app.js 的 contextmenu）；
+               右键**也只在编辑态出**（跟手机端一致：手机也是进了编辑态才左滑得出移出）。 -->
+          <div class="card setbox" id="dSetListCard">
+            <div class="listhead">
+              <span class="k" id="dSetCount"></span>
+              <button type="button" class="add" id="setEditToggle">编辑</button>
+            </div>
+            <div class="setlist" id="dSetList"></div>
+            <div class="setadd">
+              <input id="setAddCode" type="text" autocapitalize="characters" spellcheck="false" placeholder="子商品编号，如 A003" />
+              <button type="button" id="setAddBtn" class="mini primary">添加</button>
+            </div>
+            <p class="muted small" id="setTipView">点编号 → 进它的详情（改价、看图）。要增删子商品，点右上「编辑」。</p>
+            <p class="muted small" id="setTipEdit">左滑一行 → 从套装里移出（电脑上右键一行也行；商品本身不会被删）；下面可添加子商品。点「取消编辑」退出。</p>
+          </div>
         </div>
 
         <!-- ② 价格库存：等级/状态在上，进价/售价/库存一行在下。
@@ -145,15 +191,28 @@
         <div id="dPanePrice" style="display: none">
           <div class="card">
             <div class="row2">
-              <label>等级<select id="fGrade"></select></label>
+              <!-- ===== 套装（可整体移除）===== 「等级」这一格套装不要（售价手填，等级不参与算价） -->
+              <label class="set-hide">等级<select id="fGrade"></select></label>
               <label>状态<button id="fStatus" class="toggle" type="button">在售</button></label>
             </div>
             <div class="row3">
-              <label>进价<div class="money"><i>¥</i><input id="fCost" type="number" inputmode="decimal" step="0.01" /></div></label>
+              <!-- ===== 套装（可整体移除）===== 套装的进价是**派生值**（子商品进价之和），
+                   不落库；库存套装也不记。这两格对套装一律隐藏，合计值显示在下面的 #dSetSum 里。 -->
+              <label class="set-hide">进价<div class="money"><i>¥</i><input id="fCost" type="number" inputmode="decimal" step="0.01" /></div></label>
               <label>售价<div class="money"><i>¥</i><input id="fSale" type="number" inputmode="decimal" step="0.01" /></div></label>
-              <label>库存<input id="fStock" type="number" inputmode="numeric" step="1" /></label>
+              <label class="set-hide">库存<input id="fStock" type="number" inputmode="numeric" step="1" /></label>
             </div>
-            <p class="muted small">改等级自动按新规则重算售价；库存填实际清点数（与电脑版双击库存列同口径）；改完自动保存。</p>
+            <p class="muted small plain-only">改等级自动按新规则重算售价；库存填实际清点数（与电脑版双击库存列同口径）；改完自动保存。</p>
+            <!-- ===== 套装（可整体移除）=====
+                 合计区就跟在**售价正下方** —— 「比合计 = 售价 − 合计售价」这两个数天生要并排看
+                 （商家定价本来就是看着子商品每件多少钱凑出一个打包价）。
+                 放在这里而不是表单最后，是这次分页签换来的唯一实质收益：
+                 原来它挂在表单最后，中间隔着备注页，等于把最该相邻的两个数推远了。
+                 显隐交给 CSS（#screen-detail.set #dSetSum），JS 不碰它的 display ——
+                 否则普通商品切到「价格库存」页时会露出一块空的浅底框。 -->
+            <div class="sum" id="dSetSum"></div>
+            <!-- ===== 套装（可整体移除）===== 上面那段对套装不适用（等级/库存两格都收掉了） -->
+            <p class="muted small set-only">上面的「合计区」是按子商品**当前**进价/售价现算的，改完自动保存。</p>
           </div>
         </div>
 
@@ -168,6 +227,7 @@
             </details>
           </div>
         </div>
+
       </main>
       <!-- 浮动底条：上一个 / 位置 / 下一个。absolute 贴在 #screen-detail 上，
            内容区怎么滚它都盖在最上面，永远看得见（原先是顶栏下面那排，一滑就没了）。 -->
@@ -193,11 +253,20 @@
     <section id="screen-new" class="screen">
       <header class="bar">
         <button id="btnNewBack" class="icon">‹ 返回</button>
-        <span class="title">＋ 新建商品</span>
+        <span id="nTitle" class="title">＋ 新建商品</span>
         <button id="btnCreate" class="primary">保存</button>
       </header>
       <main class="content">
         <div class="card">
+          <!-- ===== 套装（可整体移除）=====
+               建之前先定"这是普通商品还是套装"。它只做两件事：
+                 1) 决定发给后端的 kind（后端只认 kind，不认编号长得像不像 T）；
+                 2) 切换表单 —— 套装自动填 T 开头的编号，并把等级/进价/期初库存三格藏掉。
+               用按钮组而不是下拉：手机上两个选项、又是二选一，按钮一眼看得见当前是哪个。 -->
+          <div class="seg kindseg" id="nKind">
+            <button type="button" class="on" data-kind="0">普通商品</button>
+            <button type="button" data-kind="1">套装</button>
+          </div>
           <label>编号
             <div class="row2">
               <input id="nCode" type="text" placeholder="A001" autocapitalize="characters" />
@@ -210,12 +279,13 @@
             <label>品类<input id="nCategory" type="text" list="catList" /></label>
             <label>系列<input id="nSeries" type="text" placeholder="A / B / C" /></label>
           </div>
-          <label>等级<select id="nGrade"></select></label>
+          <!-- ===== 套装（可整体移除）===== 三格由 data-set-hide 统一收掉（见 app.js 的 applyNewKind） -->
+          <label data-set-hide>等级<select id="nGrade"></select></label>
           <div class="row2">
-            <label>进价<input id="nCost" type="number" inputmode="decimal" step="0.01" /></label>
+            <label data-set-hide>进价<input id="nCost" type="number" inputmode="decimal" step="0.01" /></label>
             <label>售价<input id="nSale" type="number" inputmode="decimal" step="0.01" placeholder="留空按规则" /></label>
           </div>
-          <label>期初库存<input id="nStock" type="number" inputmode="numeric" step="1" value="0" /></label>
+          <label data-set-hide>期初库存<input id="nStock" type="number" inputmode="numeric" step="1" value="0" /></label>
           <!-- 刚录入时手边就有实物：点它弹系统的「相机 / 相册」选择器，建完自动挂到这个编号下 -->
           <button id="btnNewPickGallery" class="wide" type="button" title="加图片（拍照 / 从相册选）">📷 加图片</button>
           <input id="newFilePickGallery" type="file" accept="image/*" multiple hidden />
@@ -320,6 +390,15 @@
     <!-- 给用户看的提示（日志是排查用的，不该要求人人去读） -->
     <div id="toast" class="toast"></div>
     <div id="logPanel" class="logpanel"><div id="logList"></div><button id="logClose" class="primary wide">关闭</button></div>
+
+    <!-- ===== 套装（可整体移除）=====
+         电脑端的「移出子商品」入口：手机版页面在鼠标设备上没有左滑手势，
+         所以子商品行的"移出"走右键菜单（右键一行 →「移出 编号」）。
+         **只有编辑态才出菜单**（A 方案，跟手机端一致：手机也是进了编辑态才左滑得出移出）；
+         浏览态右键只是把浏览器原生菜单挡掉、不出东西。
+         菜单项由 app.js 的 openSetMenu() 现填；平时 display:none。
+         ⚠️ 触屏设备长按也可能触发 contextmenu，所以 app.js 里用 matchMedia 只放行"有鼠标"的设备。 -->
+    <div id="setMenu" class="ctxmenu" style="display: none"></div>
 
     <datalist id="catList"></datalist>
     <script src="/app.js"></script>

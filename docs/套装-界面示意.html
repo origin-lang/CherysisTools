@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>套装 · 界面示意</title>
+<style>
+  :root{
+    --bg:#eef0f3; --card:#fff; --line:#e3e6ea; --fg:#1f2329; --muted:#8a9099;
+    --brand:#23a884; --danger:#d64545; --soft:#f6f7f9;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:28px 20px 60px; background:var(--bg); color:var(--fg);
+    font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  }
+  .head{max-width:1180px;margin:0 auto 26px;}
+  .head h1{font-size:22px;margin:0 0 8px;font-weight:700;}
+  .head p{margin:0;color:#5d646d;font-size:13.5px;}
+  .head .tag{display:inline-block;background:#fff;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px;color:var(--muted);margin-right:8px;}
+  .board{max-width:1180px;margin:0 auto;display:grid;gap:26px;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));align-items:start;}
+  .cell{display:flex;flex-direction:column;align-items:center;gap:10px;}
+  .cap{font-size:12.5px;color:#5d646d;text-align:center;max-width:320px;margin:0;}
+  .cap b{color:var(--fg);}
+
+  .phone{width:300px;background:var(--card);border:1px solid var(--line);border-radius:22px;overflow:hidden;box-shadow:0 6px 20px rgba(20,30,40,.07);}
+  .bar{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);}
+  .bar .back{color:var(--brand);font-size:13px;}
+  .bar .code{font-size:15px;font-weight:700;}
+  .bar .title{flex:1;font-size:13px;font-weight:700;}
+  .bar .cam{color:var(--brand);font-size:12px;border:1px solid var(--brand);border-radius:7px;padding:3px 7px;}
+  .pad{padding:12px;}
+  .muted{color:var(--muted);}
+  .small{font-size:11.5px;}
+
+  .ph{background:#f2f4f6;border-radius:9px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;}
+  .ph svg{width:100%;height:100%;}
+
+  /* 画册网格 */
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 12px 14px;}
+  .gcard .ph{height:86px;}
+  .gline{display:flex;align-items:baseline;gap:5px;margin-top:5px;}
+  .gline .c{font-size:11px;color:var(--muted);}
+  .gline .n{font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .gsub{font-size:11px;color:var(--muted);}
+  .badge{position:absolute;left:6px;top:6px;font-size:10px;color:#fff;background:var(--brand);border-radius:5px;padding:1px 5px;}
+
+  /* 搜索行 + 三档 */
+  .srow{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line);}
+  .sbox{flex:1;font-size:12px;color:var(--muted);background:var(--soft);border-radius:8px;padding:6px 9px;}
+  .srow .f{font-size:12px;color:var(--brand);}
+  .views{display:flex;gap:5px;padding:8px 12px;background:var(--soft);}
+  .views span{flex:1;text-align:center;font-size:12px;color:#5d646d;padding:7px 0;border-radius:7px;}
+  .views span.on{background:var(--brand);color:#fff;font-weight:600;}
+
+  /* 表单 */
+  .flabel{font-size:11px;color:var(--muted);margin-bottom:3px;}
+  .fval{font-size:14px;padding-bottom:7px;border-bottom:1px solid var(--line);}
+  .row2{display:flex;gap:12px;}
+  .row2>div{flex:1;min-width:0;}
+
+  /* 页签：套装详情也走这三个（跟普通商品同一套） */
+  .tabs{display:flex;gap:6px;margin:0 12px;border-bottom:1px solid var(--line);}
+  .tabs span{font-size:12.5px;font-weight:700;color:var(--muted);padding:9px 5px;border-bottom:2px solid transparent;}
+  .tabs span.on{color:var(--brand);border-bottom-color:var(--brand);}
+
+  /* 合计区 */
+  .sum{margin:10px 12px;padding:9px 11px;border-radius:10px;background:var(--soft);display:flex;gap:14px;}
+  .sum .k{font-size:11px;color:var(--muted);}
+  .sum .v{font-size:15px;font-weight:700;}
+  .sum .v.g{color:var(--brand);}
+
+  .listhead{display:flex;align-items:center;padding:0 12px 6px;}
+  .listhead .k{font-size:12px;color:var(--muted);flex:1;}
+  .listhead .add{font-size:12px;color:var(--brand);}
+  .item{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line);}
+  /* 编号是"点它进详情"的**唯一**入口（跟真实界面一致：整行不可点，免得误触） */
+  .item .c{font-size:11px;color:var(--brand);font-weight:700;}
+  /* 编辑态里编号不可点 → 退回灰色 */
+  .item .c.off{color:var(--muted);font-weight:600;}
+  .item .n{font-size:13px;flex:1;}
+  .item .p{font-size:12px;color:#5d646d;}
+
+  /* 左滑示意 */
+  .swipe{position:relative;overflow:hidden;border-top:1px solid var(--line);}
+  .swipe .rowitem{display:flex;align-items:center;gap:8px;padding:8px 0;background:#fff;transform:translateX(-74px);}
+  .swipe .del{position:absolute;right:0;top:0;bottom:0;width:74px;background:var(--danger);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12.5px;}
+
+  /* 开关 */
+  .chiprow{display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:#fff;margin-bottom:9px;}
+  .chiprow .t{flex:1;font-size:13px;}
+  .sw{width:40px;height:23px;border-radius:99px;background:var(--brand);position:relative;flex:none;}
+  .sw i{position:absolute;right:2px;top:2px;width:19px;height:19px;border-radius:50%;background:#fff;}
+  .sw.off{background:#ccd2d8;}
+  .sw.off i{right:auto;left:2px;}
+  .fgroup{border:1px solid var(--line);border-radius:10px;background:#fff;padding:9px 11px;margin-bottom:9px;}
+  .fgroup .ft{font-size:11.5px;color:var(--muted);margin-bottom:6px;}
+  .fgroup .fv{font-size:13px;}
+  .btns{display:flex;gap:9px;margin-top:12px;}
+  .btns .b{flex:1;text-align:center;font-size:13px;padding:9px 0;border-radius:10px;border:1px solid var(--line);background:#fff;}
+  .btns .b.p{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:700;}
+
+  /* 类型开关 */
+  .seg2{display:flex;gap:5px;background:var(--soft);border-radius:10px;padding:4px;margin-bottom:12px;}
+  .seg2 span{flex:1;text-align:center;font-size:13px;padding:8px 0;border-radius:7px;color:#5d646d;}
+  .seg2 span.on{background:var(--brand);color:#fff;font-weight:700;}
+
+  .hidden-note{margin-top:10px;border:1px dashed #c3ccd5;border-radius:10px;padding:9px 11px;font-size:11.5px;color:var(--muted);background:#fbfcfd;}
+
+  .ownlink{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--brand);border:1px solid var(--brand);border-radius:8px;padding:4px 9px;margin:10px 12px 0;}
+
+  /* 桌面端 */
+  .desk{width:400px;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 6px 20px rgba(20,30,40,.07);}
+  .desk .dbar{display:flex;gap:8px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted);}
+  .tbl{font-size:12.5px;}
+  .tbl .tr{display:flex;border-bottom:1px solid var(--line);}
+  .tbl .th{background:var(--soft);color:var(--muted);font-size:11.5px;}
+  .tbl .td{padding:7px 10px;flex:none;}
+  .tbl .td.c1{width:78px;} .tbl .td.c2{flex:1;} .tbl .td.c3{width:64px;text-align:right;}
+  .tbl .tr.sel{background:rgba(35,168,132,.09);}
+  .ctx{position:relative;margin:14px 0 0 120px;width:168px;background:#fff;border:1px solid #cbd2d9;border-radius:8px;box-shadow:0 8px 22px rgba(20,30,40,.16);padding:5px 0;font-size:12.5px;}
+  .ctx div{padding:6px 12px;}
+  .ctx div.hi{background:rgba(35,168,132,.12);color:var(--brand);font-weight:700;}
+  .ctx hr{border:0;border-top:1px solid var(--line);margin:4px 0;}
+  .ctx .ar{color:var(--muted);float:right;}
+</style>
+</head>
+<body>
+<div class="head">
+  <h1>套装 · 界面示意</h1>
+  <p>
+    <span class="tag">不是能点的原型，是样子</span>
+    <span class="tag">图是占位图形</span>
+    下面是 6 处会动到的地方（<b>③ 详情页画了四屏</b> —— 基本信息有<b>浏览态 / 编辑态</b>两个样子，再加「价格库存」「备注说明」两个页）。图里的商品图本来是真实照片，做这份示意时共享盘（<code>Z:</code>）没连上，所以用画的简笔代替 —— 位置和尺寸跟真实的一样。<br>
+    设计依据见 <code>docs/套装-设计方案.md</code>，操作说明见 <code>docs/套装-使用说明.md</code>。
+  </p>
+</div>
+
+<div class="board">
+
+  <!-- ① 画册档 -->
+  <div class="cell">
+    <div class="phone">
+      <div class="srow"><span class="sbox">搜索商品…</span><span class="f">筛选</span></div>
+      <div class="views"><span class="on">画册</span><span>列表</span></div>
+      <div class="grid2">
+        <div class="gcard">
+          <div class="ph">
+            <svg viewBox="0 0 60 60"><circle cx="22" cy="37" r="7.5" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="40" cy="37" r="7.5" fill="none" stroke="#c3ccd5" stroke-width="2"/><path d="M22 29.5V19M40 29.5V19" stroke="#c3ccd5" stroke-width="2" fill="none"/></svg>
+          </div>
+          <div class="gline"><span class="c">A001</span><span class="n">淡水珍珠耳环</span></div>
+          <div class="gsub">¥39</div>
+        </div>
+        <div class="gcard">
+          <div class="ph">
+            <span class="badge">套</span>
+            <svg viewBox="0 0 90 60">
+              <path d="M12 20 Q21 40 30 20" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="21" cy="35" r="4.5" fill="#c3ccd5" opacity=".55"/>
+              <circle cx="45" cy="33" r="6" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="61" cy="33" r="6" fill="none" stroke="#c3ccd5" stroke-width="2"/>
+              <ellipse cx="79" cy="33" rx="9" ry="6.5" fill="none" stroke="#c3ccd5" stroke-width="2"/>
+            </svg>
+          </div>
+          <div class="gline"><span class="c">T001</span><span class="n">新娘三件套</span></div>
+          <div class="gsub">含 3 件 · ¥98</div>
+        </div>
+        <div class="gcard">
+          <div class="ph">
+            <svg viewBox="0 0 60 60"><path d="M14 18 Q30 45 46 18" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="30" cy="38" r="6" fill="#c3ccd5" opacity=".55"/></svg>
+          </div>
+          <div class="gline"><span class="c">A003</span><span class="n">锁骨链</span></div>
+          <div class="gsub">¥45</div>
+        </div>
+        <div class="gcard">
+          <div class="ph">
+            <svg viewBox="0 0 60 60"><ellipse cx="30" cy="33" rx="16" ry="12" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="30" cy="21" r="4" fill="#c3ccd5" opacity=".55"/></svg>
+          </div>
+          <div class="gline"><span class="c">L004</span><span class="n">手链</span></div>
+          <div class="gsub">¥32</div>
+        </div>
+      </div>
+    </div>
+    <p class="cap"><b>① 画册档：套装就混在商品里</b><br>套装的卡片多一个左上角「套」角标，图片下面多一行"含 3 件"。<b>不单开一档视图</b> —— 它本来就属于画册。</p>
+  </div>
+
+  <!-- ② 筛选面板 -->
+  <div class="cell">
+    <div class="phone">
+      <div class="bar"><span class="title">筛选</span><span class="back">清空</span></div>
+      <div class="pad">
+        <div class="fgroup"><div class="ft">编号范围</div><div class="fv muted">A1~A33 / 1~33 / A1</div></div>
+        <div class="fgroup"><div class="ft">品类</div><div class="fv">全部 ▾</div></div>
+        <div class="fgroup"><div class="ft">系列</div><div class="fv">全部 ▾</div></div>
+        <div class="chiprow"><span class="t">只看套装</span><span class="sw"><i></i></span></div>
+        <div class="btns"><span class="b">取消</span><span class="b p">应用</span></div>
+      </div>
+    </div>
+    <p class="cap"><b>② 筛选面板：多一个「只看套装」</b><br>它就是一个普通筛选条件，跟其它条件叠加（AND）。关掉就回到全部商品 —— 这就是"套装视图"的全部内容，不另开一档。</p>
+  </div>
+
+  <!-- ③-1 套装详情页 · 基本信息（浏览态，默认页） -->
+  <div class="cell">
+    <div class="phone">
+      <div class="bar"><span class="back">‹ 商品</span><span class="code" style="flex:1">T001</span><span class="cam">＋ 图</span></div>
+      <div class="ph" style="height:96px;border-radius:0">
+        <svg viewBox="0 0 90 60">
+          <path d="M12 20 Q21 40 30 20" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="21" cy="35" r="4.5" fill="#c3ccd5" opacity=".55"/>
+          <circle cx="45" cy="33" r="6" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="61" cy="33" r="6" fill="none" stroke="#c3ccd5" stroke-width="2"/>
+          <ellipse cx="79" cy="33" rx="9" ry="6.5" fill="none" stroke="#c3ccd5" stroke-width="2"/>
+        </svg>
+      </div>
+      <div class="tabs"><span class="on">基本信息</span><span>价格库存</span><span>备注说明</span></div>
+      <div class="pad">
+        <div class="flabel">名称</div><div class="fval">珍珠新娘三件套</div>
+        <div class="row2" style="margin-top:10px">
+          <div><div class="flabel">品类</div><div class="fval">项链</div></div>
+          <div><div class="flabel">系列</div><div class="fval">新娘</div></div>
+        </div>
+      </div>
+      <div class="listhead"><span class="k">子商品 · 3 件</span><span class="add">编辑</span></div>
+      <div class="pad" style="padding-top:0">
+        <div class="item"><span class="c">A001</span><span class="n">淡水珍珠耳环</span><span class="p">12 / 39</span></div>
+        <div class="item"><span class="c">A003</span><span class="n">锁骨链</span><span class="p">12 / 39</span></div>
+        <div class="item"><span class="c">L004</span><span class="n">手链</span><span class="p">8 / 32</span></div>
+        <p class="muted small" style="margin:8px 0 0">点编号 → 进它的详情。要增删子商品，点右上「编辑」。</p>
+      </div>
+    </div>
+    <p class="cap"><b>③-1 套装详情 · 基本信息（浏览态，默认页）</b><br>清单平时是<b>只读的干净样子</b>：没有「移出」按钮、没有输入框，标题行右侧只有一个「编辑」。<br>进详情的入口<b>只有编号</b>（品牌色那个）—— 点行内其它地方都不会跳，避免误触。清单归这一页，因为它回答的是"<b>这一套由什么组成</b>"。</p>
+  </div>
+
+  <!-- ③-1b 套装详情页 · 基本信息（编辑态） -->
+  <div class="cell">
+    <div class="phone">
+      <div class="bar"><span class="back">‹ 商品</span><span class="code" style="flex:1">T001</span><span class="cam">＋ 图</span></div>
+      <div class="ph" style="height:96px;border-radius:0">
+        <svg viewBox="0 0 90 60">
+          <path d="M12 20 Q21 40 30 20" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="21" cy="35" r="4.5" fill="#c3ccd5" opacity=".55"/>
+          <circle cx="45" cy="33" r="6" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="61" cy="33" r="6" fill="none" stroke="#c3ccd5" stroke-width="2"/>
+          <ellipse cx="79" cy="33" rx="9" ry="6.5" fill="none" stroke="#c3ccd5" stroke-width="2"/>
+        </svg>
+      </div>
+      <div class="tabs"><span class="on">基本信息</span><span>价格库存</span><span>备注说明</span></div>
+      <div class="pad">
+        <div class="flabel">名称</div><div class="fval">珍珠新娘三件套</div>
+        <div class="row2" style="margin-top:10px">
+          <div><div class="flabel">品类</div><div class="fval">项链</div></div>
+          <div><div class="flabel">系列</div><div class="fval">新娘</div></div>
+        </div>
+      </div>
+      <div class="listhead"><span class="k">子商品 · 3 件</span><span class="add" style="background:#f1f3f5;border-radius:8px;padding:3px 10px">取消编辑</span></div>
+      <div class="pad" style="padding-top:0">
+        <div class="item"><span class="c off">A001</span><span class="n">淡水珍珠耳环</span><span class="p">12 / 39</span></div>
+        <div class="swipe">
+          <div class="del">移出</div>
+          <div class="rowitem"><span class="c off">A003</span><span class="n">锁骨链</span><span class="p">12 / 39</span></div>
+        </div>
+        <div class="item"><span class="c off">L004</span><span class="n">手链</span><span class="p">8 / 32</span></div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <div style="flex:1;border:1px solid var(--line);border-radius:9px;padding:8px 10px;color:var(--muted);font-size:12px">子商品编号，如 A003</div>
+          <div style="border-radius:9px;padding:8px 10px;background:var(--brand);color:#fff;font-size:12px">添加</div>
+        </div>
+        <p class="muted small" style="margin:8px 0 0">左滑一行 → 移出（图中第二行）；下面可添加子商品。</p>
+      </div>
+    </div>
+    <p class="cap"><b>③-1b 套装详情 · 基本信息（编辑态）</b><br>点了「编辑」之后：按钮变「<b>取消编辑</b>」；下面露出添加框；<b>左滑</b>一行才露出「移出」（图中第二行）。<br>编辑态里<b>点编号也不进详情</b> —— 要进详情先点「取消编辑」退出。<br>电脑上没有左滑，所以电脑端的「移出」走<b>右键菜单</b>（见 ⑥）—— <b>电脑也是进了编辑态才右键得出来</b>，编辑态里不给移出按钮。</p>
+  </div>
+
+  <!-- ③-2 套装详情页 · 价格库存 -->
+  <div class="cell">
+    <div class="phone">
+      <div class="bar"><span class="back">‹ 商品</span><span class="code" style="flex:1">T001</span><span class="cam">＋ 图</span></div>
+      <div class="ph" style="height:96px;border-radius:0">
+        <svg viewBox="0 0 90 60">
+          <path d="M12 20 Q21 40 30 20" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="21" cy="35" r="4.5" fill="#c3ccd5" opacity=".55"/>
+          <circle cx="45" cy="33" r="6" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="61" cy="33" r="6" fill="none" stroke="#c3ccd5" stroke-width="2"/>
+          <ellipse cx="79" cy="33" rx="9" ry="6.5" fill="none" stroke="#c3ccd5" stroke-width="2"/>
+        </svg>
+      </div>
+      <div class="tabs"><span>基本信息</span><span class="on">价格库存</span><span>备注说明</span></div>
+      <div class="pad">
+        <div class="row2">
+          <div><div class="flabel">售价（手填）</div><div class="fval">¥ 98</div></div>
+          <div><div class="flabel">状态</div><div class="fval" style="color:var(--brand)">在售</div></div>
+        </div>
+        <div class="sum" style="margin:12px 0 0">
+          <div><div class="k">合计进价</div><div class="v">¥ 32</div></div>
+          <div><div class="k">合计售价</div><div class="v">¥ 110</div></div>
+          <div style="flex:1;text-align:right"><div class="k">比合计</div><div class="v g">− ¥ 12</div></div>
+        </div>
+        <p class="muted small" style="margin:8px 0 0">上面的「合计区」是按子商品当前进价 / 售价现算的，改完自动保存。</p>
+      </div>
+    </div>
+    <p class="cap"><b>③-2 套装详情 · 价格库存</b><br><b>售价在左、状态在右</b>（先看价、再决定上不上架），<b>合计区就在售价正下方</b> —— 「比合计 = 售价 − 合计售价」，这两个数天生要并排看。原来它们中间夹着一个备注页，那才是真的别扭。<br>等级 / 进价 / 库存三格收掉（套装不参与等级算价、不记库存、进价是算出来的）。</p>
+  </div>
+
+  <!-- ③-3 套装详情页 · 备注说明 -->
+  <div class="cell">
+    <div class="phone">
+      <div class="bar"><span class="back">‹ 商品</span><span class="code" style="flex:1">T001</span><span class="cam">＋ 图</span></div>
+      <div class="ph" style="height:96px;border-radius:0">
+        <svg viewBox="0 0 90 60">
+          <path d="M12 20 Q21 40 30 20" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="21" cy="35" r="4.5" fill="#c3ccd5" opacity=".55"/>
+          <circle cx="45" cy="33" r="6" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="61" cy="33" r="6" fill="none" stroke="#c3ccd5" stroke-width="2"/>
+          <ellipse cx="79" cy="33" rx="9" ry="6.5" fill="none" stroke="#c3ccd5" stroke-width="2"/>
+        </svg>
+      </div>
+      <div class="tabs"><span>基本信息</span><span>价格库存</span><span class="on">备注说明</span></div>
+      <div class="pad">
+        <div class="flabel">备注</div><div class="fval">婚礼主推</div>
+        <p class="muted small" style="margin:12px 0 0">ⓘ 使用说明（改完自动保存）</p>
+      </div>
+    </div>
+    <p class="cap"><b>③-3 套装详情 · 备注说明</b><br>跟普通商品完全一样，套装在这里没有特例。<br><b>进详情默认停在「基本信息」</b>，跟普通商品保持一致 —— 不给套装做"第一页是价格"这种特例，否则手机版和电脑端都要各记一套。</p>
+  </div>
+
+  <!-- ④ 子商品详情页 -->
+  <div class="cell">
+    <div class="phone">
+      <div class="bar"><span class="back">‹ 商品</span><span class="code" style="flex:1">A001</span><span class="cam">＋ 图</span></div>
+      <div class="pad" style="padding-bottom:0">
+        <span class="ownlink">属于 T001 · T002</span>
+      </div>
+      <div class="ph" style="height:104px;margin:12px 12px 0;border-radius:9px">
+        <svg viewBox="0 0 60 60"><circle cx="22" cy="37" r="7.5" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="40" cy="37" r="7.5" fill="none" stroke="#c3ccd5" stroke-width="2"/><path d="M22 29.5V19M40 29.5V19" stroke="#c3ccd5" stroke-width="2" fill="none"/></svg>
+      </div>
+      <div class="pad" style="padding-top:12px">
+        <div class="flabel">名称</div><div class="fval">淡水珍珠耳环</div>
+        <div class="row2" style="margin-top:10px">
+          <div><div class="flabel">进价</div><div class="fval">¥ 12</div></div>
+          <div><div class="flabel">售价</div><div class="fval">¥ 39</div></div>
+        </div>
+      </div>
+    </div>
+    <p class="cap"><b>④ 子商品那边：多一行「属于」</b><br>两个编号都可点，点了跳到那个套装。<br>（画册卡片上是角标「套」，这里写全编号。）</p>
+  </div>
+
+  <!-- ⑤ 新建页 -->
+  <div class="cell">
+    <div class="phone">
+      <div class="bar"><span class="back">‹ 返回</span><span class="title">＋ 新建商品</span><span class="add" style="color:var(--brand);font-size:13px">保存</span></div>
+      <div class="pad">
+        <div class="seg2"><span>普通</span><span class="on">套装</span></div>
+        <div class="flabel">编号</div>
+        <div class="fval" style="display:flex;align-items:center;gap:8px">
+          <span>T001</span><span style="margin-left:auto;font-size:11.5px;color:var(--muted);border:1px solid var(--line);border-radius:7px;padding:3px 7px">用下一个空号</span>
+        </div>
+        <div style="margin-top:10px"><div class="flabel">名称</div><div class="fval muted">例如 珍珠新娘三件套</div></div>
+        <div class="row2" style="margin-top:10px">
+          <div><div class="flabel">品类</div><div class="fval muted">—</div></div>
+          <div><div class="flabel">系列</div><div class="fval muted">—</div></div>
+        </div>
+        <div class="hidden-note">选「套装」后，<b>等级 / 进价 / 期初库存</b> 三格不显示（套装没有这三样）。<br>售价照填 —— 就是打包卖多少钱。</div>
+      </div>
+    </div>
+    <p class="cap"><b>⑤ 新建页：加一个类型开关</b><br>选「套装」→ 编号自动填 T 开头、隐藏那三格。保存后进详情页去加子商品。</p>
+  </div>
+
+  <!-- ⑥ 桌面端右键 -->
+  <div class="cell">
+    <div class="desk">
+      <div class="dbar"><span>🏪 商品店铺管理</span><span style="margin-left:auto">列表视图</span></div>
+      <div class="tbl">
+        <div class="tr th"><div class="td c1">编号</div><div class="td c2">名称</div><div class="td c3">售价</div></div>
+        <div class="tr"><div class="td c1">A001</div><div class="td c2">淡水珍珠耳环</div><div class="td c3">39</div></div>
+        <div class="tr sel"><div class="td c1">A003</div><div class="td c2">锁骨链</div><div class="td c3">45</div></div>
+        <div class="tr"><div class="td c1">L004</div><div class="td c2">手链</div><div class="td c3">32</div></div>
+      </div>
+      <div class="ctx">
+        <div>复制行</div>
+        <div>复制整表</div>
+        <hr>
+        <div class="hi">从套装移出</div>
+        <hr>
+        <div>批量操作 <span class="ar">▸</span></div>
+      </div>
+    </div>
+    <p class="cap" style="margin-top:-8px"><b>⑥ 电脑端（VS Code 面板）：右键菜单</b><br>电脑上没有左滑，所以走右键 —— 复用现有那套菜单（跟"复制行""批量操作"在一起）。两边是同一个动作。<br><b>这一屏画的是 VS Code 面板（尚未实现）。</b>手机版页面在电脑浏览器里打开时，自己另有一个小菜单：<b>右键一行 → 「移出 编号」</b>（<b>只在编辑态出</b>，跟手机端一致）。那个已经做好了。</p>
+  </div>
+
+</div>
+</body>
+</html>

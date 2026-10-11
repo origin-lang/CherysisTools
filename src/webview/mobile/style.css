@@ -371,6 +371,345 @@ textarea {
   font-weight: 700;
 }
 
+/* ===== 套装（可整体移除）===== */
+/* 「套」角标：用品牌绿，跟红色那个「已下架」区分开 —— 它不是警告，是分类。
+   两个角标可能同时出现（套装 + 已下架），所以都排在编号后面。 */
+.badge.set {
+  background: var(--brand);
+}
+/* 画册卡片：套装那一行"含 N 件"用品牌色，一眼跟"库存"区分开 */
+.card .stk.set {
+  color: var(--brand);
+}
+/* 列表里套装的派生格（合计进价 / 等级 — / 库存 —）：灰掉，表示"这一格不是能填的数" */
+.tbl td.mut {
+  color: var(--muted);
+}
+/* 新建页的「普通商品 / 套装」开关：复用 .seg 的外观，但自己占一整行 */
+.kindseg {
+  display: flex;
+  width: 100%;
+  margin-bottom: var(--gap);
+}
+.kindseg button {
+  flex: 1 1 0;
+  min-width: 0;
+}
+/* ===== 套装（可整体移除）=====
+   套装**也走三个页签**（2026-10-11 改定，见 docs/套装-设计方案.md 五·5.1）：
+     基本信息 = 名称 / 品类 / 系列 + 子商品清单（#dSetListCard）
+     价格库存 = 状态 / 售价 + 合计区（#dSetSum）
+     备注说明 = 备注
+   原先那版是「套装不显示页签、三页全展开、合计挂在表单最后」。改的原因是那样
+   「售价」和「比合计」中间夹着一个备注页 —— 而 `比合计 = 售价 − 合计售价`，
+   这两个数天生要并排看（商家定价就是看着子商品的价凑打包价），"一屏到底"反而把它们推远了。
+   显隐**全部由这里管，JS 不碰它们的 display** —— 少写一处 state 就少一个忘记复位的地方；
+   而且普通商品切到「价格库存」页时，那块空的浅底合计框绝不能露出来。 */
+#dSetSum,
+#dSetListCard {
+  display: none;
+}
+#screen-detail.set #dSetSum {
+  display: flex; /* 合计区是横向三格 */
+}
+#screen-detail.set #dSetListCard {
+  display: block;
+}
+/* 套装不要的三格：等级 / 进价 / 库存（进价是子商品进价之和，是派生值，手填没意义） */
+#screen-detail.set .set-hide {
+  display: none;
+}
+/* ===== 套装（可整体移除）=====
+   套装的「价格库存」页只剩 状态 和 售价 两格（等级/进价/库存都收掉了），
+   可它们在 DOM 里分属 .row2（等级/状态）和 .row3（进价/售价/库存）——
+   照原样会变成「状态占一行、售价占一行」，白白多占一行高，
+   也跟 docs/套装-界面示意.html 的 ③-2（状态和售价并排）对不上。
+   这里把这两行"拆开"：`display: contents` 让行自己不参与布局、只把子元素交给外层，
+   卡片变成 flex-wrap 容器 → 状态和售价自然并排一行（各占半宽），
+   合计区和底下那句说明各占整行。
+   ⚠️ 选择器全都带 `.set`：普通商品那两行（2 格 + 3 格）的排法一点不动。 */
+#screen-detail.set #dPanePrice .card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+#screen-detail.set #dPanePrice .row2,
+#screen-detail.set #dPanePrice .row3 {
+  display: contents;
+}
+#screen-detail.set #dPanePrice .row2 > label,
+#screen-detail.set #dPanePrice .row3 > label {
+  margin-bottom: 0; /* 卡片里的 label 默认带 14px 下边距；行距交给上面那个 gap 统一管 */
+}
+#screen-detail.set #dPanePrice .row2 > label:not(.set-hide),
+#screen-detail.set #dPanePrice .row3 > label:not(.set-hide) {
+  /* 两格并排、各半宽：不给开关撑满整行（一个占满宽度的开关看着像别的东西） */
+  flex: 1 1 calc(50% - 7px);
+}
+/* 顺序：商家要「**售价在左、状态在右**」（先看价、再决定上不上架）。
+   DOM 里 状态 在 .row2、售价 在 .row3，所以只能靠 flex 的 order 换位 —— 不动 DOM，
+   普通商品那两行的字段顺序一点不受影响。
+   ⚠️ 这四个 item 的 order 必须**写全**：order 默认是 0，只写其中几个的话，
+      没写的（合计区、那句说明）会 order=0 跑到最前面去，整块顺序就乱了。 */
+#screen-detail.set #dPanePrice .row3 > label:not(.set-hide) {
+  order: 1; /* 售价 —— 左 */
+}
+#screen-detail.set #dPanePrice .row2 > label:not(.set-hide) {
+  order: 2; /* 状态 —— 右 */
+}
+#screen-detail.set #dPanePrice #dSetSum {
+  order: 3;
+}
+#screen-detail.set #dPanePrice .set-only {
+  order: 4;
+}
+/* 合计区和那句说明各占整行，不许被挤到半宽里 */
+#screen-detail.set #dPanePrice #dSetSum,
+#screen-detail.set #dPanePrice .set-only {
+  flex: 1 1 100%;
+}
+/* ===== 套装（可整体移除）===== 同一格里两段说明文字，按是不是套装选一段显示 */
+.set-only {
+  display: none;
+}
+#screen-detail.set .set-only {
+  display: block;
+}
+#screen-detail.set .plain-only {
+  display: none;
+}
+/* 套装那块：子商品清单（在「基本信息」页）+ 合计区（在「价格库存」页，见上面的显隐规则） */
+/* 注意：它在 main.content 里，外面已经有 var(--pad) 的左右留白了，
+   所以这里只写自己的**内**边距，别再补一次左右 padding（会双重缩进）。
+   （`#screen-detail .card` 那条更具体，实际 padding 走 14px，跟别的卡片一致。） */
+.setbox {
+  padding: var(--gap);
+  margin-bottom: var(--gap);
+}
+/* 合计区：照 docs/套装-界面示意.html 的 ③-2 那块浅底。
+   它现在住在「价格库存」页的**售价正下方**，所以不再是 .setbox 的后代 —— 选择器直接挂 id。
+   上下间距不写 margin：它在 #dPanePrice 的卡片里是个 flex item，间距由父级的 gap 统一给，
+   自己再加一份就是双重间距。 */
+#dSetSum {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: var(--soft);
+  gap: 14px;
+}
+#dSetSum .k {
+  font-size: 11px;
+  color: var(--muted);
+}
+#dSetSum .v {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+/* 让利 → 绿（好事）；比合计还贵 → 红（得看一眼） */
+#dSetSum .v.g {
+  color: var(--brand);
+}
+#dSetSum .v.r {
+  color: var(--danger);
+}
+/* 「比合计」推到右边：它是个结论，不是第三个数字 */
+#dSetSum .b {
+  margin-left: auto;
+  text-align: right;
+}
+/* 清单标题行：「子商品 · 3 件」在左，「＋ 添加编号」在右（示意图就是这个排法） */
+.setbox .listhead {
+  display: flex;
+  align-items: center;
+  padding: 0 0 4px;
+}
+.setbox .listhead .k {
+  font-size: 12px;
+  color: var(--muted);
+  flex: 1;
+}
+.setbox .listhead .add {
+  font-size: 12.5px;
+  color: var(--brand);
+  background: none;
+  border: 0;
+  padding: 6px 2px;
+  min-height: 0; /* 通用按钮的 44px 触控高度在这儿会把标题行撑开，这一行是"文字链接"不是按钮 */
+}
+.setlist {
+  display: flex;
+  flex-direction: column;
+}
+/* 一行子商品：外层是"窗口"（overflow:hidden），里层被左滑推开，露出底下的「移出」 */
+.setrow {
+  position: relative;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  /* 横向的手势归我们（左滑移出），纵向还给页面滚动 —— 有这一条才敢在
+     touchmove 里不 preventDefault 也能横拖，见 app.js 的说明 */
+  touch-action: pan-y;
+}
+.setrow-in {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 2px;
+  background: var(--card);
+  transition: transform 0.18s ease;
+  min-height: var(--tap);
+  /* ⚠️ 这两行不能删：底下的「移出」是 position:absolute，而**定位元素永远画在
+     静态元素之上**（跟 DOM 顺序无关）。不给这一层 position+z-index，那个红按钮
+     就会直接压在行内容上面 —— 表现就是"没左滑也看得见移出"。 */
+  position: relative;
+  z-index: 1;
+}
+.setrow-in.dragging {
+  transition: none;
+}
+.setrow.open .setrow-in {
+  transform: translateX(-76px);
+}
+/* 编号 = 进详情的**唯一入口**（浏览态），给个颜色暗示它可点 ——
+   跟列表视图 `.tbl td.open` 一个思路。编辑态里它不可点，退回灰色（见下面的 .setbox.editing）。 */
+.setrow .sc {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--brand);
+  flex: none;
+}
+.setrow .sn {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.setrow .sp {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+/* 「移出」压在右边：宽度必须与 app.js 的 SET_SWIPE_W 一致 */
+.setrow-x {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 76px;
+  height: 100%;
+  border: 0;
+  background: var(--danger);
+  color: #fff;
+  font-size: 13px;
+}
+/* ===== 套装（可整体移除）=====
+   ⚠️ 2026-10-11 **三改**：这里原先有一整块 `@media (hover:hover) and (pointer:fine)`，
+   把「移出」做成常驻贴在行右边（理由是"鼠标没有左滑、够不着藏在底下的按钮"）。
+   商家看过之后嫌"移出一直露着，丑死了"，于是改成 **编辑态 + 电脑右键菜单**：
+     · 手机：进编辑态后**左滑**才露出「移出」（.setbox.editing 那几条管左滑能不能跑）；
+     · 电脑：右键子商品行 → 菜单里「移出」（见下面 .ctxmenu）。
+   所以那块常驻样式**整个删掉了**。撤掉之后，"常驻按钮与左滑 transform 打架"那个矛盾
+   也就不存在了 —— app.js 里为它加的 NO_SWIPE 判断同时删掉（改到右键菜单去用同一句判据）。 */
+@media (hover: hover) and (pointer: fine) {
+  /* 桌面：编号是唯一能点进详情的地方，悬停给个下划线让"这儿能点"看得出来
+     （跟列表视图 .tbl td.open 一个思路）。手机上没有 hover，不影响。 */
+  .setrow .sc:hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+}
+/* ===== 编辑态（2026-10-11 三改）=====
+   一个 `.editing` class 管住**三件事**，别拆散（拆了就会"能左滑但不能加"这种半吊子状态）：
+     ① 添加行露出来（这一条）；
+     ② 左滑能不能跑（app.js 的 touchstart 先看 card 有没有 .editing）；
+     ③ 行点击无效 + 编号退回灰色（下面两条）。
+   顺带：现在没有单独的"添加编号展开"状态了 —— 「＋ 添加编号」并进了「编辑」。 */
+.setbox .setadd {
+  display: none;
+  gap: var(--gap);
+  margin-top: 8px;
+}
+.setbox.editing .setadd {
+  display: flex;
+}
+/* 编辑态：编号不可点 → 退回灰色（浏览态是品牌色，暗示可点） */
+.setbox.editing .setrow .sc {
+  color: var(--muted);
+  font-weight: 600;
+}
+/* 「取消编辑」给个"正在编辑"的底，跟「编辑」一眼区分开 */
+.setbox.editing .listhead .add {
+  background: var(--soft);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+/* 两条提示语按状态二选一（内容在 index.html 的 #setTipView / #setTipEdit，别当装饰删了） */
+#setTipEdit {
+  display: none;
+}
+.setbox.editing #setTipView {
+  display: none;
+}
+.setbox.editing #setTipEdit {
+  display: block;
+}
+/* 电脑端右键菜单（手机版页面在鼠标设备上用；见 index.html 的 #setMenu）。
+   position:fixed → 贴着鼠标坐标摆、不受页面滚动影响（坐标由 app.js clamp 在可视区内）。
+   z-index 58：压得住详情内容，但让给日志面板(60)和 toast(70) —— 它俩是"全局提示"。 */
+.ctxmenu {
+  position: fixed;
+  z-index: 58;
+  min-width: 132px;
+  padding: 5px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16);
+}
+.ctxmenu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  padding: 9px 12px;
+  font-size: 13.5px;
+  color: var(--fg);
+  min-height: 0; /* 通用按钮那 44px 触控高度在菜单里太高了（这菜单只服务鼠标） */
+}
+.ctxmenu button:hover {
+  background: var(--soft);
+}
+.ctxmenu button.danger {
+  color: var(--danger);
+}
+.setadd input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.setadd button {
+  flex: none;
+}
+/* 子商品详情页顶部「属于 T001」那一行 */
+/* 同样在 main.content 里：左右留白已经由 .content 给了，这里只给上下留白 */
+.setof {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 var(--gap);
+}
+.pill-link {
+  border: 1px solid var(--brand);
+  color: var(--brand);
+  background: transparent;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 13px;
+}
+
 /* 列表：真表格。列多放不下就横向滑，不再把字段挤成一行 */
 .tblwrap {
   background: var(--card);

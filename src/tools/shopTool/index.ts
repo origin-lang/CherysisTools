@@ -15,6 +15,8 @@ import { imageHandlers } from "./handlers/image.js";
 import { impexpHandlers } from "./handlers/impexp.js";
 import { liveHandlers } from "./handlers/live.js";
 import { settingsHandlers } from "./handlers/settings.js";
+// ===== 套装（可整体移除）===== 想整体去掉套装：删这行 + 下面 handlers 表里带同标记的那一行 + handlers/sets.ts
+import { setHandlers } from "./handlers/sets.js";
 
 // 自动备份：每日首次启动自动留档（shop_auto_*），破坏性操作前追加留档（shop_pre_*）；两类各自独立配额剪除，只保留最新 N 份，不无限累积。
 const AUTO_BACKUP_KEEP = 14;
@@ -367,6 +369,9 @@ const WRITE_ACTIONS = new Set([
   "redoRequest",
   // 从备份恢复 = 整库替换
   "importDB",
+  // ===== 套装（可整体移除）===== 往套装里加/移出子商品都会写 set_items
+  "setAddMember",
+  "setRemoveMember",
 ]);
 
 /**
@@ -815,6 +820,10 @@ export const shopTool: ToolDefinition = {
         type: "productsLoaded",
         products: state.current.getProductsWithTotals(),
         stockAlert: stockAlert(),
+        // ===== 套装（可整体移除）=====
+        // 每个套装的「含 N 件 / 合计进价 / 合计售价」。**现算不落库**：一次 GROUP BY 就出来了，
+        // 子商品改价后这里立刻是新值。跟着整表下发（几百行是毫秒级），前端不用再单独请求。
+        setSummaries: state.current.getSetSummaries(),
       });
       ctx.postToWebview({ type: "rulesLoaded", rules: state.current.getRules() });
       ctx.postToWebview({
@@ -952,6 +961,8 @@ export const shopTool: ToolDefinition = {
       ...settleHandlers(h),
       ...liveHandlers(h),
       ...impexpHandlers(h),
+      // ===== 套装（可整体移除）===== 套装的消息全在 handlers/sets.ts 里，这一行是唯一注册点
+      ...setHandlers(h),
 
       // ===== 撤销 / 重做 =====
       async undoRequest() {

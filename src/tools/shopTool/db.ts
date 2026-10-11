@@ -18,6 +18,29 @@ export interface Product {
   remark: string;
   created_at: string;
   stock_manual: number;
+  // ===== 套装（可整体移除）=====
+  // 0 = 普通商品，1 = 套装。用数字不用布尔：以后要加第三种（材料包/赠品）不必再动结构。
+  // 编号前缀 T 是给**人**看的（一眼认出来），kind 是给**机器**判断的（筛选/分支/统计），
+  // 两者互为冗余 —— 改号允许换前缀，光靠前缀判断会出现"改号顺带改了类型"这种隐蔽副作用。
+  kind: number;
+}
+
+// ===== 套装（可整体移除）=====
+/** 套装的一个成员：set_items 的一行 + 该子商品的当前信息（用编号 JOIN 出来） */
+export interface SetMemberRow {
+  code: string;
+  name: string;
+  cost_price: number;
+  sale_price: number;
+  status: number;
+  sort: number;
+}
+
+/** 套装的汇总（含几件 / 合计进价 / 合计售价）。一次算全部套装，列表视图和画册共用 */
+export interface SetSummary {
+  count: number;
+  sumCost: number;
+  sumSale: number;
 }
 
 export interface SaleRule {
@@ -144,6 +167,20 @@ export interface ShopDB {
   replaceLiveStars(codes: string[]): void;
   getLivePlan(): LivePlanRow[];
   replaceLivePlan(plan: LivePlanRow[]): void;
+  // ===== 套装（可整体移除）=====
+  /** 套装的成员清单（按 sort 排），带子商品**当前**的名称/进价/售价/状态 */
+  listSetMembers(setCode: string): SetMemberRow[];
+  /** 全部套装的汇总（含几件/合计进价/合计售价）。一次算完，列表和画册共用 */
+  getSetSummaries(): Record<string, SetSummary>;
+  /** 往套装里加一个子商品（已存在则只更新，幂等）。调用方负责校验：存在/不是套装/不是自己 */
+  addSetMember(setCode: string, childCode: string): void;
+  /** 把子商品从套装里移出（只删关联，不删商品） */
+  removeSetMember(setCode: string, childCode: string): void;
+  /** 这个商品属于哪些套装（子商品详情页显示"属于 T001、T002"用） */
+  setsOfCode(childCode: string): string[];
+  /** 改号后同步 set_items 里的引用（套装改号换 set_code、子商品改号换 child_code）。
+   *  调用方须保证 newCode 是全新编号，否则会撞主键。 */
+  renameSetCodes(oldCode: string, newCode: string): void;
   backupDB(destPath: string): Promise<void>;
   restoreDB(srcPath: string, storageDir: string): void;
   /** 把 fn 里的一组写包进单个事务：一次提交；中途出错整体回滚（共享盘上一个批量 = 一次网络提交，而非一行一次） */
@@ -169,6 +206,7 @@ export const SNAP_TABLES: Array<{ key: string; table: string; cols: string[] }> 
       "id", "code", "name", "category", "series", "grade",
       "cost_price", "sale_price", "price_manual", "purchase_link",
       "status", "remark", "created_at", "stock_manual",
+      "kind", // ===== 套装（可整体移除）=====
     ],
   },
   {
@@ -198,6 +236,8 @@ export const SNAP_TABLES: Array<{ key: string; table: string; cols: string[] }> 
   { key: "settings", table: "settings", cols: ["key", "value"] },
   { key: "liveStars", table: "live_star", cols: ["code", "created_at"] },
   { key: "livePlan", table: "live_plan", cols: ["group_no", "slot_no", "code"] },
+  // ===== 套装（可整体移除）=====
+  { key: "setItems", table: "set_items", cols: ["set_code", "child_code", "sort"] },
 ];
 
 // 网络共享重试辅助：SQLITE_BUSY 时自动重试（最多3次，间隔200ms）
@@ -283,7 +323,8 @@ export function initDB(storageDir: string): boolean {
       status INTEGER NOT NULL DEFAULT 0,
       remark TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT '',
-      stock_manual REAL NOT NULL DEFAULT 0
+      stock_manual REAL NOT NULL DEFAULT 0,
+      kind INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS sale_rules (
       grade INTEGER PRIMARY KEY,
@@ -338,6 +379,18 @@ export function initDB(storageDir: string): boolean {
       code TEXT NOT NULL,
       PRIMARY KEY (group_no, slot_no)
     );
+    -- ===== 套装（可整体移除）=====
+    -- 套装与子商品是**多对多**：一对耳环可以同时在"婚礼套装"和"日常套装"里。
+    -- 存**编号**而不是 products.id：跟 live_star/live_plan 一致，且编号是这套系统的锚点
+    -- （图片夹名、导入锚点），改号本来就有连带逻辑（renameImageFolder），挂在那条链上最自然。
+    -- 主键 (set_code, child_code) 天然防重复：同一个商品在一个套装里只能出现一次。
+    CREATE TABLE IF NOT EXISTS set_items (
+      set_code   TEXT NOT NULL,
+      child_code TEXT NOT NULL,
+      sort       INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (set_code, child_code)
+    );
+    CREATE INDEX IF NOT EXISTS idx_set_items_child ON set_items(child_code);
   `);
   const settleCols = (db.prepare("PRAGMA table_info(monthly_settle)").all() as any[]).map(
     (r) => r.name,
@@ -358,6 +411,11 @@ export function initDB(storageDir: string): boolean {
         - (SELECT IFNULL(SUM(r.sold_qty - r.refund_qty), 0) FROM sales_record r WHERE r.product_id = products.id)
       )
     `);
+  }
+  // ===== 套装（可整体移除）=====
+  // 老库升级：老数据一律默认 0（都是普通商品），不用手工做任何事、也不用改库版本号。
+  if (!prodCols.includes("kind")) {
+    db.exec("ALTER TABLE products ADD COLUMN kind INTEGER NOT NULL DEFAULT 0");
   }
   if (isNew) {
     const ins = db.prepare(
@@ -417,6 +475,7 @@ function mapProduct(r: any): Product {
     remark: r.remark,
     created_at: r.created_at,
     stock_manual: Number(r.stock_manual ?? 0),
+    kind: Number(r.kind ?? 0) === 1 ? 1 : 0, // ===== 套装（可整体移除）=====
   };
 }
 
@@ -445,8 +504,8 @@ export function getDB(): ShopDB {
     return rows.map(mapProduct);
   };
   const pInsert = c.prepare(`
-    INSERT INTO products (code, name, category, series, grade, cost_price, sale_price, price_manual, purchase_link, status, remark, created_at, stock_manual)
-    VALUES (@code, @name, @category, @series, @grade, @cost_price, @sale_price, @price_manual, @purchase_link, @status, @remark, @created_at, @stock_manual)
+    INSERT INTO products (code, name, category, series, grade, cost_price, sale_price, price_manual, purchase_link, status, remark, created_at, stock_manual, kind)
+    VALUES (@code, @name, @category, @series, @grade, @cost_price, @sale_price, @price_manual, @purchase_link, @status, @remark, @created_at, @stock_manual, @kind)
   `);
   const pDelete = c.prepare("DELETE FROM products WHERE id = ?");
   const sByCode = c.prepare("SELECT * FROM products WHERE code = ?");
@@ -574,6 +633,38 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
   const livePlanIns = c.prepare("INSERT OR REPLACE INTO live_plan (group_no, slot_no, code) VALUES (@group_no, @slot_no, @code)");
   const liveStarDelByCode = c.prepare("DELETE FROM live_star WHERE code = ?");
   const livePlanDelByCode = c.prepare("DELETE FROM live_plan WHERE code = ?");
+  // ===== 套装（可整体移除）=====
+  // 成员列表用编号 JOIN products 拿「当前」的名称/进价/售价/状态 —— 改了子商品，套装这边立刻是新值，
+  // 不用任何同步动作。合计值同理：全靠这里现算，绝不落库（落库就会跟子商品真实值不同步）。
+  const setMembersList = c.prepare(`
+    SELECT i.child_code AS code, p.name AS name, p.cost_price AS cost_price,
+           p.sale_price AS sale_price, p.status AS status, i.sort AS sort
+    FROM set_items i
+    JOIN products p ON p.code = i.child_code
+    WHERE i.set_code = ?
+    ORDER BY i.sort, i.child_code
+  `);
+  // 全部套装的汇总一次算完：画册卡片（含 N 件）和列表视图（汇总进价）共用，几百行数据是毫秒级
+  const setSummaryAll = c.prepare(`
+    SELECT i.set_code AS code, COUNT(*) AS cnt,
+           IFNULL(SUM(p.cost_price), 0) AS sumCost,
+           IFNULL(SUM(p.sale_price), 0) AS sumSale
+    FROM set_items i
+    JOIN products p ON p.code = i.child_code
+    GROUP BY i.set_code
+  `);
+  const setItemsIns = c.prepare(
+    "INSERT OR REPLACE INTO set_items (set_code, child_code, sort) VALUES (?, ?, ?)",
+  );
+  const setItemsDelOne = c.prepare("DELETE FROM set_items WHERE set_code = ? AND child_code = ?");
+  const setItemsDelBySet = c.prepare("DELETE FROM set_items WHERE set_code = ?");
+  const setItemsDelByChild = c.prepare("DELETE FROM set_items WHERE child_code = ?");
+  const setItemsOfChild = c.prepare("SELECT set_code FROM set_items WHERE child_code = ? ORDER BY set_code");
+  const setMaxSort = c.prepare("SELECT IFNULL(MAX(sort), 0) AS m FROM set_items WHERE set_code = ?");
+  // 改号时同步关联：改的是套装就换 set_code，改的是子商品就换 child_code。
+  // 编号是这套系统的锚点，改号本来就有连带动作（renameImageFolder），关联表跟着走是同一条链上的事。
+  const setItemsRenameSet = c.prepare("UPDATE set_items SET set_code = ? WHERE set_code = ?");
+  const setItemsRenameChild = c.prepare("UPDATE set_items SET child_code = ? WHERE child_code = ?");
   const monthSnapshotSales = c.prepare(`
     SELECT SUM(sold_qty) AS sold, SUM(refund_qty) AS refund, SUM((sold_qty - refund_qty) * cost_price) AS cost
     FROM sales_record WHERE date LIKE ?
@@ -636,7 +727,12 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
     },
     addProduct(p: Omit<Product, "id" | "created_at">): number {
       return withRetry(() => {
-        const info = pInsert.run({ ...p, created_at: nowStr() });
+        // kind 兜底：调用方没传就当普通商品，别让绑定失败炸掉整条新建流程
+        const info = pInsert.run({
+          ...p,
+          kind: Number(p.kind) === 1 ? 1 : 0,
+          created_at: nowStr(),
+        });
         return Number(info.lastInsertRowid);
       });
     },
@@ -658,6 +754,12 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
           if (code) {
             liveStarDelByCode.run(code);
             livePlanDelByCode.run(code);
+            // ===== 套装（可整体移除）=====
+            // 两种情况都要清：它自己作为**套装**被删（整个清单没了）、
+            // 或它作为**子商品**被删（从所有套装里摘掉）。
+            // 硬删除不可逆，所以删除确认框里必须先把"它还挂在 T001、T002 里"列出来 —— 见 handlers。
+            setItemsDelBySet.run(code);
+            setItemsDelByChild.run(code);
           }
         });
         tx();
@@ -943,6 +1045,49 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
           }
         });
         tx();
+      });
+    },
+    // ===== 套装（可整体移除）=====
+    listSetMembers(setCode: string): SetMemberRow[] {
+      return (setMembersList.all(String(setCode)) as any[]).map((r) => ({
+        code: String(r.code),
+        name: String(r.name ?? ""),
+        cost_price: Number(r.cost_price ?? 0),
+        sale_price: Number(r.sale_price ?? 0),
+        status: Number(r.status ?? 0),
+        sort: Number(r.sort ?? 0),
+      }));
+    },
+    getSetSummaries(): Record<string, SetSummary> {
+      const out: Record<string, SetSummary> = {};
+      for (const r of setSummaryAll.all() as any[]) {
+        out[String(r.code)] = {
+          count: Number(r.cnt ?? 0),
+          sumCost: Number(r.sumCost ?? 0),
+          sumSale: Number(r.sumSale ?? 0),
+        };
+      }
+      return out;
+    },
+    addSetMember(setCode: string, childCode: string): void {
+      withRetry(() => {
+        // 排序值取当前最大 +1：新加的排最后。想调顺序就是改这一列的活（现在界面上没做）
+        const m = setMaxSort.get(String(setCode)) as any;
+        setItemsIns.run(String(setCode), String(childCode), Number(m?.m ?? 0) + 1);
+      });
+    },
+    removeSetMember(setCode: string, childCode: string): void {
+      withRetry(() => setItemsDelOne.run(String(setCode), String(childCode)));
+    },
+    setsOfCode(childCode: string): string[] {
+      return (setItemsOfChild.all(String(childCode)) as any[]).map((r) => String(r.set_code));
+    },
+    renameSetCodes(oldCode: string, newCode: string): void {
+      // 两条都跑：改的可能是套装（换 set_code）、也可能是子商品（换 child_code），
+      // 判断"到底哪一条命中"要多查一次库，不如两条都执行 —— 不命中的那条改 0 行，无副作用。
+      withRetry(() => {
+        setItemsRenameSet.run(String(newCode), String(oldCode));
+        setItemsRenameChild.run(String(newCode), String(oldCode));
       });
     },
     async backupDB(destPath: string): Promise<void> {
