@@ -37,6 +37,14 @@ function cellValue(p, key) {
   }
 }
 
+/**
+ * 图片「封面靶区」：列表视图里是缩略图（`.thumb`），画册视图里是整张卡片。
+ * ⚠️ 画册卡片的**点击**是分区的（点图看大图 / 点其余开详情，见 renderGallery 里那两个 act），
+ *    但**拖入图片**和**右键封面菜单**仍然认整张卡片 —— 拖到卡片任何地方都能加图，右键也一样。
+ *    只有点击才分家，所以拖放/右键用这个宽一档的选择器。
+ */
+const COVER_TARGET = "[data-p-act='img'], .card[data-id]";
+
 var selCell = null; // { pid, field } 列表视图当前选中的单元格
 var appClipboard = null; // { value } 内部单元格剪贴板内容 | null
 var pendingImportToken = ""; // 商品导入「解析预览→确认提交」的令牌
@@ -2753,11 +2761,18 @@ function renderGallery(list) {
               .join("");
             const coverData = state.coverCache[p.code] || "";
             const starred = state.liveStars && state.liveStars.has(p.code);
-            return `<div class="card ${off ? "off" : ""}" data-p-act="img" data-id="${p.id}">
+            // 点击是**分区**的：图片区（含「暂无图片」占位）→ 大图浮层；卡片其余地方 → 商品详情。
+            // 两个 act 各带一份 data-id —— onProductAct 读的是**命中元素**的 dataset.id，
+            // 以前整卡就一个 act、id 挂在卡上，现在分家了就得各自带上。
+            // 拖入图片 / 右键封面仍认整张卡片（见 COVER_TARGET）。
+            const cover = coverData
+              ? `<img data-p-act="img" data-id="${p.id}" src="${coverData}" title="点击看大图 · 可拖入或粘贴图片到此" />`
+              : `<div class="ph" data-p-act="img" data-id="${p.id}" title="点击看大图（这里也能拖入或粘贴图片）">暂无图片</div>`;
+            return `<div class="card ${off ? "off" : ""}" data-p-act="edit" data-id="${p.id}" title="点击打开详情 / 编辑">
                   <button class="star ${starred ? "on" : ""}" data-s-act="toggle" data-code="${esc(p.code)}" data-id="${p.id}" title="${starred ? "取消星标" : "标记星标（直播排品备选同用）"}">${starred ? "★" : "☆"}</button>
                   <span class="card-badge ${off ? "off" : ""}">${off ? "已下架" : p.code}</span>
                   ${isSet ? '<span class="card-setbadge">套</span>' : ""}
-                  ${showImageGallery ? (coverData ? `<img src="${coverData}" />` : `<div class="ph">暂无图片</div>`) : ""}
+                  ${showImageGallery ? cover : ""}
                   <div class="card-body">${lines}</div>
                   <button class="edit-btn" data-p-act="edit" data-id="${p.id}" title="打开详情 / 编辑">编辑</button>
                 </div>`;
@@ -4592,7 +4607,7 @@ function openContextMenu(e, p, field) {
 }
 
 function onProductCtx(e) {
-  const coverEl = e.target.closest("[data-p-act='img']");
+  const coverEl = e.target.closest(COVER_TARGET);
   if (coverEl) {
     e.preventDefault();
     e.stopPropagation();
@@ -4781,7 +4796,7 @@ function productFromCoverTarget(el) {
   if (!el || !el.closest) {
     return null;
   }
-  const coverEl = el.closest("[data-p-act='img']");
+  const coverEl = el.closest(COVER_TARGET);
   if (!coverEl) {
     return null;
   }
@@ -4799,7 +4814,7 @@ function productForDropOrPaste(e) {
   const el = t && t.closest ? t : document.activeElement;
   let product = null;
   if (el && el.closest) {
-    const coverEl = el.closest("[data-p-act='img']");
+    const coverEl = el.closest(COVER_TARGET);
     const rowEl = coverEl || el.closest("[data-pid]");
     if (rowEl) {
       product =
@@ -4865,7 +4880,7 @@ function onImageDragOver(e) {
   if (!t || !t.closest) {
     return;
   }
-  const coverEl = t.closest("[data-p-act='img']");
+  const coverEl = t.closest(COVER_TARGET);
   const rowEl = t.closest("[data-pid]");
   const inLb = !!t.closest("#lbBox");
   if (!coverEl && !rowEl && !inLb) {
@@ -4905,7 +4920,7 @@ function onImageDrop(e) {
   if (!t || !t.closest) {
     return;
   }
-  const coverEl = t.closest("[data-p-act='img']");
+  const coverEl = t.closest(COVER_TARGET);
   const rowEl = t.closest("[data-pid]");
   const inLb = !!t.closest("#lbBox");
   const target = coverEl || rowEl;

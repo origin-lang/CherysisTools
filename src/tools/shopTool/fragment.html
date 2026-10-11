@@ -518,12 +518,15 @@
       .card.off {
         opacity: 0.5;
       }
+      /* 图片区和文字区的分工要看得出来：图上是放大镜（点开大图），
+         卡片其余地方是普通指针（点开详情）。别都写成 pointer —— 那就又回到"点哪儿都一样"了 */
       .card img {
         width: 100%;
         height: var(--card-h, 230px);
         object-fit: cover;
         display: block;
         background: var(--vscode-editor-background);
+        cursor: zoom-in;
       }
       .card .ph {
         width: 100%;
@@ -534,6 +537,7 @@
         color: var(--vscode-descriptionForeground);
         font-size: 12px;
         background: var(--vscode-input-background);
+        cursor: zoom-in;
       }
       .card-body {
         padding: 6px 8px;
