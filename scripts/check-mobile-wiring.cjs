@@ -19,7 +19,10 @@ const htmlFile = path.join(mobileDir, "index.html");
 /** JS 动态创建、HTML 里本来就没有的 id */
 // 注：套装那块（#dSetSum / #dSetListCard / dSetCount / dSetList / setAddToggle / setAddBtn / setAddCode）
 // 现在**骨架全在 index.html 里**，不再由 renderSetList 拼 —— 所以不在豁免名单里，会被正常核对。
-const DYNAMIC_IDS = new Set(["codeQ", "codeQGroup", "fsInput"]);
+// 只有「设置页的档位输入框」是 JS 动态建的。原先还豁免 codeQ / codeQGroup
+// （筛选面板里那个编号输入框）—— 2026-10-11 它并进顶部搜索行了，那两个 id 整个不存在，
+// 豁免名单里留着会让这条闸门变成摆设。
+const DYNAMIC_IDS = new Set(["fsInput"]);
 
 /**
  * 服务端能发的事件名（唯一出处：events.ts 的 HubEvent 注释 + index.ts 的 publish 调用 +
@@ -143,12 +146,16 @@ if (jsBreak && cssBreak && jsBreak[1] === cssBreak[1]) {
   }
 }
 
-// ---------- ④ 筛选面板：编号输入框不许被异步重画冲掉 ----------
+// ---------- ④ 筛选面板：折叠状态与"避让用户输入" ----------
 // 真机才暴露、而且不报错的一条（手机版「编号范围填了没反应」的真凶）：
 // 「打开筛选」会紧接着 requestImgStats()，等 imageStatsLoaded 回来时如果**整块**重画 filterBody，
-// 用户正在编号框里打的那半截字连同焦点一起没了 —— 电脑上几乎遇不到，因为桌面版那个面板不是这么重画的。
-// 闸门：① id="codeQ" 只能出现在 renderFilterCodeInput() 里（别处重建就是又踩坑）；
-//       ② 异步回来的那条路必须走 refreshFilterGroups()，不许调 renderFilter()。
+// 用户正在打的那半截字连同焦点一起没了 —— 电脑上几乎遇不到，因为桌面版那个面板不是这么重画的。
+// 2026-10-11 改版后这条闸门管四件事：
+//   ① 编号范围**不许**再在筛选面板里单独有一组（已并进顶部搜索行）—— 同一个条件两个入口，
+//      两边还得各记一份 state，而且那组还挂着三行说明文字。又冒出来就是有人把第二套加回来了。
+//   ② 编号表达式只能有一个出处：codeExpr() 里"scope 是编号才用 state.q"。
+//   ③ 折叠状态必须在 state.openGroups（不在 DOM 上），否则异步回包一重画，展开的那组就折回去了。
+//   ④ 编号模式不许边打边筛（区间语法有中间态 A → A1 → A1~，一路 renderList() 会闪）。
 const fnBody = (name) => {
   const i = js.indexOf(`function ${name}(`);
   if (i < 0) {
@@ -166,28 +173,51 @@ const fnBody = (name) => {
   return null;
 };
 
-const codeInputFn = fnBody("renderFilterCodeInput");
 const renderFilterFn = fnBody("renderFilter");
 const refreshGroupsFn = fnBody("refreshFilterGroups");
-if (!codeInputFn || !renderFilterFn || !refreshGroupsFn) {
+if (!renderFilterFn || !refreshGroupsFn) {
   fails.push(
-    "筛选面板的重画函数改名/挪走了（renderFilterCodeInput / renderFilter / refreshFilterGroups）："
+    "筛选面板的重画函数改名/挪走了（renderFilter / refreshFilterGroups）："
       + "这条闸门就失效了，请同步更新 check-mobile-wiring.cjs",
   );
 } else {
-  // ① codeQ 这个输入框只能有一个出处
-  const codeQHits = [...js.matchAll(/id="codeQ"/g)].length;
-  if (codeQHits !== 1 || !codeInputFn.includes('id="codeQ"')) {
-    fails.push(
-      `id="codeQ" 在 app.js 里出现了 ${codeQHits} 次（应恰好 1 次，且在 renderFilterCodeInput 里）——`
-        + "多一处重建就会把用户正在打的编号表达式冲掉",
-    );
+  // ① 编号范围那两个 id 不许再出现
+  for (const legacy of ['id="codeQ"', "renderFilterCodeInput"]) {
+    if (js.includes(legacy) || html.includes(legacy)) {
+      fails.push(
+        `${legacy} 又冒出来了：编号范围已并进顶部搜索行（scope 选「编号」那个框就吃 A1~A33 语法），`
+          + "筛选面板里不该再有第二套入口 —— 见 docs/手机版-筛选改版 那段说明",
+      );
+    }
   }
-  // ② renderFilterGroups 不许重建输入框
-  if (fnBody("renderFilterGroups").includes('id="codeQ"')) {
-    fails.push("renderFilterGroups 里不该出现 id=\"codeQ\"：它只负责圆片，重建输入框会打断用户输入");
+  // ② 编号表达式只有一个出处
+  const codeExprFn = fnBody("codeExpr");
+  if (!codeExprFn) {
+    fails.push("找不到 codeExpr()：编号表达式现在只从搜索行来，这个函数是它的唯一出处");
+  } else if (!/state\.scope === "code"/.test(codeExprFn) || !/state\.q/.test(codeExprFn)) {
+    fails.push("codeExpr() 里应写成「scope 是编号时才用 state.q」—— 换别的来源就等于又开了第二套编号筛选");
   }
-  // ③ 图片统计那条异步路必须避让
+  // ③ 折叠状态在 state 里，不在 DOM 上
+  if (!/openGroups/.test(js)) {
+    fails.push("找不到 state.openGroups：筛选面板的折叠状态必须存在 state 里，否则异步重画会把展开的组折回去");
+  }
+  if (/classList[\s\S]{0,80}folded[\s\S]{0,200}(renderFilter|refreshFilterGroups)/.test(js)) {
+    fails.push("折叠状态看着是从 DOM 上反读的：应该只认 state.openGroups");
+  }
+  // ④ 编号模式不许边打边筛
+  const qIdx = js.indexOf('$("q").oninput = function ()');
+  if (qIdx < 0) {
+    fails.push("找不到 $(\"q\").oninput（写法变了？这条闸门就失效了）");
+  } else {
+    const block = js.slice(qIdx, qIdx + 400);
+    if (!/state\.scope === "code"/.test(block) || !/return;/.test(block)) {
+      fails.push(
+        '编号模式下 $("q").oninput 必须早退（只更新 #qHint，不当场 renderList）：'
+          + "区间语法有中间态 A → A1 → A1~，边打边筛列表会一路闪",
+      );
+    }
+  }
+  // ⑤ 图片统计那条异步路必须避让
   // 取 imageStatsLoaded 之后的一段窗口即可（不写贪心正则：缩进/分支写法一改就假红）
   const statsIdx = js.indexOf('"imageStatsLoaded"');
   if (statsIdx < 0) {
@@ -197,7 +227,7 @@ if (!codeInputFn || !renderFilterFn || !refreshGroupsFn) {
     if (/renderFilter\(\)/.test(statsBlock)) {
       fails.push(
         "imageStatsLoaded 那条异步回包里调了 renderFilter()：手机上回包常落在用户打字中间，"
-          + "会把编号输入框整块重建、字和焦点一起丢。应改调 refreshFilterGroups()",
+          + "会把区间框整块重建、字和焦点一起丢。应改调 refreshFilterGroups()",
       );
     } else if (!/refreshFilterGroups\(\)/.test(statsBlock)) {
       fails.push("imageStatsLoaded 里既没调 refreshFilterGroups() 也没调 renderFilter()：图片数字不会更新了");
@@ -450,5 +480,5 @@ console.log(
     `（豁免 ${DYNAMIC_IDS.size} 个 JS 动态生成的：${[...DYNAMIC_IDS].join(" / ")}）；` +
     `SSE 事件名 ${SERVER_EVENTS.length} 个（${SERVER_EVENTS.join(" / ")}）与服务端一致；` +
     `宽屏抽屉断点前后端一致（${cssBreak ? cssBreak[1] : "?"}px）；` +
-    `筛选面板的编号输入框只由 renderFilterCodeInput 建、异步回包走 refreshFilterGroups 避让`,
+    `筛选面板：编号范围不再有第二套入口（已并进搜索行）、折叠状态在 state.openGroups、异步回包走 refreshFilterGroups 避让`,
 );

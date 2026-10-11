@@ -41,11 +41,15 @@
     alert: 0,
     view: "gallery",
     q: "",
-    scope: "all", // 搜哪一列：all / code / name / category / series
-    codeQ: "", // 编号范围（漏斗那套口径，与电脑版编号列筛选一致）
+    // 搜哪一列：all / code / name / category / series / grade / status。
+    // code / status / category / grade 这四种右边不是文字框（见 scopeUsesText）。
+    scope: "all",
     page: 0,
     sort: "code",
     panelOpen: false, // 筛选展开区是否展开（在当前屏内展开，不切屏）
+    // 筛选面板里哪几组是**展开**的（不在这里 = 折起来）。
+    // 面板十来组全展开手机上要滚好几屏才到「排序」；默认只展开最常用的品类。
+    openGroups: { category: 1 },
     // 漏斗筛选：enum 是「勾哪几个看哪几个」，num 是数值区间。空 = 不筛
     filters: { enum: emptyEnumFilters(), num: {} },
     // 每个编号有几张图（后端扫目录得来，按需要一次）。图片不在数据库里，只能这么知道
@@ -165,7 +169,35 @@
     ["stock", "库存"],
   ];
   // pill 上怎么称呼每一列（「搜哪一列」的下拉用的是同一批词）
-  var SCOPE_LABEL = { all: "关键词", code: "编号", name: "名称", category: "品类", series: "系列" };
+  var SCOPE_LABEL = {
+    all: "关键词",
+    code: "编号",
+    name: "名称",
+    category: "品类",
+    series: "系列",
+    grade: "等级",
+    status: "状态",
+  };
+  // ENUM_COLS 的字段 → 中文名（O(1) 查，别每次都遍历）
+  var ENUM_COL_LABEL = {};
+  ENUM_COLS.forEach(function (c) {
+    ENUM_COL_LABEL[c[0]] = c[1];
+  });
+  // 「搜哪一列」里哪几列换成"一排圆片"（值少且封闭，点比打字快）。
+  // ⚠️ **系列不在里面**：它值可能很多，做成圆片会铺一大片（商家定的），照旧文字找。
+  // 编号也不在里面 —— 它是"区间输入框"，不是点选。
+  // ⚠️ 这里存的是**标记**不是中文名：字段名就是 scope 本身（`renderScopeChips(scope)`），
+  //    中文名在 ENUM_COL_LABEL 里，别把两者混着用（拿中文名去查 state.filters.enum 会得到 undefined）。
+  var SCOPE_CHIP_COLS = { category: 1, grade: 1 };
+  /**
+   * scope 选到这几列时，右边**不是文字框**（是区间输入 / 下拉 / 圆片），
+   * 所以 `state.q` 那句文字**不参与过滤** —— 否则从"名称"切到"品类"，
+   * 上一段文字会悄悄留着继续筛，看着像 bug。
+   */
+  function scopeUsesText(scope) {
+    return !(scope === "code" || scope === "status" || SCOPE_CHIP_COLS[scope]);
+  }
+
   var SORT_LABEL = { code: "编号", stock: "库存少→多", sale: "售价低→高", new: "最近新建" };
 
   var $ = function (id) {
@@ -671,10 +703,8 @@
       state.imgStats = m.stats || {};
       state.imgStatsLoaded = true;
       if (state.panelOpen) {
-        // 只重画圆片：整块重画会把用户**正在输入**的编号表达式冲掉（手机上后端回得慢，
-        // 这个回包经常正好落在打字中间）。见 renderFilterCodeInput 上面那段说明。
-        // 用户正停在里面打字时干脆跳过这一下 —— 这只是一次「把数字填上」的美化更新，
-        // 不该拿它去打断输入；下一次打开面板或点筛选时数字自然是对的。
+        // 只重画圆片：整块重画会把用户**正在输入**的区间数字冲掉（手机上后端回得慢，
+        // 这个回包经常正好落在打字中间）。折叠状态在 state.openGroups 里，重画不会折回去。
         if (!filterBodyHasFocus()) {
           refreshFilterGroups();
         }
@@ -991,13 +1021,22 @@
     return false;
   }
 
+  /**
+   * 当前生效的编号表达式。**只有一个出处**：scope 选「编号」时就是搜索框那一句。
+   * （原先筛选面板里另有一组「编号范围」，同一个东西两套入口 —— 2026-10-11 并成一处。）
+   */
+  function codeExpr() {
+    return state.scope === "code" ? state.q : "";
+  }
+
   /** parseCodeQuery 的一格记忆：一次渲染会多次取 filtered()，别重复解析。 */
   var _cqRaw = null;
   var _cqParsed = null;
   function codeQuery() {
-    if (state.codeQ !== _cqRaw) {
-      _cqRaw = state.codeQ;
-      _cqParsed = parseCodeQuery(state.codeQ);
+    var raw = codeExpr();
+    if (raw !== _cqRaw) {
+      _cqRaw = raw;
+      _cqParsed = parseCodeQuery(raw);
     }
     return _cqParsed;
   }
@@ -1090,8 +1129,10 @@
   }
 
   function filtered() {
-    var q = state.q.trim().toLowerCase();
     var scope = state.scope;
+    // 右边是"点选/区间"控件的那几列，搜索词不参与过滤（那些列已经由各自的控件精确筛了；
+    // 留着上一段文字继续筛，人只会觉得「我明明没输东西，怎么少了」）
+    var q = scopeUsesText(scope) ? state.q.trim().toLowerCase() : "";
     var cq = codeQuery();
     var out = state.products.filter(function (p) {
       if (!matchCodeQuery(p.code, cq)) {
@@ -1146,14 +1187,11 @@
     }
     var list = all.slice(state.page * PAGE_SIZE, state.page * PAGE_SIZE + PAGE_SIZE);
     $("count").textContent = all.length + " / " + state.products.length;
-    // 编号框在筛选展开区里（动态生成），面板没打开时它不在 DOM 中
-    var cqEl = $("codeQ");
-    if (cqEl) {
-      cqEl.classList.toggle("bad", !!(cq && cq.bad));
-    }
     renderActive(); // 条件 pill 条：每次筛选变化都重画，列表页上永远看得见「现在筛了什么」
     renderPager(all.length, pages);
-    // 编号表达式写错要明确说出来，不能只给一张空表（与电脑版一致）
+    // 编号表达式写错要明确说出来，不能只给一张空表（与电脑版一致）。
+    // 搜索框下面那行提示（#qHint）已经在 commitQ 里转红了，这里再在列表顶上顶一条 ——
+    // 手机上那行提示会被键盘挡住，列表顶上这条一定看得见。
     var warn = cq && cq.bad ? '<p class="warn">⚠️' + esc(cq.msg) + "</p>" : "";
     if (!all.length) {
       $("content").innerHTML = warn + '<p class="muted">（没有匹配的商品）</p>';
@@ -1667,11 +1705,10 @@
   function activePills() {
     var out = [];
     var q = state.q.trim();
-    if (q) {
+    // 只有"文字框"模式的搜索词才是一条条件；编号/状态/品类/等级那几种模式下
+    // 搜索框根本不参与过滤（各自的控件才是条件），再挂一条胶囊就是说谎
+    if (q && scopeUsesText(state.scope)) {
       out.push({ c: "q", t: (SCOPE_LABEL[state.scope] || "关键词") + "：" + q });
-    }
-    if (state.codeQ.trim()) {
-      out.push({ c: "code", t: "编号 " + state.codeQ.trim() });
     }
     ENUM_COLS.concat([["img", "图片"]]).concat([["kind", "类型"]]).forEach(function (c) {
       var set = state.filters.enum[c[0]];
@@ -1727,14 +1764,6 @@
     bar.innerHTML = html;
   }
 
-  /** 编号框在展开区里动态生成，面板关着时不存在 —— 统一走这里，别直接 $("codeQ").value = */
-  function setCodeQ(v) {
-    var el = $("codeQ");
-    if (el) {
-      el.value = v;
-    }
-  }
-
   /** 撤掉一个条件。改完要把输入框/圆片同步回去，不然界面和 state 会各说各话 */
   function clearOne(code) {
     if (code === "all") {
@@ -1743,20 +1772,19 @@
       // 再点套装圆片就是 undefined["1"] 抛错（圆片不亮、列表不动、"清除全部失效"都是这一处）。
       state.filters = { enum: emptyEnumFilters(), num: {} };
       state.q = "";
-      state.codeQ = "";
       $("q").value = "";
-      setCodeQ("");
+      updateQHint("");
+      syncScopeControls();
     } else if (code === "q") {
       state.q = "";
       $("q").value = "";
-    } else if (code === "code") {
-      state.codeQ = "";
-      setCodeQ("");
+      updateQHint("");
     } else if (code === "sort") {
       state.sort = "code";
     } else if (code.indexOf("enum:") === 0) {
       var p = code.split(":");
       delete state.filters.enum[p[1]][p[2]];
+      syncScopeControls();
     } else if (code.indexOf("num:") === 0) {
       delete state.filters.num[code.slice(4)];
     }
@@ -1791,45 +1819,13 @@
   }
 
   /**
-   * 编号范围输入框：**只在这里建**，别混进下面 renderFilterGroups 的重画里。
-   *
-   * 这里踩过一个坑，记下来免得改回去：原来整个筛选面板是一整块 innerHTML 重画的，
-   * 而「打开筛选」会紧接着 requestImgStats()，等 imageStatsLoaded 回来时又重画一次
-   * （见 onMessage 里那条）。手机上后端回得慢（几百毫秒），用户往往**已经开始在编号框里打字**了 ——
-   * 这一重画直接把人正打的那个 input 从 DOM 里换掉：字没了、焦点也没了，
-   * 而 state.codeQ 只收到过被打断前的那半截。表现就是「编号筛选填了没反应」，
-   * 在电脑上几乎遇不到（桌面版那个面板不是这么重画的），正是这个差异。
-   *
-   * 所以：输入框只建一次，异步回来的重画只碰下面那些圆片。
+   * 筛选面板：只画圆片/区间那几组。编号范围**不在这里**了 ——
+   * 2026-10-11 并进顶部搜索行（scope 选「编号」时那个框就吃 A1~A33 语法）。
+   * 并过去的好处不只是少一组：那组底下还挂着三行说明文字，一屏就它最占地方；
+   * 而且同一个条件有两个入口，两边还得各自记一份 state。
    */
-  function renderFilterCodeInput() {
-    // 编号范围是一组条件（A1~A33），不是搜索关键词，所以跟其它筛选放在一起。
-    // 示例一律用 A 段：全仓库默认前缀就是 A（见 pricing.ts 的 canonicalCode），
-    // 举 L 的例子容易让人以为默认是 L。
-    var html =
-      '<div class="fgroup" id="codeQGroup"><div class="ftitle" data-label="编号范围">编号范围</div>' +
-      '<input id="codeQ" class="inline wide" type="search" placeholder="A1~A33 / 1~33 / A1" value="' +
-      esc(state.codeQ) +
-      '" /><p class="muted small">A1~A33 是区间（全角「～」也认）；单写一个 A1 = 精确匹配 A001；' +
-      "多段用逗号：A1~A33,B1~B22。想按编号子串找（比如 A007）用顶部搜索框，左边下拉选「编号」。</p></div>";
-    return html;
-  }
-
-  /** 筛选面板：建输入框 + 画一遍圆片。只在「打开面板」和「state 变了要整体对齐」时调。 */
   function renderFilter() {
-    refreshFilterGroups(); // 先把动态分组建出来
-    var body = $("filterBody");
-    if (body) {
-      // ⚠️ 编号那一组是**单例**：已经建过就不能再插一次。
-      //    第一版直接 insertAdjacentHTML("afterbegin", ...)，结果每打开一次筛选面板就多一组
-      //    （开 3 次出现 3 个编号框），因为这里只加不删。
-      //    所以：**没有才建**；已经有就把值按 state 同步一下（setCodeQ 就是干这个的，
-      //    而且不能在 $("codeQ") 不存在时调它 —— 那才是"建完再同步"的顺序）。
-      if (!$("codeQGroup")) {
-        body.insertAdjacentHTML("afterbegin", renderFilterCodeInput());
-      }
-      setCodeQ(state.codeQ); // 面板重开时把当前筛选值回填（用户上次输的不会丢）
-    }
+    refreshFilterGroups();
     $("sortBy").value = state.sort;
   }
 
@@ -1838,37 +1834,76 @@
    * 异步回来的东西（图片统计数完了、点了一个「有图/无图」圆片要互斥）走这里，
    * 否则会把用户正在输入的编号表达式冲掉。
    */
+  /**
+   * 折起来时标题右边那行摘要 —— 折着也要知道"这组现在筛着什么"。
+   * 离散列写选中的名字（没筛就写「未筛」），数值列写当前区间。
+   */
+  function groupSummary(field) {
+    if (ENUM_COL_LABEL[field] || field === "kind" || field === "img") {
+      var set = state.filters.enum[field] || {};
+      var names = Object.keys(set).map(function (k) {
+        return enumLabel(field, k);
+      });
+      return { text: names.length ? names.join("、") : "未筛", on: names.length > 0 };
+    }
+    var r = state.filters.num[field] || { min: "", max: "" };
+    var t = "";
+    if (r.min !== "" && r.max !== "") {
+      t = r.min + "~" + r.max;
+    } else if (r.min !== "") {
+      t = "≥ " + r.min;
+    } else if (r.max !== "") {
+      t = "≤ " + r.max;
+    }
+    return { text: t || "未筛", on: t !== "" };
+  }
+
+  /**
+   * 一组的外壳：**可点的标题**（展开箭头 + 组名 + 摘要）+ 内容体。
+   * 面板十来组全展开，手机上要滚好几屏才到「排序」；折起来之后组名一眼看全，
+   * 只展开你正在弄的那一组。折叠状态在 state.openGroups（不在 DOM 上），
+   * 所以异步回来的重画不会把展开状态弄丢。
+   */
+  function groupHtml(field, label, bodyHtml) {
+    var open = !!state.openGroups[field];
+    var sum = groupSummary(field);
+    return (
+      '<div class="fgroup' + (open ? "" : " folded") + '" data-fg="' + esc(field) + '">' +
+      '<div class="ftitle" data-label="' + esc(label) + '">' +
+      '<b class="fchev">▸</b><span class="fname">' + esc(label) + "</span>" +
+      '<span class="fsum' + (sum.on ? " on" : "") + '">' + esc(sum.text) + "</span>" +
+      "</div>" +
+      '<div class="fbody">' + bodyHtml + "</div>" +
+      "</div>"
+    );
+  }
+
+  /** 一组离散值的圆片（面板与搜索行共用同一份 state.filters.enum） */
+  function chipsHtml(field) {
+    var set = state.filters.enum[field];
+    var chips = enumValues(field)
+      .map(function (o) {
+        return (
+          '<button type="button" class="chip' +
+          (set[o.k] ? " on" : "") +
+          '" data-field="' +
+          field +
+          '" data-v="' +
+          esc(o.k) +
+          '">' +
+          esc(o.label) +
+          (o.n === undefined ? "" : " " + o.n) +
+          "</button>"
+        );
+      })
+      .join("");
+    return '<div class="chips">' + (chips || '<span class="muted small">（没有可选值）</span>') + "</div>";
+  }
+
   function renderFilterGroups() {
     var html = "";
     ENUM_COLS.forEach(function (c) {
-      var field = c[0];
-      var set = state.filters.enum[field];
-      var n = Object.keys(set).length;
-      var chips = enumValues(field)
-        .map(function (o) {
-          return (
-            '<button type="button" class="chip' +
-            (set[o.k] ? " on" : "") +
-            '" data-field="' +
-            field +
-            '" data-v="' +
-            esc(o.k) +
-            '">' +
-            esc(o.label) +
-            (o.n === undefined ? "" : " " + o.n) +
-            "</button>"
-          );
-        })
-        .join("");
-      html +=
-        '<div class="fgroup"><div class="ftitle" data-label="' +
-        esc(c[1]) +
-        '">' +
-        esc(c[1]) +
-        (n ? "（已选 " + n + "）" : "") +
-        '</div><div class="chips">' +
-        (chips || '<span class="muted small">（没有可选值）</span>') +
-        "</div></div>";
+      html += groupHtml(c[0], c[1], chipsHtml(c[0]));
     });
     // ===== 套装（可整体移除）=====
     // 「只看套装」是**筛选**不是第三种视图：套装在语义上属于画册（它也是有图的东西），
@@ -1884,19 +1919,22 @@
         plainN++;
       }
     });
-    html +=
-      '<div class="fgroup"><div class="ftitle" data-label="类型">类型</div><div class="chips">' +
-      '<button type="button" class="chip' +
-      (kindSet["1"] ? " on" : "") +
-      '" data-field="kind" data-v="1">套装 ' +
-      setN +
-      "</button>" +
-      '<button type="button" class="chip' +
-      (kindSet["0"] ? " on" : "") +
-      '" data-field="kind" data-v="0">普通 ' +
-      plainN +
-      "</button>" +
-      "</div></div>";
+    html += groupHtml(
+      "kind",
+      "类型",
+      '<div class="chips">' +
+        '<button type="button" class="chip' +
+        (kindSet["1"] ? " on" : "") +
+        '" data-field="kind" data-v="1">套装 ' +
+        setN +
+        "</button>" +
+        '<button type="button" class="chip' +
+        (kindSet["0"] ? " on" : "") +
+        '" data-field="kind" data-v="0">普通 ' +
+        plainN +
+        "</button>" +
+        "</div>",
+    );
     // 「图片」：有图 / 无图 互斥，用来找还没传图的商品去补图。
     // 数量要后端扫目录才知道，扫完之前只给两个不带数字的圆片。
     var imgSet = state.filters.enum.img || {};
@@ -1911,44 +1949,206 @@
         }
       });
     }
-    html +=
-      '<div class="fgroup"><div class="ftitle" data-label="图片">图片</div><div class="chips">' +
-      '<button type="button" class="chip' +
-      (imgSet["0"] ? " on" : "") +
-      '" data-field="img" data-v="0">无图' +
-      (state.imgStatsLoaded ? " " + n0 : "") +
-      "</button>" +
-      '<button type="button" class="chip' +
-      (imgSet["1"] ? " on" : "") +
-      '" data-field="img" data-v="1">有图' +
-      (state.imgStatsLoaded ? " " + n1 : "") +
-      "</button>" +
-      (state.imgStatsLoaded
-        ? ""
-        : '<span class="muted small">（打开筛选时正在数图片…）</span>') +
-      "</div></div>";
+    html += groupHtml(
+      "img",
+      "图片",
+      '<div class="chips">' +
+        '<button type="button" class="chip' +
+        (imgSet["0"] ? " on" : "") +
+        '" data-field="img" data-v="0">无图' +
+        (state.imgStatsLoaded ? " " + n0 : "") +
+        "</button>" +
+        '<button type="button" class="chip' +
+        (imgSet["1"] ? " on" : "") +
+        '" data-field="img" data-v="1">有图' +
+        (state.imgStatsLoaded ? " " + n1 : "") +
+        "</button>" +
+        (state.imgStatsLoaded ? "" : '<span class="muted small">（正在数图片…）</span>') +
+        "</div>",
+    );
     NUM_COLS.forEach(function (c) {
       var field = c[0];
       var r = state.filters.num[field] || { min: "", max: "" };
-      html +=
-        '<div class="fgroup"><div class="ftitle" data-label="' +
-        esc(c[1]) +
-        '">' +
-        esc(c[1]) +
-        '</div><div class="rng">' +
-        '<input class="inline" type="number" inputmode="decimal" data-num="' +
-        field +
-        '" data-side="min" placeholder="最小" value="' +
-        esc(r.min) +
-        '" />' +
-        '<span class="muted">~</span>' +
-        '<input class="inline" type="number" inputmode="decimal" data-num="' +
-        field +
-        '" data-side="max" placeholder="最大" value="' +
-        esc(r.max) +
-        '" /></div></div>';
+      html += groupHtml(
+        field,
+        c[1],
+        '<div class="rng">' +
+          '<input class="inline" type="number" inputmode="decimal" data-num="' +
+          field +
+          '" data-side="min" placeholder="最小" value="' +
+          esc(r.min) +
+          '" />' +
+          '<span class="muted">~</span>' +
+          '<input class="inline" type="number" inputmode="decimal" data-num="' +
+          field +
+          '" data-side="max" placeholder="最大" value="' +
+          esc(r.max) +
+          '" /></div>',
+      );
     });
     return html;
+  }
+
+  /** 点标题：只切 class，**不重画面板**（重画会把正在输的区间数字冲掉） */
+  function toggleGroup(fg) {
+    if (!fg) {
+      return;
+    }
+    var field = fg.dataset.fg;
+    var open = !state.openGroups[field];
+    if (open) {
+      state.openGroups[field] = 1;
+    } else {
+      delete state.openGroups[field];
+    }
+    fg.classList.toggle("folded", !open);
+  }
+
+  /** 圆片点完，把这一组标题右边的摘要同步一下（折着的时候它就是唯一线索） */
+  function updateGroupSummary(fg) {
+    if (!fg) {
+      return;
+    }
+    var sum = fg.querySelector(".fsum");
+    if (!sum) {
+      return;
+    }
+    var s = groupSummary(fg.dataset.fg);
+    sum.textContent = s.text;
+    sum.classList.toggle("on", s.on);
+  }
+
+  // ---------- 搜索行：按「搜哪一列」换右侧控件 ----------
+  // 桌面端早就有这个套路（#keywordScope 选「状态」时换成 #keywordStatus 下拉），
+  // 这里把同一套口径补齐。换的只是**控件形态**，条件本身还是存在同一份 state 里
+  // （离散列 → state.filters.enum[列]，编号 → state.q），所以筛选面板与搜索行天然联动。
+
+  /** 状态那一列只有在售/已下架两种，勾选框比手打顺手 */
+  function renderScopeStatus() {
+    var sel = $("scopeStatus");
+    if (!sel) {
+      return;
+    }
+    var set = state.filters.enum.status || {};
+    sel.innerHTML =
+      '<option value="">全部状态</option><option value="on">在售</option><option value="off">已下架</option>';
+    sel.value = set.off ? "off" : set.on ? "on" : "";
+  }
+
+  /** 品类/等级：值就那么几个，直接列成一排圆片（系列值太多，不做） */
+  function renderScopeChips(field) {
+    var box = $("scopeChips");
+    if (!box) {
+      return;
+    }
+    var set = state.filters.enum[field] || {};
+    box.innerHTML = enumValues(field)
+      .map(function (o) {
+        return (
+          '<button type="button" class="chip' +
+          (set[o.k] ? " on" : "") +
+          '" data-field="' +
+          field +
+          '" data-v="' +
+          esc(o.k) +
+          '">' +
+          esc(o.label) +
+          (o.n === undefined ? "" : " " + o.n) +
+          "</button>"
+        );
+      })
+      .join("");
+  }
+
+  /** 编号模式下的写法提示。打字中途不筛列表，所以必须有个地方告诉你"这句成不成立" */
+  function updateQHint(raw) {
+    var hint = $("qHint");
+    if (!hint || state.scope !== "code") {
+      return;
+    }
+    var txt = String(raw === undefined || raw === null ? "" : raw).trim();
+    if (!txt) {
+      hint.textContent = "编号范围　例：A1~A33（全角「～」也认）、A1、A1~A33,B1~B22　—　回车生效";
+      hint.classList.remove("bad");
+      return;
+    }
+    var parsed = parseCodeQuery(txt);
+    if (parsed.bad) {
+      hint.textContent = parsed.msg || "这句编号写法读不通，先改一下";
+      hint.classList.add("bad");
+      return;
+    }
+    hint.textContent = "✓ 这句认得，回车（或点别处）生效";
+    hint.classList.remove("bad");
+  }
+
+  /** 编号表达式提交（回车 / 失焦）。见 $("q").oninput 那段说明为什么不当场筛 */
+  function commitQ() {
+    state.q = $("q").value;
+    updateQHint(state.q);
+    state.page = 0;
+    renderList();
+  }
+
+  /**
+   * 按当前 scope 把搜索行右侧换成对应控件；顺带同步值。
+   * 幂等 —— 任何地方改完离散条件都可以调它一次（clearOne / 圆片点击 / 回包）。
+   */
+  function applyScope() {
+    var scope = state.scope;
+    var q = $("q");
+    var st = $("scopeStatus");
+    var chips = $("scopeChips");
+    var hint = $("qHint");
+    if (!q || !st || !chips || !hint) {
+      return;
+    }
+    var isChipCol = !!SCOPE_CHIP_COLS[scope];
+    q.hidden = scope === "status" || isChipCol;
+    st.hidden = scope !== "status";
+    chips.hidden = !isChipCol;
+    hint.hidden = scope !== "code";
+    if (scope === "code") {
+      q.placeholder = "A1~A33";
+      q.title = "编号范围：写区间比打子串快。回车或点别处生效";
+      updateQHint(q.value);
+    } else {
+      q.placeholder = "🔍 搜…";
+      q.title = "";
+    }
+    if (scope === "status") {
+      renderScopeStatus();
+    } else if (isChipCol) {
+      // 字段名就是 scope 本身（SCOPE_CHIP_COLS 里存的是标记，不是中文名）
+      renderScopeChips(scope);
+    }
+  }
+
+  /** 只刷控件上的值（不动形态）—— 条件被别处改了（点胶囊、清除全部）时调 */
+  function syncScopeControls() {
+    if (state.scope === "status") {
+      renderScopeStatus();
+    } else if (SCOPE_CHIP_COLS[state.scope]) {
+      renderScopeChips(state.scope);
+    }
+  }
+
+  /** 点一个离散圆片：亮的灭、灭的亮（img 那组互斥）。面板与搜索行共用 */
+  function toggleEnumChip(field, v) {
+    var set = state.filters.enum[field];
+    if (set[v]) {
+      delete set[v];
+    } else {
+      set[v] = 1;
+      if (field === "img") {
+        // 有图 / 无图 是互斥的，别让两个都亮着（那只会筛出空表）
+        Object.keys(set).forEach(function (k) {
+          if (k !== v) {
+            delete set[k];
+          }
+        });
+      }
+    }
   }
 
   /**
@@ -1968,15 +2168,15 @@
   }
 
   /**
-   * 把重画好的圆片贴回面板：**编号输入框原地不动**。
-   * 先删掉上一轮那些动态分组（#codeQGroup 一个不留），再在末尾 append 新的一批。
+   * 把重画好的分组贴回面板。折叠状态在 `state.openGroups` 里，所以重画不会把展开状态弄丢。
+   * （编号那组已经并进搜索行，这里不再有"原地不动"的特例了。）
    */
   function refreshFilterGroups() {
     var body = $("filterBody");
     if (!body) {
       return;
     }
-    body.querySelectorAll(".fgroup:not(#codeQGroup)").forEach(function (n) {
+    body.querySelectorAll(".fgroup").forEach(function (n) {
       n.remove();
     });
     var holder = document.createElement("div");
@@ -3994,70 +4194,107 @@
     };
     // 面板里的改动立刻生效（背后那张列表跟着变），「完成」只是返回
     $("filterBody").onclick = function (e) {
+      // 点组标题 = 展开/收起，只切 class（不重画：重画会冲掉正在输的区间数字）
+      var title = e.target.closest(".ftitle");
+      if (title) {
+        toggleGroup(title.parentNode);
+        return;
+      }
       var chip = e.target.closest(".chip");
       if (!chip) {
         return;
       }
       var field = chip.dataset.field;
-      var set = state.filters.enum[field];
-      var v = chip.dataset.v;
-      if (set[v]) {
-        delete set[v];
-      } else {
-        set[v] = 1;
-        if (field === "img") {
-          // 有图 / 无图 是互斥的，别让两个都亮着（那只会筛出空表）
-          Object.keys(set).forEach(function (k) {
-            if (k !== v) {
-              delete set[k];
-            }
-          });
-        }
-      }
+      toggleEnumChip(field, chip.dataset.v);
       chip.classList.toggle("on");
+      var g = chip.closest(".fgroup");
       if (field === "img") {
         // 互斥后另一个圆片要灭掉：整块重画最省事，也顺带刷新「无图 N」那个数字。
-        // 走 refreshFilterGroups 而不是 renderFilter —— 后者会连带重建编号输入框，
-        // 用户正在那儿打字时会被冲掉。
+        // 折叠状态在 state.openGroups 里，重画不会把展开的那组折回去。
         refreshFilterGroups();
+        g = $("filterBody").querySelector('.fgroup[data-fg="img"]');
       }
-      var g = chip.closest(".fgroup");
-      var t = g && g.querySelector(".ftitle");
-      if (t) {
-        var n = Object.keys(set).length;
-        t.textContent = t.dataset.label + (n ? "（已选 " + n + "）" : "");
-      }
+      // 折着的时候标题右边那行摘要就是唯一线索，点完必须跟着变
+      updateGroupSummary(g);
+      // 搜索行那边可能正开着同一列的圆片（品类/等级），一起同步
+      syncScopeControls();
       state.page = 0;
       renderList();
     };
     $("filterBody").oninput = function (e) {
       var el = e.target;
-      if (el.id === "codeQ") {
-        state.codeQ = el.value;
-        state.page = 0;
-        renderList();
-        return;
-      }
       if (el.dataset && el.dataset.num) {
         var f = el.dataset.num;
         var r = state.filters.num[f] || { min: "", max: "" };
         r[el.dataset.side] = el.value;
         state.filters.num[f] = r;
+        // 区间变了，这一组的摘要也要跟着变（折着时只看得到摘要）
+        updateGroupSummary(el.closest(".fgroup"));
         state.page = 0;
         renderList();
       }
     };
     $("scope").onchange = function () {
       state.scope = $("scope").value;
+      // 切到「点选/区间」那几列时，右边换成对应控件；文字框的旧值不参与过滤（见 scopeUsesText）
+      applyScope();
       state.page = 0;
       renderList();
     };
+    // 状态：只有两种取值，下拉选完立即生效
+    $("scopeStatus").onchange = function () {
+      var set = state.filters.enum.status;
+      Object.keys(set).forEach(function (k) {
+        delete set[k];
+      });
+      if ($("scopeStatus").value) {
+        set[$("scopeStatus").value] = 1;
+      }
+      // 面板里那一组也亮起来
+      if (state.panelOpen) {
+        renderFilter();
+      }
+      state.page = 0;
+      renderList();
+    };
+    // 品类/等级：搜索行里那排圆片，跟面板里的是同一份 state
+    $("scopeChips").onclick = function (e) {
+      var chip = e.target.closest(".chip");
+      if (!chip) {
+        return;
+      }
+      toggleEnumChip(chip.dataset.field, chip.dataset.v);
+      chip.classList.toggle("on");
+      if (state.panelOpen) {
+        renderFilter();
+      }
+      state.page = 0;
+      renderList();
+    };
+    // ⚠️ 编号模式**不能边打边筛**：区间语法有中间态（A → A1 → A1~），
+    // 一路 renderList() 会让列表来回闪。所以打字时只更新下面那行写法提示，
+    // 提交走回车 / 失焦（见 commitQ）。桌面端的编号表达式也是"输完点确定"才生效，口径一致。
     $("q").oninput = function () {
+      if (state.scope === "code") {
+        updateQHint($("q").value);
+        return;
+      }
       state.q = $("q").value;
       state.page = 0; // 筛完条数变了，停在第 3 页没有意义
       renderList();
     };
-    // 编号框在展开区里是动态生成的，事件走 filterBody 的委托，不能在这里直接绑
+    $("q").onkeydown = function (e) {
+      if (state.scope === "code" && e.key === "Enter") {
+        e.preventDefault();
+        commitQ();
+      }
+    };
+    // 手机上"回车"不是习惯动作，点别处也该生效 —— 否则就是当年那条「编号筛选填了没反应」
+    $("q").onblur = function () {
+      if (state.scope === "code") {
+        commitQ();
+      }
+    };
     $("pagePrev").onclick = function () {
       if (state.page > 0) {
         state.page--;
@@ -4624,6 +4861,8 @@
   }
   applyZoom(); // 无论有没有存过：按当前视图决定这三个按钮在不在
   bind();
+  $("scope").value = state.scope;
+  applyScope(); // 搜索行右侧按当前 scope 摆一次（默认「全部」= 文字框）
   applyNewKind(state.newKind); // ===== 套装（可整体移除）===== 新建页按当前类型摆一次（默认普通）
   // 实时推送在读完第一遍之后再连：先让页面有数据可看，连不上也不耽误用
   connectEvents();

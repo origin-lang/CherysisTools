@@ -196,10 +196,38 @@ textarea {
   font-size: 12px;
   white-space: nowrap;
 }
-/* 搜索行现在只有「搜哪一列 + 关键词」，编号范围移进筛选区了 */
+/* 搜索行的可变区：按「搜哪一列」在 输入框 / 下拉 / 圆片 三种形态间切换，都占同一块宽度 */
 .searchbar .grow2 {
   flex: 2 1 120px;
   min-width: 120px;
+}
+/* hidden 要真的收起来：.scopechips 自己是 display:flex，光靠 [hidden] 的默认样式盖不住 */
+.searchbar [hidden] {
+  display: none !important;
+}
+/* 品类/等级那排圆片：跟搜索行同排，所以矮一点（38px 的 .chip 会把整行撑高） */
+.scopechips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.scopechips .chip {
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+/* 编号表达式的写法提示（只在该模式下出现）—— 一行灰字，写岔了就转红 */
+.q-hint {
+  margin: 0;
+  padding: 0 var(--pad) 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+.q-hint.bad {
+  color: #c0392b;
 }
 
 /* 生效中的条件：一条一个 pill，✕ 撤这一条 */
@@ -906,13 +934,65 @@ textarea {
 }
 
 /* 漏斗筛选面板 */
+/* 每组折成一行：点标题展开/收起（见 app.js 的 toggleGroup）。
+   面板一共十来组，全展开手机上要滚好几屏才到「排序」；折起来则组名一眼看全，
+   只展开你正在弄的那一组。摘要（已选 N / 当前区间）挂在标题右边，折着也知道筛着什么。 */
 .fgroup {
   margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
 }
 .ftitle {
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  cursor: pointer;
+  user-select: none;
+  background: var(--card);
+}
+.ftitle .fchev {
+  flex: none;
+  font-size: 11px;
   color: var(--muted);
-  margin-bottom: 8px;
+  transition: transform 0.15s;
+}
+.fgroup:not(.folded) .ftitle .fchev {
+  transform: rotate(90deg);
+}
+.ftitle .fname {
+  flex: none;
+}
+/* 摘要：折起来的时候才有意义（展开时下面那排圆片已经说明一切）。
+   选了好几个名字时会很长 —— 单行省略，别把标题挤掉。 */
+.ftitle .fsum {
+  margin-left: auto;
+  min-width: 0;
+  flex: 0 1 auto;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ftitle .fsum.on {
+  color: var(--brand);
+}
+.fgroup.folded > .ftitle {
+  background: transparent;
+}
+/* 收起来的组：内容整块不占位（注意是 .fbody，不是 .chips/.rng —— 数值组的外层是 .rng） */
+.fgroup.folded > .fbody {
+  display: none;
+}
+.fbody {
+  padding: 4px 12px 12px;
 }
 .chips {
   display: flex;
