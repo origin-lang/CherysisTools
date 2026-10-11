@@ -886,10 +886,19 @@ function onMessage(msg) {
     case "productsLoaded": {
       state.products = msg.products || [];
       state.settings.stock_alert = msg.stockAlert || 0;
+      // ===== 套装（可整体移除）===== 套装的「含 N 件 / 合计进价 / 合计售价」，
+      // 后端现算好跟着整库一起下来（见 shopTool/index.ts 的 loadAll）
+      state.setSummaries = msg.setSummaries || {};
       populateFilters();
       updateNameTemplatePreview();
       if (typeof renderProductDrawer === "function") {
         renderProductDrawer();
+      }
+      // ===== 套装（可整体移除）===== 抽屉正开着某个套装时，把它的子商品清单也再要一遍：
+      // 刚被别人改过价的子商品，会让我们手里那份"现算的合计"变成旧数 ——
+      // 出现"整表都新了、就抽屉里那个合计还是旧的"，比整块都旧更容易骗到人。
+      if (typeof refreshDrawerSet === "function") {
+        refreshDrawerSet();
       }
       // 整库刷新这条路同样收不到直播区的价格通知（它只跑 renderLivePreviews 刷封面），
       // 不叫一下的话，手动 🔄 之后直播排品里的 ¥售价 还是刷新前的数
@@ -942,6 +951,33 @@ function onMessage(msg) {
       // 增量也会带进新产品（新导入的行是 push 进来的），筛选漏斗要跟着重建，
       // 否则新分类/新系列在漏斗里点不出来 —— 以前这条路径只由整库 productsLoaded 兜
       populateFilters();
+      break;
+    }
+    // ===== 套装（可整体移除）=====
+    // 打开套装详情抽屉时单独问回来的「子商品清单 + 现算的三个合计」。
+    // 加/移出子商品之后后端也回这一条（它是"这个套装现在长什么样"的唯一权威口径），
+    // 所以这里除了重画抽屉，还要顺手更新全表那份汇总 ——
+    // 列表 / 画册卡片上的「含 N 件 · 合 ¥xx」不给它就不动，界面就开始说谎。
+    case "setMembers": {
+      state.drawerSet = { code: msg.code, items: msg.items || [] };
+      state.setSummaries[msg.code] = {
+        count: Number(msg.count || 0),
+        sumCost: Number(msg.sumCost || 0),
+        sumSale: Number(msg.sumSale || 0),
+      };
+      renderProducts();
+      if (typeof renderProductDrawer === "function") {
+        renderProductDrawer();
+      }
+      break;
+    }
+    // ===== 套装（可整体移除）=====
+    // 这个商品属于哪些套装（打开普通商品的抽屉时问一次）。手机版详情页顶部那一行就是它。
+    case "setOfCode": {
+      state.drawerSetsOf = msg.sets || [];
+      if (typeof renderProductDrawer === "function") {
+        renderProductDrawer();
+      }
       break;
     }
     case "rulesLoaded": {

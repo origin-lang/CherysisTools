@@ -40,6 +40,18 @@ window.toolClients = window.toolClients || {};
       coverCache: {},
       coverPending: {},
       coverRenderQueued: false,
+      // ===== 套装（可整体移除）=====
+      // 每个套装的「含 N 件 / 合计进价(sumCost) / 合计售价(sumSale)」，键 = 套装编号。
+      // 后端随整库下发（productsLoaded.setSummaries），**现算不落库** ——
+      // 子商品一调价，这里下一次整库刷新就是新值。
+      setSummaries: {},
+      // 当前详情抽屉里这个套装的**成员清单**（{code, items}，setMembers 回包填；null = 不是套装/还没回来）。
+      // 跟 setSummaries 分开：那个是"全表每个套装的汇总"，整库下发很便宜；
+      // 这个是"正在看的那一个"的逐行明细，几百个套装每人一份算出来没人看，只有真打开了才单独问一次。
+      drawerSet: null,
+      // 抽屉里这个**普通商品**属于哪些套装（setOfCode 回包填）。空数组 = 谁都不属于 / 还没回来 ——
+      // 两种情况的画法一样（整行不渲染），所以不用再分一个"加载中"。
+      drawerSetsOf: [],
       // 大图 base64 缓存，键 = `${code}:${文件名}`。键不中的代价只是重新取一次图，
       // 键错中的代价是显示成别的图，所以宁可多取。
       lbFullCache: {},

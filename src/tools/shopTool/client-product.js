@@ -1033,6 +1033,7 @@ function renderListBody(list) {
       const starred = state.liveStars && state.liveStars.has(p.code);
       const tds = [];
       const isSelected = state.selectedProducts.has(p.id);
+      const isSet = isSetProduct(p);
       tds.push(
         `<td><input type="checkbox" class="product-checkbox" data-id="${p.id}" ${isSelected ? "checked" : ""} title="选择 #${p.code}" /></td>`,
       );
@@ -1044,10 +1045,10 @@ function renderListBody(list) {
         let v = "";
         let cls = "";
         let tip = "";
-        const editable = EDITABLE_FIELDS.has(f.key) ? 'data-edit="1"' : "";
+        const editable = !isSetFrozenCell(p, f.key) && EDITABLE_FIELDS.has(f.key) ? 'data-edit="1"' : "";
         switch (f.key) {
           case "code":
-            v = `<div class="clip-cell" data-p-act="edit" data-id="${p.id}" title="点击打开详情 / 编辑：${esc(p.code)}"><b>${esc(p.code)}</b></div>`;
+            v = `<div class="clip-cell" data-p-act="edit" data-id="${p.id}" title="点击打开详情 / 编辑：${esc(p.code)}"><b>${esc(p.code)}</b>${isSet ? '<span class="badge badge-set">套</span>' : ""}</div>`;
             cls = "cell-code";
             break;
           case "name":
@@ -1060,19 +1061,21 @@ function renderListBody(list) {
             v = `<div class="clip-cell" title="${esc(p.series || "")}">${esc(p.series || "")}</div>`;
             break;
           case "grade":
-            v = esc(displayGrade(p));
+            v = isSet ? setCellText(p, "grade") : esc(displayGrade(p));
             break;
-          case "cost_price":
-            v = money(p.cost_price);
+          case "cost_price": {
+            const over = setCellText(p, "cost_price");
+            v = over !== null ? esc(over) : money(p.cost_price);
             cls = "num";
             break;
+          }
           case "sale_price":
             v = money(p.sale_price);
             cls = "num";
             break;
           case "stockTotal":
-            v = qty(p.stockTotal || 0);
-            cls = "num cell-stock";
+            v = isSet ? setCellText(p, "stockTotal") : qty(p.stockTotal || 0);
+            cls = isSet ? "num" : "num cell-stock";
             break;
           case "soldTotal":
             v = qty(p.soldTotal || 0);
@@ -2473,13 +2476,18 @@ function renderGallery(list) {
           .map((p) => {
             const off = p.status === 1;
             const low = lowStock(p);
+            const isSet = isSetProduct(p);
             const fields = PRODUCT_FIELDS.filter(
               (f) => f.key !== "purchase_link" && visGallery.has(f.key),
             );
             const lines = fields
               .map((f) => {
                 let v = "";
-                if (f.key === "grade") {
+                // 套装的 进价/等级/库存 是派生只读的（见 setCellText），优先于普通逻辑
+                const over = setCellText(p, f.key);
+                if (over !== null) {
+                  v = esc(over);
+                } else if (f.key === "grade") {
                   v = esc(displayGrade(p));
                 } else if (f.key === "status") {
                   v = "";
@@ -2495,10 +2503,13 @@ function renderGallery(list) {
                   return `<div class="code">${v}</div>`;
                 }
                 if (f.key === "stockTotal") {
-                  return `<div class="${low ? "low-stock-tag" : ""}">${f.label}：${qty(p.stockTotal || 0)}</div>`;
+                  return `<div class="${low && !isSet ? "low-stock-tag" : ""}">${f.label}：${v}</div>`;
                 }
                 if (f.key === "cost_price" || f.key === "sale_price") {
-                  return `<div>${f.label}：¥${money(v)}</div>`;
+                  // 套装那格已经是「合 ¥xx」这种整句了，别再套一层 ¥
+                  return over !== null
+                    ? `<div>${f.label}：${v}</div>`
+                    : `<div>${f.label}：¥${money(v)}</div>`;
                 }
                 return `<div>${f.label}：${v}</div>`;
               })
@@ -2509,6 +2520,7 @@ function renderGallery(list) {
             return `<div class="card ${off ? "off" : ""}" data-p-act="img" data-id="${p.id}">
                   <button class="star ${starred ? "on" : ""}" data-s-act="toggle" data-code="${esc(p.code)}" data-id="${p.id}" title="${starred ? "取消星标" : "标记星标（直播排品备选同用）"}">${starred ? "★" : "☆"}</button>
                   <span class="card-badge ${off ? "off" : ""}">${off ? "已下架" : p.code}</span>
+                  ${isSet ? '<span class="card-setbadge">套</span>' : ""}
                   ${showImageGallery ? (coverData ? `<img src="${coverData}" />` : `<div class="ph">暂无图片</div>`) : ""}
                   <div class="card-body">${lines}</div>
                   <button class="edit-btn" data-p-act="edit" data-id="${p.id}" title="打开详情 / 编辑">编辑</button>
@@ -2521,14 +2533,89 @@ function stateProduct(code) {
   return state.products.find((p) => p.code === code);
 }
 
+// ===== 套装（可整体移除）=====
+// 桌面端这套页面跟手机版（src/webview/mobile/）是两份代码，**同一套后端消息**。
+// 前缀常量、校验、消息名全在后端 handlers/sets.ts 里，这边只负责显示与转发。
+
+/** 这个商品是不是套装。**只认 kind，不认 T 前缀** —— 改号允许换前缀，认前缀迟早会漏。 */
+function isSetProduct(p) {
+  return Number(p && p.kind) === 1;
+}
+
+/**
+ * 套装的合计：{ count, sumCost, sumSale }，键 = 套装编号。
+ * 后端随整库下发（productsLoaded.setSummaries）、**现算不落库**，所以子商品一调价这里就是新值。
+ * 没有就返回 null（比如后端还没刷过来）。
+ */
+function setSummaryOf(p) {
+  return (p && state.setSummaries && state.setSummaries[p.code]) || null;
+}
+
+/**
+ * 套装在列表 / 画册里那几格该显示什么 —— 派生值，不落库。返回 null = 按普通商品照常显示。
+ *   进价 → 「合 ¥xx」（子商品进价合计）
+ *   等级 → 「—」（售价手填，等级不参与算价）
+ *   库存 → 「—」（套装不记库存、销量归子商品）
+ * ⚠️ 这三格对套装**不给 data-edit**（见列表渲染里那个 frozen）：它们显示的是现算的真相，
+ *    让人以为能改、点开一改就把真相覆盖了，那才是真的坑。
+ */
+function setCellText(p, key) {
+  if (!isSetProduct(p)) {
+    return null;
+  }
+  if (key === "cost_price") {
+    const ss = setSummaryOf(p);
+    return ss ? `合 ¥${money(ss.sumCost)}` : "…";
+  }
+  if (key === "grade" || key === "stockTotal") {
+    return "—";
+  }
+  return null;
+}
+
+/** 这几个键对套装是"派生只读"的，列表里不给 data-edit */
+function isSetFrozenCell(p, key) {
+  return (
+    isSetProduct(p) &&
+    (key === "cost_price" || key === "grade" || key === "stockTotal")
+  );
+}
+
 // ─── 商品详情抽屉（画册「编辑」按钮 / 列表点名称共用）作者：字段改动即存 ───
+// 标题**不带序号**：2026-10-11 改。以前是「① 商品档案 / ② 价格与销售 / ③ 状态与辅助」，
+// 商家原话"因为是 12345，我感觉看着很头疼"。分区卡片化之后卡片本身就分隔了，序号纯属噪音。
 const DRAWER_GROUPS = [
-  { title: "① 商品档案", keys: ["code", "name", "category", "series", "grade"] },
-  { title: "② 价格与销售", keys: ["cost_price", "sale_price", "stockTotal", "soldTotal", "netTotal"] },
-  { title: "③ 状态与辅助", keys: ["status", "purchase_link", "remark"] },
+  { title: "商品档案", keys: ["code", "name", "category", "series", "grade"] },
+  { title: "价格与销售", keys: ["cost_price", "sale_price", "stockTotal", "soldTotal", "netTotal"] },
+  { title: "状态与辅助", keys: ["status", "purchase_link", "remark"] },
 ];
 // 抽屉里可编辑的字段（status 走 setStatus，其余走 saveFieldValue）
 const DRAWER_EDITABLE = new Set([...EDITABLE_FIELDS, "status"]);
+// ===== 套装（可整体移除）=====
+/**
+ * 这几个字段对套装是"根本没有的东西"，抽屉里**直接不渲染**：
+ *   等级 → 套装不参与按规则算价
+ *   进价 → 它是派生值（永远等于子商品进价之和），合计条里已经说了一遍，再挂一行是同一个数说两遍
+ *   库存 → 套装不记库存
+ *   累计售出 / 累计净售 → 销量归子商品，套装自身没有
+ *   购买链接 → 套装是打包卖，没有单件链接
+ * 以前它们"露着但显示 — 或 0"：一排 — 既占版面，又让人以为哪里坏了。
+ * ⚠️ 只影响**抽屉**。列表 / 画册里那几格仍由 setCellText 显示「合 ¥xx」「—」——
+ *    那两个地方是"跟同一列的普通商品并排看"，空格子会让人以为漏了数据。
+ */
+const DRAWER_SET_HIDE = new Set([
+  "grade",
+  "cost_price",
+  "stockTotal",
+  "soldTotal",
+  "netTotal",
+  "purchase_link",
+]);
+
+function drawerHideField(p, key) {
+  return isSetProduct(p) && DRAWER_SET_HIDE.has(key);
+}
+
 let drawerPid = 0;
 let drawerKeyHandler = null;
 
@@ -2542,6 +2629,16 @@ function openProductDrawer(product) {
     return;
   }
   drawerPid = product.id;
+  // ===== 套装（可整体移除）=====
+  // 打开套装抽屉时单独问一次子商品清单（合计也从它现算）；普通商品问"它属于哪些套装"。
+  // 两个都先清空：免得把上一个商品留下的清单 / 归属画到这一个上（挨着看的时候最明显）。
+  state.drawerSet = null;
+  state.drawerSetsOf = [];
+  if (isSetProduct(product)) {
+    post({ type: "setMembers", code: product.code });
+  } else {
+    post({ type: "setOfCode", code: product.code });
+  }
   const mask = $("drawerBackdrop");
   const box = $("productDrawer");
   if (mask) {
@@ -2659,6 +2756,224 @@ function drawerControl(p, key) {
   return `<input class="d-field" data-d-f="${key}" data-id="${p.id}"${attrs} value="${esc(String(p[key] ?? ""))}" />`;
 }
 
+// ===== 套装（可整体移除）===== 抽屉里那两块：合计区 + 子商品清单。
+
+/**
+ * 抽屉里这个套装的成员清单；null = 还没回来（读取中）、或抽屉里这个根本不是套装。
+ * 为什么清单不跟整库一起下发：那是"每个套装各一份"的逐行明细，几百个套装全算一遍纯属白烧，
+ * 只有真打开的那一个才值得单独问一次（见 openProductDrawer）。
+ */
+function drawerSetItems(p) {
+  const ds = state.drawerSet;
+  return ds && ds.code === p.code ? ds.items || [] : null;
+}
+
+/** 整库刷新时顺手把抽屉里那个套装的清单再要一遍（子商品可能刚被别人改过价，现算的合计得跟着新） */
+function refreshDrawerSet() {
+  if (!drawerPid) {
+    return;
+  }
+  const p = state.products.find((x) => x.id === drawerPid);
+  if (p && isSetProduct(p)) {
+    post({ type: "setMembers", code: p.code });
+  }
+}
+
+/**
+ * 合计区那三个数。**从刚拿到的那份清单现算**（不去读 setSummaries）——
+ * 这样它跟正上方那几行子商品永远是同一时刻的数，不会出现"行是新的、合计是上一轮的"。
+ * 差额只在两边都有数的时候说：否则「比合计 ¥0.00」会被当成结论。
+ *   比合计 = 本套装售价 − 子商品合计售价；负数是让利（绿）、正数是比拆开买还贵（红）。
+ */
+function setSumHtml(p) {
+  const items = drawerSetItems(p);
+  let sumCost = 0;
+  let sumSale = 0;
+  if (items) {
+    for (const it of items) {
+      sumCost += Number(it.cost_price || 0);
+      sumSale += Number(it.sale_price || 0);
+    }
+    sumCost = Math.round(sumCost * 100) / 100;
+    sumSale = Math.round(sumSale * 100) / 100;
+  }
+  const cell = (k, v, cls) =>
+    `<div class="dss-cell"><div class="dss-k">${k}</div><div class="dss-v${cls ? " " + cls : ""}">${v}</div></div>`;
+  let diff = "";
+  const sale = Number(p.sale_price || 0);
+  if (items && sale > 0 && sumSale > 0) {
+    const d = Math.round((sale - sumSale) * 100) / 100;
+    if (d === 0) {
+      diff = cell("比合计", "同价");
+    } else if (d < 0) {
+      diff = cell("比合计", `− ¥${money(-d)}`, "dss-good");
+    } else {
+      diff = cell("比合计", `+ ¥${money(d)}`, "dss-bad");
+    }
+  }
+  return (
+    `<div class="d-set-sum">` +
+    cell("合计进价", items ? `¥${money(sumCost)}` : "…") +
+    cell("合计售价", items ? `¥${money(sumSale)}` : "…") +
+    diff +
+    `</div>`
+  );
+}
+
+/**
+ * 子商品清单 + 添加框。行上**不配常驻「移出」按钮**（2026-10-11 定）：
+ * 一排小按钮太吵，桌面端的做法是**行上右键 →「从套装移出」**（见 openSetRowMenu）。
+ * 行上**能点的地方只有编号**（`data-open-child`）→ 把抽屉切到那个商品；
+ * 点整行跳走在手机版那轮就被否掉了，别在这里破例。
+ */
+function setMemberHtml(p) {
+  const items = drawerSetItems(p);
+  if (items === null) {
+    return `<div class="d-set"><p class="muted">子商品读取中…</p></div>`;
+  }
+  const rows = items.length
+    ? items
+        .map(
+          (it) =>
+            `<div class="d-set-row" data-set-child="${esc(it.code)}" title="点编号打开这个商品 · 右键可从套装移出">` +
+            `<span class="d-set-code" data-open-child="${esc(it.code)}" title="打开 ${esc(it.code)}">${esc(it.code)}</span>` +
+            `<span class="d-set-name">${esc(it.name || "")}</span>` +
+            `<span class="d-set-price">进 ¥${money(it.cost_price)} / 售 ¥${money(it.sale_price)}</span>` +
+            `</div>`,
+        )
+        .join("")
+    : `<p class="muted">还没加子商品 —— 在下面填个子商品编号，回车加进来。</p>`;
+  return (
+    `<div class="d-set">` +
+    `<div class="d-set-head">` +
+    // 只写"N 件"：上面那行分区标题已经叫「子商品」了，再说一遍是废话
+    `<span class="d-set-cnt">${items.length} 件</span>` +
+    (items.length ? `<span class="muted">右键某行可移出</span>` : "") +
+    `</div>` +
+    `<div class="d-set-rows">${rows}</div>` +
+    `<div class="d-set-add">` +
+    `<input id="dSetAdd" type="text" spellcheck="false" placeholder="子商品编号，回车添加" />` +
+    `<button class="mini-btn" id="dSetAddBtn" type="button">＋ 添加</button>` +
+    `</div>` +
+    `</div>`
+  );
+}
+
+/** 套装那块的接线：添加框 + 每行右键「从套装移出」+ 编号单击切过去 */
+function bindDrawerSet(box, p) {
+  const add = box.querySelector("#dSetAdd");
+  const btn = box.querySelector("#dSetAddBtn");
+  const addMember = () => {
+    const childCode = (add ? add.value : "").trim();
+    if (!childCode) {
+      toast("先填子商品编号", true);
+      return;
+    }
+    if (add) {
+      add.value = "";
+    }
+    // 校验全在后端（存在 / 不是套装 / 不是自己 / 不重复），失败会写日志并弹出来
+    post({ type: "setAddMember", code: p.code, childCode });
+  };
+  if (btn) {
+    btn.onclick = addMember;
+  }
+  if (add) {
+    add.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addMember();
+      }
+    };
+  }
+  box.querySelectorAll(".d-set-row").forEach((row) => {
+    row.oncontextmenu = (e) => openSetRowMenu(e, p, row.dataset.setChild);
+  });
+  // 点**编号**把抽屉切到那个子商品。没有"返回"按钮（商家定的 B 方案）——
+  // 不过子商品自己的抽屉底下有「属于」那一行，点它就能回到这个套装，所以不是死路。
+  box.querySelectorAll("[data-open-child]").forEach((el) => {
+    el.onclick = () => {
+      const target = state.products.find((x) => x.code === el.dataset.openChild);
+      if (target) {
+        openProductDrawer(target);
+      } else {
+        // 理论上到不了这（清单里的行都来自库里）；真到了也别静默 —— 点了没反应最难受
+        toast(`找不到商品 ${el.dataset.openChild}`, true);
+      }
+    };
+  });
+}
+
+/**
+ * 子商品行右键菜单。整套只有一项「从套装移出」——
+ * 移出会改数据（虽然只删关联、不删商品），所以照手机版一样先确认一次。
+ * 关菜单那套（点别处 / Esc）直接复用列表右键用的 closeCtxMenu，不另起一套。
+ */
+function openSetRowMenu(e, p, childCode) {
+  if (!childCode) {
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+  closeCtxMenu();
+  const menu = document.createElement("div");
+  menu.id = "ctxMenu";
+  menu.style.cssText =
+    "position:fixed;z-index:70;background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:4px;padding:4px 0;min-width:150px;box-shadow:0 2px 8px rgba(0,0,0,.3)";
+  menu.innerHTML = `<div class="ctx-item ctx-danger" data-set-act="rm">从套装移出 ${esc(childCode)}</div>`;
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 170) + "px";
+  menu.style.top = Math.min(e.clientY, window.innerHeight - 40) + "px";
+  document.body.appendChild(menu);
+  menu.querySelector('[data-set-act="rm"]').onclick = () => {
+    closeCtxMenu();
+    confirmBox(
+      `把 ${childCode} 从 ${p.code} 移出？\n（只是不再属于这个套装，商品本身不会被删）`,
+    ).then((ok) => {
+      if (ok) {
+        post({ type: "setRemoveMember", code: p.code, childCode });
+      }
+    });
+  };
+  setTimeout(() => {
+    window.addEventListener("mousedown", onCtxMenuDown);
+    window.addEventListener("keydown", onCtxMenuKey);
+  }, 0);
+}
+
+/**
+ * 子商品这边的抽屉顶部：**它属于哪些套装**。
+ * 手机版详情页顶部早就有这一行，桌面端一直漏着（2026-10-11 才补）。
+ * 没有就返回空串 —— 露一个空标题比不露更怪。编号可点，点了抽屉直接切过去。
+ */
+function drawerSetsOfHtml(p) {
+  if (isSetProduct(p)) {
+    return "";
+  }
+  const sets = state.drawerSetsOf || [];
+  if (!sets.length) {
+    return "";
+  }
+  return (
+    `<div class="d-sets-of"><span>属于</span>` +
+    sets
+      .map((c) => `<button type="button" data-goto-set="${esc(c)}">${esc(c)}</button>`)
+      .join("") +
+    `</div>`
+  );
+}
+
+/** 「属于」里那些编号的点击：把抽屉**切到那个套装**，不用先回列表里找它 */
+function bindDrawerSetsOf(box) {
+  box.querySelectorAll("[data-goto-set]").forEach((el) => {
+    el.onclick = () => {
+      const target = state.products.find((x) => x.code === el.dataset.gotoSet);
+      if (target) {
+        openProductDrawer(target);
+      }
+    };
+  });
+}
+
 function renderProductDrawer() {
   const box = $("productDrawer");
   if (!box || !drawerPid) {
@@ -2673,11 +2988,21 @@ function renderProductDrawer() {
   const active = document.activeElement;
   const activeKey =
     active && box.contains(active) ? active.dataset.dF || null : null;
+  // 套装的添加框不是 .d-field，单独记一下它的值和焦点：setMembers 回包会整块重画抽屉，
+  // 正在输子商品编号时不能被冲掉（跟下面恢复焦点同一条理由）。
+  const addEl = box.querySelector("#dSetAdd");
+  const addVal = addEl ? addEl.value : "";
+  const addFocus = addEl && active === addEl;
   const off = p.status === 1;
+  const isSet = isSetProduct(p);
+  // 套装先**去掉根本没有的字段**再画（见 DRAWER_SET_HIDE）——
+  // 所以这里不再需要"派生只读"那条分支：该显示的要么能改，要么是纯文本，
+  // 没有"露着但不能改、还显示 —"这种半吊子格了。
   const groups = DRAWER_GROUPS.map(
     (g) =>
       `<div class="d-group-title">${g.title}</div><div class="d-form">` +
       g.keys
+        .filter((k) => !drawerHideField(p, k))
         .map((k) =>
           DRAWER_EDITABLE.has(k)
             ? `<label>${fieldLabel(k)}</label>${drawerControl(p, k)}`
@@ -2686,19 +3011,27 @@ function renderProductDrawer() {
         .join("") +
       `</div>`,
   ).join("");
+  // 子商品清单垫在最后：「这一套由什么组成」是附录性质的信息，
+  // 混进 商品档案/价格/状态 里会把那三段切断。
+  const setBlock = isSet
+    ? `<div class="d-group-title">子商品</div>${setMemberHtml(p)}`
+    : "";
   box.innerHTML = `
     <div class="d-head">
-      <div>
-        <div class="d-title"><b>${esc(p.code)}</b>${esc(p.name)}</div>
-        <div class="d-sub">
-          <span>${esc(displayGrade(p))} · 售价 ¥${money(p.sale_price)}</span>
-          <span class="badge ${off ? "badge-off" : "badge-on"}">${off ? "已下架" : "在售"}</span>
+      <div class="d-head-main">
+        <div class="d-title"><b>${esc(p.code)}</b>${isSet ? '<span class="badge badge-set">套</span>' : ""}<span class="d-name">${esc(p.name)}</span></div>
+        <div class="d-price-line">
+          <span class="d-price-hint">售价</span>
+          <span class="d-price">¥${money(p.sale_price)}</span>
+          ${isSet ? "" : `<span class="d-grade">${esc(displayGrade(p))}</span>`}
+          <span class="badge ${off ? "badge-off" : "badge-on"} d-status">${off ? "已下架" : "在售"}</span>
         </div>
+        ${isSet ? setSumHtml(p) : ""}
       </div>
       <button class="d-close" data-d-act="close" title="关闭（Esc）">✕</button>
     </div>
     <div class="d-body">
-      ${groups}
+      ${drawerSetsOfHtml(p)}${groups}${setBlock}
     </div>
     <div class="d-foot">
       <button class="mini-btn" id="drawerUndoBtn" ${state.canUndo ? "" : "disabled"} title="撤销上一步修改">↩ 撤销</button>
@@ -2722,6 +3055,11 @@ function renderProductDrawer() {
     redo.onclick = () => post({ type: "redoRequest" });
   }
   bindDrawerFields(box, p);
+  if (isSet) {
+    bindDrawerSet(box, p);
+  } else {
+    bindDrawerSetsOf(box);
+  }
   if (activeKey) {
     const again = box.querySelector(`.d-field[data-d-f="${activeKey}"]`);
     if (again) {
@@ -2732,6 +3070,15 @@ function renderProductDrawer() {
         } catch {
           /* number 输入不支持 setSelectionRange，忽略 */
         }
+      }
+    }
+  }
+  if (isSet) {
+    const add2 = box.querySelector("#dSetAdd");
+    if (add2) {
+      add2.value = addVal;
+      if (addFocus) {
+        add2.focus();
       }
     }
   }
@@ -2920,17 +3267,18 @@ function openNewProduct() {
     .map((r) => `<option value="${r.grade}">${esc(gradeLabel(r.grade))}</option>`)
     .join("");
   const mask = showModal(`
-        <h3>＋ 新建商品</h3>
+        <h3 id="npTitle">＋ 新建商品</h3>
         <div class="form-grid">
+          <label>类型</label><div class="np-kind"><button type="button" id="npKindNormal" class="on">普通商品</button><button type="button" id="npKindSet">套装</button></div>
           <label>编号 *</label><div><input id="npCode" placeholder="如 A001 / L007，1 个字母 + 数字，自动补零到 3 位" /><span id="npCodeHint" class="muted" style="display:block;font-size:11px;margin-top:2px"></span></div>
           <label>名称</label><input id="npName" maxlength="100" placeholder="如：铜合金锆石手链 四叶花" />
           <label>品类</label><input id="npCategory" list="shopCatList" maxlength="50" placeholder="手链 / 项链 / 耳环 / 戒指 / 手镯…可自定义" />
           <label>系列</label><input id="npSeries" maxlength="50" placeholder="A类 / B类 / C类…（平台链接系列，可空）" />
-          <label>等级</label><select id="npGrade"><option value="0">自定义（售价手动定）</option>${gradeOptions}</select>
-          <label>进价 ¥</label><input id="npCost" type="number" min="0" step="0.01" value="0" />
+          <label class="npSetHide">等级</label><select id="npGrade" class="npSetHide"><option value="0">自定义（售价手动定）</option>${gradeOptions}</select>
+          <label class="npSetHide">进价 ¥</label><input id="npCost" class="npSetHide" type="number" min="0" step="0.01" value="0" />
           <label>售价 ¥</label><input id="npSale" type="number" min="0" step="0.01" placeholder="可留空，之后再填" />
-          <label></label><span class="computed" id="npPreview">售价将自动计算</span>
-          <label>期初库存</label><input id="npStock" type="number" min="0" step="1" value="0" />
+          <label class="npSetHide"></label><span class="computed npSetHide" id="npPreview">售价将自动计算</span>
+          <label class="npSetHide">期初库存</label><input id="npStock" class="npSetHide" type="number" min="0" step="1" value="0" />
           <label>采购链接</label><input id="npLink" maxlength="500" placeholder="下次进货去这里" />
           <label>备注</label><input id="npRemark" maxlength="200" />
         </div>
@@ -2967,6 +3315,40 @@ function openNewProduct() {
     el.textContent = `前缀 ${prefix} · 当前最小未用：${next || "已用完（9999 满，请换一个前缀）"}`;
   };
   $("npCode").oninput();
+  // ===== 套装（可整体移除）===== 顶部的「普通商品 / 套装」类型开关
+  // 编号与类型**当场对齐**：切套装 → 自动换成 T 段空号；切回普通 → T 开头的号会被换掉
+  // （T 是套装专用）。不这么做，后端 addProduct 的「前缀 ↔ kind」校验会直接拒掉新建 ——
+  // 那道校验存在的意义就是让这两种身份永远不打架。
+  // 套装落库的形态由后端定死：grade=0 / cost_price=0 / price_manual=1 / 不写期初入库。
+  let npKind = 0;
+  const applyKind = () => {
+    const isSet = npKind === 1;
+    mask.querySelectorAll(".npSetHide").forEach((el) => {
+      el.style.display = isSet ? "none" : "";
+    });
+    $("npKindNormal").classList.toggle("on", !isSet);
+    $("npKindSet").classList.toggle("on", isSet);
+    const title = $("npTitle");
+    if (title) {
+      title.textContent = isSet ? "＋ 新建套装" : "＋ 新建商品";
+    }
+    const codeEl = $("npCode");
+    const looksSet = /^T/i.test(String(codeEl.value || "").trim());
+    if (isSet && !looksSet) {
+      codeEl.value = nextAvailableCode("T") || "";
+    } else if (!isSet && looksSet) {
+      codeEl.value = nextAvailableCode("A") || "";
+    }
+    codeEl.oninput(); // 重算「前缀 X · 当前最小未用」那行提示
+  };
+  $("npKindNormal").onclick = () => {
+    npKind = 0;
+    applyKind();
+  };
+  $("npKindSet").onclick = () => {
+    npKind = 1;
+    applyKind();
+  };
   $("npCancel").onclick = closeModal;
   $("npSave").onclick = () => {
     const codeRaw = canonicalCode($("npCode").value);
@@ -3027,6 +3409,10 @@ function openNewProduct() {
       name: name.value,
       category: category.value,
       series: series.value,
+      // ===== 套装（可整体移除）===== 0 普通 / 1 套装。
+      // **必须发**：后端会校验「T 前缀 ↔ kind=1」，漏了这个字段就永远建不出套装
+      // （以前漏发是"T 号被当成普通商品建出来"；加了校验之后漏发就变成"建不了"）。
+      kind: npKind,
       grade: npGrade,
       costPrice: cost.value,
       salePrice: sale.value,

@@ -309,6 +309,39 @@
         background: var(--vscode-button-secondaryBackground);
         color: var(--vscode-descriptionForeground);
       }
+      /* ===== 套装（可整体移除）=====
+         列表里编号格的「套」角标（跟 badge-on/off 同一套尺寸，只换个色）。
+         套装的字面身份靠 T 前缀给人看，这里只是把它显出来。 */
+      .badge-set {
+        background: var(--vscode-button-background, #0e639c);
+        color: var(--vscode-button-foreground, #fff);
+        margin-left: 4px;
+      }
+      /* 画册卡片的「套」角标：放**左上** —— 右上是编号 / 已下架（.card-badge），别撞上 */
+      .card-setbadge {
+        position: absolute;
+        top: 6px;
+        left: 6px;
+        padding: 1px 7px;
+        border-radius: 3px;
+        font-size: 11px;
+        background: var(--vscode-button-background, #0e639c);
+        color: var(--vscode-button-foreground, #fff);
+      }
+      /* 新建表单顶部的「普通 / 套装」类型开关 */
+      .np-kind {
+        display: flex;
+        gap: 6px;
+      }
+      .np-kind button {
+        padding: 3px 12px;
+        border-radius: 4px;
+      }
+      .np-kind button.on {
+        background: var(--vscode-button-background, #0e639c);
+        color: var(--vscode-button-foreground, #fff);
+        border-color: transparent;
+      }
       .thumb {
         width: auto;
         height: calc(var(--row-py, 5px) * 2 + 24px);
@@ -715,7 +748,9 @@
         top: 0;
         right: 0;
         height: 100vh;
-        width: 370px;
+        /* 440px：跟手机版宽屏抽屉（style.css 的 --drawer: min(440px, 44vw)）同宽 ——
+           字段不那么挤，两边看着也像一套。 */
+        width: 440px;
         max-width: 92vw;
         background: var(--vscode-editor-background);
         border-left: 1px solid var(--vscode-panel-border);
@@ -724,31 +759,70 @@
         display: flex;
         flex-direction: column;
         box-sizing: border-box;
+        /* ===== 字号三级 =====
+           ⚠️ 以前这里从标题到输入框全是**写死的** 11/12/13px。用户在设置里把「字号」
+           调到 15/16，列表跟着变大、抽屉原地不动 —— 越对比越糊，这就是"伤眼睛"。
+           现在整块从 --table-font-size 派生（它挂在 body 上，抽屉是 body 的后代，继承得到）：
+             标签 / 次要信息 = -1px（且不小于 11px）
+             正文 / 字段值 / 输入框 = 原值
+             合计条那三个数 = +2px
+             关键数字（售价） = +5px
+           觉得整体还小，去设置里调「字号」，抽屉和列表**一起**变 —— 别再在这儿写死一个数。 */
+        --d-fs: var(--table-font-size, 13px);
+        --d-fs-tag: max(11px, calc(var(--d-fs) - 1px));
+        --d-fs-mid: calc(var(--d-fs) + 2px);
+        --d-fs-big: calc(var(--d-fs) + 5px);
       }
       #productDrawer .d-head {
         display: flex;
         align-items: flex-start;
         gap: 8px;
-        padding: 10px 12px;
+        padding: 10px 12px 11px;
         border-bottom: 1px solid var(--vscode-panel-border);
         background: var(--vscode-sideBar-background);
         flex-shrink: 0;
       }
+      #productDrawer .d-head-main {
+        flex: 1;
+        min-width: 0;
+      }
       #productDrawer .d-title {
-        font-size: 13px;
+        font-size: var(--d-fs);
         line-height: 1.5;
         word-break: break-all;
       }
       #productDrawer .d-title b {
         margin-right: 6px;
       }
-      #productDrawer .d-sub {
-        font-size: 12px;
+      #productDrawer .d-name {
         color: var(--vscode-descriptionForeground);
+      }
+      /* 关键数字：全抽屉最大的一个字。
+         以前售价缩在一行 12px 的灰副标题里，跟"购买链接""备注"一个待遇 ——
+         那是唯一必须一眼看到的数，不该这么不显眼。 */
+      #productDrawer .d-price-line {
         display: flex;
-        align-items: center;
+        align-items: baseline;
         gap: 8px;
         margin-top: 3px;
+      }
+      #productDrawer .d-price-hint {
+        font-size: var(--d-fs-tag);
+        color: var(--vscode-descriptionForeground);
+      }
+      #productDrawer .d-price {
+        font-size: var(--d-fs-big);
+        font-weight: 600;
+        line-height: 1.25;
+        color: #23a884;
+      }
+      #productDrawer .d-grade {
+        font-size: var(--d-fs-tag);
+        color: var(--vscode-descriptionForeground);
+      }
+      /* 状态角标推到最右：它是"最后一眼"的信息，别跟等级挤在一起 */
+      #productDrawer .d-status {
+        margin-left: auto;
       }
       #productDrawer .d-close {
         margin-left: auto;
@@ -765,28 +839,45 @@
       #productDrawer .d-body {
         flex: 1;
         overflow-y: auto;
-        padding: 8px 12px 12px;
+        padding: 10px 12px 14px;
       }
-#productDrawer .d-group-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--vscode-descriptionForeground);
+      /* ===== 分区卡片化 =====
+         原来是"加粗小字 + 一条细线"，跟字段糊在同一片底色上，眼睛找不到落点。
+         现在每个分区是一块**浅底圆角卡**：块的边界看得见，可以跳着看。
+         标题去掉 ①②③ 序号 —— 卡片本身已经分隔了，序号只会让整页看着像"12345 一长串"。
+         2026-10-11 再改：标题**加粗 + 用正文色 + 左侧一条品牌绿竖标**。
+         起因是商家说"标题能在明显一点就好了，感觉黑白色一样"——查下来病根是
+         标题当时是 11px + descriptionForeground，**跟字段标签同一个字号同一个颜色**，
+         所以整片灰上加灰。绿竖标用的 #23a884 与售价/合计同一个色，是整页唯一的颜色锚点。 */
+      #productDrawer .d-group-title {
+        font-size: var(--d-fs);
+        font-weight: 600;
+        color: var(--vscode-foreground);
+        border-left: 3px solid #23a884;
+        padding-left: 8px;
         margin: 12px 0 6px 0;
-        padding-bottom: 3px;
-        border-bottom: 1px solid var(--vscode-panel-border);
+      }
+      #productDrawer .d-group-title:first-child {
+        margin-top: 0;
+      }
+      #productDrawer .d-form,
+      #productDrawer .d-set {
+        background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
+        border-radius: 8px;
+        padding: 9px 10px;
       }
       #productDrawer .d-form {
         display: grid;
-        grid-template-columns: 64px 1fr;
+        grid-template-columns: 76px 1fr;
         gap: 8px 10px;
         align-items: center;
       }
       #productDrawer .d-form > label {
-        font-size: 12px;
+        font-size: var(--d-fs-tag);
         color: var(--vscode-descriptionForeground);
       }
       #productDrawer .d-form .d-f-val {
-        font-size: 12px;
+        font-size: var(--d-fs);
         overflow-wrap: anywhere;
       }
       #productDrawer .d-form input,
@@ -794,10 +885,130 @@
       #productDrawer .d-form textarea {
         width: 100%;
         box-sizing: border-box;
-        font-size: 12px;
+        font-size: var(--d-fs);
       }
       #productDrawer .d-form textarea {
         resize: vertical;
+      }
+      /* ===== 套装（可整体移除）=====
+         合计条：**住在头部**、紧贴售价底下的三格（合计进价 / 合计售价 / 比合计）。
+         为什么不放滚动区里：它是"钱"的结论（比合计 = 售价 − 合计售价），
+         跟售价天生要并排看；放进 body 一滚就找不着了。
+         底色用品牌绿的淡调而不是主题的浅灰 —— 头部本身已经是 sideBar 灰，
+         再来一个灰就分不出层次了；绿=钱/结论，两边主题下都看得见。 */
+      #productDrawer .d-set-sum {
+        display: flex;
+        gap: 6px;
+        margin-top: 7px;
+      }
+      #productDrawer .dss-cell {
+        flex: 1;
+        min-width: 0;
+        background: rgba(35, 168, 132, 0.12);
+        border-radius: 6px;
+        padding: 5px 8px;
+      }
+      #productDrawer .dss-k {
+        font-size: var(--d-fs-tag);
+        color: var(--vscode-descriptionForeground);
+      }
+      #productDrawer .dss-v {
+        font-size: var(--d-fs-mid);
+        font-weight: 600;
+        margin-top: 1px;
+      }
+      /* 让利（比拆开买便宜）= 绿；比拆开买还贵 = 红。跟手机版同一套约定 */
+      #productDrawer .dss-v.dss-good {
+        color: #23a884;
+      }
+      #productDrawer .dss-v.dss-bad {
+        color: #e06c75;
+      }
+      /* 「属于哪些套装」：手机版早就有（详情页顶部），桌面端一直没接。
+         编号做成可点的胶囊，点了抽屉**直接切到那个套装**。没有就整行不渲染。 */
+      #productDrawer .d-sets-of {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        font-size: var(--d-fs-tag);
+        color: var(--vscode-descriptionForeground);
+        margin: 0 0 8px 0;
+      }
+      #productDrawer .d-sets-of button {
+        font-size: var(--d-fs-tag);
+        color: #23a884;
+        background: transparent;
+        border: 1px solid rgba(35, 168, 132, 0.5);
+        border-radius: 999px;
+        padding: 1px 9px;
+        cursor: pointer;
+      }
+      #productDrawer .d-sets-of button:hover {
+        background: rgba(35, 168, 132, 0.14);
+      }
+      /* 子商品清单：行上不给常驻「移出」按钮，移出走行右键（行有 title 提示） */
+      #productDrawer .d-set {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      #productDrawer .d-set-head {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+      }
+      #productDrawer .d-set-head .d-set-cnt {
+        font-size: var(--d-fs);
+      }
+      #productDrawer .d-set-rows {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      #productDrawer .d-set-row {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        padding: 5px 6px;
+        border-radius: 5px;
+      }
+      #productDrawer .d-set-row:hover {
+        background: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.12));
+      }
+      #productDrawer .d-set-code {
+        font-size: var(--d-fs);
+        flex: none;
+      }
+      /* 只有**编号**可点（跟手机版那条规矩一致：进详情只有编号可点，点整行就窜走早被否掉）。
+         行内其它地方留给右键菜单，不响应单击。 */
+      #productDrawer .d-set-code[data-open-child] {
+        cursor: pointer;
+      }
+      #productDrawer .d-set-code[data-open-child]:hover {
+        text-decoration: underline;
+      }
+      #productDrawer .d-set-name {
+        font-size: var(--d-fs);
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #productDrawer .d-set-price {
+        font-size: var(--d-fs-tag);
+        flex: none;
+        color: var(--vscode-descriptionForeground);
+      }
+      #productDrawer .d-set-add {
+        display: flex;
+        gap: 6px;
+      }
+      #productDrawer .d-set-add input {
+        flex: 1;
+        box-sizing: border-box;
+        font-size: var(--d-fs);
       }
       #productDrawer .d-foot {
         display: flex;
