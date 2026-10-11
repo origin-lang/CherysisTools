@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>手机版 · 界面重构示意</title>
+<style>
+  :root{
+    --bg:#eef0f3; --card:#fff; --line:#e3e6ea; --fg:#1f2329; --muted:#8a9099;
+    --brand:#23a884; --soft:#f6f7f9;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{margin:0;padding:28px 20px 60px;background:var(--bg);color:var(--fg);
+    font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
+  .head{max-width:1180px;margin:0 auto 24px;}
+  .head h1{font-size:22px;margin:0 0 8px;font-weight:700;}
+  .head p{margin:0 0 6px;color:#5d646d;font-size:13.5px;}
+  .tag{display:inline-block;background:#fff;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px;color:var(--muted);margin:0 8px 6px 0;}
+  .board{max-width:1180px;margin:0 auto;display:grid;gap:26px;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));align-items:start;}
+  .cell{display:flex;flex-direction:column;align-items:center;gap:10px;}
+  .cap{font-size:12.5px;color:#5d646d;text-align:center;max-width:320px;margin:0;}
+  .cap b{color:var(--fg);}
+
+  .phone{width:300px;background:var(--bg);border:1px solid var(--line);border-radius:22px;overflow:hidden;box-shadow:0 6px 20px rgba(20,30,40,.07);display:flex;flex-direction:column;}
+
+  /* ① 顶部工具行 */
+  .topbar{display:flex;align-items:center;gap:7px;padding:10px 12px 8px;background:var(--card);}
+  .scope{flex:none;display:flex;align-items:center;gap:3px;font-size:12px;color:#5d646d;background:var(--soft);border:1px solid var(--line);border-radius:9px;padding:8px 7px;white-space:nowrap;}
+  .search{flex:1;display:flex;align-items:center;gap:6px;background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:12.5px;color:var(--muted);min-width:0;}
+  .fab{flex:none;width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:13px;border:1px solid var(--line);background:#fff;color:#5d646d;position:relative;}
+  .fab.plus{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:700;}
+  .fab .n{position:absolute;top:-4px;right:-4px;min-width:14px;height:14px;border-radius:7px;background:var(--brand);color:#fff;font-size:9.5px;line-height:14px;text-align:center;padding:0 3px;font-weight:700;}
+
+  /* ② 内容区小 tab（左边可横滑，右边的条数固定不动） */
+  .subtabs{display:flex;align-items:center;gap:8px;padding:8px 12px 10px;background:var(--card);border-bottom:1px solid var(--line);}
+  .stabs{display:flex;gap:6px;flex:1;min-width:0;overflow-x:auto;}
+  .cnt{flex:none;font-size:11px;color:var(--muted);}
+  .stab{flex:none;font-size:12.5px;padding:6px 13px;border-radius:999px;color:#5d646d;background:var(--soft);white-space:nowrap;}
+  .stab.on{background:var(--brand);color:#fff;font-weight:700;}
+  .stab.ghost{border:1px dashed #c3ccd5;background:transparent;color:var(--muted);}
+
+  /* ③ 内容区 */
+  .body{background:var(--bg);padding:10px 12px 14px;min-height:268px;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .gcard .ph{height:84px;background:#f2f4f6;border-radius:9px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;}
+  .gcard .ph svg{width:100%;height:100%;}
+  .gline{display:flex;align-items:baseline;gap:5px;margin-top:5px;}
+  .gline .c{font-size:11px;color:var(--muted);}
+  .gline .n{font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .gsub{font-size:11px;color:var(--muted);}
+  .badge{position:absolute;left:6px;top:6px;font-size:10px;color:#fff;background:var(--brand);border-radius:5px;padding:1px 5px;}
+
+  table.t{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden;font-size:12px;}
+  table.t th{background:var(--soft);color:var(--muted);font-weight:400;font-size:11px;text-align:left;padding:7px 8px;}
+  table.t td{padding:7px 8px;border-top:1px solid var(--line);}
+
+  .logbox{background:#fff;border-radius:10px;padding:10px;font-size:12px;line-height:1.9;color:#5d646d;}
+  .logbox i{font-style:normal;color:var(--muted);font-size:11px;margin-right:6px;}
+  .card{background:#fff;border-radius:10px;padding:11px 12px;margin-bottom:9px;}
+  .card h3{margin:0 0 7px;font-size:13px;}
+  .kv{font-size:12px;color:#5d646d;line-height:1.9;}
+  .seg2{display:flex;gap:5px;background:var(--soft);border-radius:10px;padding:4px;margin-bottom:10px;}
+  .seg2 span{flex:1;text-align:center;font-size:12.5px;padding:7px 0;border-radius:7px;color:#5d646d;}
+  .seg2 span.on{background:var(--brand);color:#fff;font-weight:700;}
+
+  /* ④ 底部 tab 栏（两格居中，连接灯靠右浮着） */
+  .tabbar{display:flex;align-items:center;justify-content:center;background:var(--card);border-top:1px solid var(--line);padding:6px 8px 8px;position:relative;}
+  .tb{flex:none;width:116px;text-align:center;font-size:11.5px;color:var(--muted);padding:4px 0;position:relative;}
+  .tb .ic{display:block;font-size:15px;line-height:1.35;}
+  .tb.on{color:var(--brand);font-weight:700;}
+  .tb .red{position:absolute;top:1px;right:26px;width:7px;height:7px;border-radius:50%;background:#e5484d;}
+  .conn{position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--muted);}
+  .conn i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--brand);}
+
+  .note{max-width:1180px;margin:34px auto 0;background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 22px;}
+  .note h2{font-size:15px;margin:0 0 10px;}
+  .note p,.note li{font-size:13px;color:#4a5158;margin:6px 0;}
+  .note code{background:var(--soft);border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-size:12px;}
+  .note table{width:100%;border-collapse:collapse;margin:10px 0;font-size:12.5px;}
+  .note th{text-align:left;color:var(--muted);font-weight:400;font-size:12px;border-bottom:1px solid var(--line);padding:6px 8px;}
+  .note td{border-bottom:1px solid var(--line);padding:7px 8px;vertical-align:top;}
+</style>
+</head>
+<body>
+<div class="head">
+  <h1>手机版 · 界面重构示意</h1>
+  <p>
+    <span class="tag">只动框架，不动逻辑</span>
+    <span class="tag">图是占位图形</span>
+    <span class="tag">功能一个都没丢</span>
+  </p>
+  <p>现在的问题：<b>顶栏当抽屉用</b> —— 🏪标题 / 画册列表 / 筛选 / 设置 / 新建 五样挤在一行，再加功能就放不下了。<br>
+  重排成三层：<b>顶上只放"找东西"</b>（搜索·筛选·新建）→ <b>内容区顶上一排小 tab</b>（画册/列表…）→ <b>底部两格换大模块</b>（商品 / 设置）。</p>
+</div>
+
+<div class="board">
+
+  <!-- ① 画册档 -->
+  <div class="cell">
+    <div class="phone">
+      <div class="topbar">
+        <span class="scope">全部 <span style="font-size:9px;">▾</span></span>
+        <span class="search">🔍 搜商品…</span>
+        <span class="fab" title="筛选">
+          <svg viewBox="0 0 16 16" style="width:15px;height:15px;" aria-hidden="true"><path d="M2 3h12l-4.7 5.4v4.3l-2.6 1.3V8.4z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        </span>
+        <span class="fab plus">＋</span>
+      </div>
+      <div class="subtabs">
+        <div class="stabs">
+          <span class="stab on">画册</span>
+          <span class="stab">列表</span>
+          <span class="stab ghost">＋</span>
+        </div>
+        <span class="cnt">348 条</span>
+      </div>
+      <div class="body">
+        <div class="grid2">
+          <div class="gcard">
+            <div class="ph"><svg viewBox="0 0 60 60"><circle cx="22" cy="37" r="7.5" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="40" cy="37" r="7.5" fill="none" stroke="#c3ccd5" stroke-width="2"/><path d="M22 29.5V19M40 29.5V19" stroke="#c3ccd5" stroke-width="2" fill="none"/></svg></div>
+            <div class="gline"><span class="c">A001</span><span class="n">淡水珍珠耳环</span></div>
+            <div class="gsub">¥39</div>
+          </div>
+          <div class="gcard">
+            <div class="ph"><span class="badge">套</span><svg viewBox="0 0 90 60"><path d="M12 20 Q21 40 30 20" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="21" cy="35" r="4.5" fill="#c3ccd5" opacity=".55"/><circle cx="45" cy="33" r="6" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="61" cy="33" r="6" fill="none" stroke="#c3ccd5" stroke-width="2"/><ellipse cx="79" cy="33" rx="9" ry="6.5" fill="none" stroke="#c3ccd5" stroke-width="2"/></svg></div>
+            <div class="gline"><span class="c">T001</span><span class="n">新娘三件套</span></div>
+            <div class="gsub">含 3 件 · ¥98</div>
+          </div>
+          <div class="gcard">
+            <div class="ph"><svg viewBox="0 0 60 60"><path d="M14 18 Q30 45 46 18" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="30" cy="38" r="6" fill="#c3ccd5" opacity=".55"/></svg></div>
+            <div class="gline"><span class="c">A003</span><span class="n">锁骨链</span></div>
+            <div class="gsub">¥45</div>
+          </div>
+          <div class="gcard">
+            <div class="ph"><svg viewBox="0 0 60 60"><ellipse cx="30" cy="33" rx="16" ry="12" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="30" cy="21" r="4" fill="#c3ccd5" opacity=".55"/></svg></div>
+            <div class="gline"><span class="c">L004</span><span class="n">手链</span></div>
+            <div class="gsub">¥32</div>
+          </div>
+        </div>
+      </div>
+      <div class="tabbar">
+        <span class="tb on"><span class="ic">🏪</span>商品</span>
+        <span class="tb"><span class="ic">⚙</span>设置<span class="red"></span></span>
+        <span class="conn"><i></i></span>
+      </div>
+    </div>
+    <p class="cap"><b>① 商品页（画册）</b><br>顶上一行只有「搜索 + 筛选 + 新建」；<br>画册/列表从顶栏挪到内容区顶上（虚线＋是留给以后的扩展位）。</p>
+  </div>
+
+  <!-- ② 列表档 -->
+  <div class="cell">
+    <div class="phone">
+      <div class="topbar">
+        <span class="scope">全部 <span style="font-size:9px;">▾</span></span>
+        <span class="search">🔍 搜商品…</span>
+        <span class="fab" title="筛选">
+          <svg viewBox="0 0 16 16" style="width:15px;height:15px;" aria-hidden="true"><path d="M2 3h12l-4.7 5.4v4.3l-2.6 1.3V8.4z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          <span class="n">2</span>
+        </span>
+        <span class="fab plus">＋</span>
+      </div>
+      <div class="subtabs">
+        <div class="stabs">
+          <span class="stab">画册</span>
+          <span class="stab on">列表</span>
+          <span class="stab ghost">＋</span>
+        </div>
+        <span class="cnt">348 条</span>
+      </div>
+      <div class="body">
+        <table class="t">
+          <tr><th>编号</th><th>名称</th><th>进价</th><th>售价</th><th>库存</th></tr>
+          <tr><td>A001</td><td>淡水珍珠耳环</td><td>12</td><td>39</td><td>8</td></tr>
+          <tr><td style="color:#23a884;font-weight:700;">T001</td><td>新娘三件套</td><td style="color:#8a9099;">32</td><td>98</td><td style="color:#c3ccd5;">—</td></tr>
+          <tr><td>A003</td><td>锁骨链</td><td>12</td><td>45</td><td>5</td></tr>
+          <tr><td>L004</td><td>手链</td><td>8</td><td>32</td><td>3</td></tr>
+        </table>
+      </div>
+      <div class="tabbar">
+        <span class="tb on"><span class="ic">🏪</span>商品</span>
+        <span class="tb"><span class="ic">⚙</span>设置<span class="red"></span></span>
+        <span class="conn"><i></i></span>
+      </div>
+    </div>
+    <p class="cap"><b>② 商品页（列表）</b><br>同一页切到列表档。套装的进价是<b>灰字汇总值</b>（不是能改的数），库存那格是 <code>—</code>。</p>
+  </div>
+
+  <!-- ③ 设置 · 日志页签 -->
+  <div class="cell">
+    <div class="phone">
+      <div class="topbar">
+        <span class="search" style="background:#fff;border-color:transparent;font-size:13.5px;color:var(--fg);font-weight:700;">⚙ 设置</span>
+        <span class="fab" style="width:auto;padding:0 10px;font-size:12px;">清空</span>
+      </div>
+      <div class="body" style="min-height:314px">
+        <div class="seg2"><span>系统配置</span><span>页面配置</span><span class="on">日志</span></div>
+        <div class="logbox">
+          <div><i>10:02</i>✅ 已保存 A003 的售价 45</div>
+          <div><i>10:01</i>✅ 已把 A001 加进 T001</div>
+          <div><i>09:58</i>ℹ️ 别人改过数据，已重新读一遍</div>
+          <div><i>09:52</i>✅ 新建 T001 新娘三件套</div>
+          <div><i>09:41</i>❌ A001 编号已存在，未保存</div>
+        </div>
+      </div>
+      <div class="tabbar">
+        <span class="tb"><span class="ic">🏪</span>商品</span>
+        <span class="tb on"><span class="ic">⚙</span>设置</span>
+        <span class="conn"><i></i></span>
+      </div>
+    </div>
+    <p class="cap"><b>③ 日志：并进设置页当一个页签</b><br>底部那个细条上的「日志」按钮撤掉，设置页从两个页签变三个：系统配置 / 页面配置 / <b>日志</b>。<br>有改动时，底部「设置」格上冒个小<span style="color:#e5484d;">红点</span>。</p>
+  </div>
+
+  <!-- ④ 设置页 -->
+  <div class="cell">
+    <div class="phone">
+      <div class="topbar">
+        <span class="search" style="background:#fff;border-color:transparent;font-size:13.5px;color:var(--fg);font-weight:700;">⚙ 设置</span>
+      </div>
+      <div class="body" style="min-height:314px">
+        <div class="seg2"><span class="on">系统配置</span><span>页面配置</span><span>日志</span></div>
+        <div class="card"><h3>等级规则 · 售价怎么算出来的</h3><div class="kv">1 级 · cost*1.5<br>2 级 · cost+10<br>3 级 · cost*2</div></div>
+        <div class="card"><h3>当前参数</h3><div class="kv">库存预警：3<br>销售自动扣库存：开</div></div>
+        <div class="card"><h3>服务</h3><div class="kv">数据目录：Z:\…\数据库<br>图片目录：Z:\…\克里希斯仓库</div></div>
+      </div>
+      <div class="tabbar">
+        <span class="tb"><span class="ic">🏪</span>商品</span>
+        <span class="tb on"><span class="ic">⚙</span>设置</span>
+        <span class="conn"><i></i></span>
+      </div>
+    </div>
+    <p class="cap"><b>④ 设置：从顶栏的 ⚙ 挪到底部</b><br>内容还是那些，只是从两个页签变三个（多一个「日志」）—— 顶栏因此空出一格。</p>
+  </div>
+
+</div>
+
+<div class="note">
+  <h2>为什么这样扩展性强</h2>
+  <p>现在加一个功能 = 往顶栏塞一个按钮（塞到第 4 个就挤）。重排之后，加东西有三个现成的位置，按"这个东西有多重"选：</p>
+  <table>
+    <tr><th style="width:150px">位置</th><th>放什么</th><th style="width:220px">以后可能放的</th></tr>
+    <tr><td><b>底部 tab</b><br>（换大模块）</td><td>一个独立的功能区，整页切走</td><td>销售记账、月度盈亏（现在是电脑版独占）</td></tr>
+    <tr><td><b>内容区小 tab</b><br>（同一批数据的看法）</td><td>换个方式看同一批商品</td><td>只看星标、只看套装、按品类分组</td></tr>
+    <tr><td><b>筛选面板</b></td><td>条件（不改变"看什么"，只是筛）</td><td>只看套装、有图/无图</td></tr>
+    <tr><td><b>顶部工具行</b></td><td>跟"找东西"直接相关</td><td>基本不用再动</td></tr>
+  </table>
+  <p><b>这次一个功能都不会丢</b>：<b>搜索那行的"搜哪一列"下拉（全部/编号/名称/品类/系列）和漏斗筛选按钮原样保留</b>（漏斗上的小数字＝生效中的条件数，跟现在一样）；画册/列表变成内容区的小 tab；设置从顶栏挪到底部 tab（<b>日志并进去当第三个页签</b>）；「🔄 有改动」变成底部「设置」格上的小红点；连接指示灯缩成底部右侧一个小圆点。</p>
+  <p><b>只动了一处位置</b>：那行"348 条"原来是挤在搜索框右边的，挪到了小 tab 那一行的最右边 —— 因为它说的是"现在显示多少条"，跟内容区更近。</p>
+  <p><b>代价说清楚</b>：这是<b>重构手机版的框架</b>，动的是 <code>src/webview/mobile/index.html</code> 的骨架和 <code>app.js</code> 里跟显隐/切换有关的那部分 —— 比套装那个功能的风险大，因为所有页面的外壳都过一遍。建议先定设计，再分批改（可以一个 tab 一个 tab 地搬）。</p>
+</div>
+</body>
+</html>
