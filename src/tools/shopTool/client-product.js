@@ -20,6 +20,17 @@ function cellValue(p, key) {
       return displayGrade(p);
     case "status":
       return p.status === 1 ? STATUS_LABELS.off : STATUS_LABELS.on;
+    // 类型：0 普通 / 1 套装。判定只认 kind，**不认 T 前缀** ——
+    // 编号长什么样是另一回事（isSetProduct 也走同一条口径）。
+    case "kind":
+      return Number(p.kind) === 1 ? "套装" : "普通";
+    // 图片：有图 / 无图。张数要后端扫目录才知道，还没统计到就返回空串 ——
+    // 空串有两层作用：① enumOptions 会跳过空值，所以那会儿「图片」组不会拿假值当选项；
+    // ② filteredProducts 那边看到 `imgStatsLoaded` 为假会整列跳过，不会把还没数到的商品判成"无图"。
+    case "img": {
+      const n = state.imgStats[p.code];
+      return n === undefined ? "" : n > 0 ? "有图" : "无图";
+    }
     case "netTotal":
       return String(p.soldTotal - p.refundTotal);
     case "cost_price":
@@ -65,7 +76,9 @@ const RANGE_FILTER_FIELDS = new Set(["cost_price", "sale_price", "stockTotal"]);
 // 所以那几列继续沿用原来的表达式写法（范围 / 子串 / 编号语法）。
 // status 也在里面：取值只有「在售 / 已下架」两种，cellValue 本来就出中文标签
 // （注意 status===0 是「在售」、===1 是「已下架」），多选比单选下拉顺手。
-const ENUM_FILTER_FIELDS = new Set(["category", "series", "grade", "status"]);
+// kind（套装/普通）、img（有图/无图）同理：都是取值封闭的两态，做成勾选比写表达式顺手。
+// 跟手机版一致 —— 手机版把这两组放在离散列那一段的最后两个（ENUM_FIELDS 里也点了名）。
+const ENUM_FILTER_FIELDS = new Set(["category", "series", "grade", "status", "kind", "img"]);
 // 编号列筛选语法：含 ~ 走「前缀+数字区间」，否则沿用子串匹配。
 const CODE_HINT =
   "筛选编号：支持 A1~A33 / a1~a33 / 1~33（两端无字母按 A 段）/ 多段 A1~A33,L1~L22；" +
@@ -482,6 +495,12 @@ function filteredProducts() {
   // 筛选面板的勾选在这一次计算里不会变，算一次就好。
   const enumPicks = new Map();
   for (const key of ENUM_FILTER_FIELDS) {
+    // 「图片」要等后端扫完目录才有值：统计还没回来就整列跳过。
+    // 不跳的话 cellValue 给的是一律的空串，勾了「无图」会把**所有**商品都筛掉 ——
+    // 一开筛选就空表，看着就像筛选坏了（宁可先按"不筛"处理，统计回来自己会重画）。
+    if (key === "img" && !state.imgStatsLoaded) {
+      continue;
+    }
     const picked = filterCurrent(key);
     if (picked.length > 0) {
       enumPicks.set(key, new Set(picked));
@@ -1002,6 +1021,10 @@ const FILTER_GROUPS = [
   { key: "series", label: "系列" },
   { key: "grade", label: "等级" },
   { key: "status", label: "状态" },
+  // 类型 / 图片：跟手机版同一个位置（离散列那一段的末尾、数值区间之前）。
+  // 「图片」的选项由后端扫目录统计出来，还没数完时这一组只给一句提示（见 filterGroupHtml）。
+  { key: "kind", label: "类型" },
+  { key: "img", label: "图片" },
   { key: "cost_price", label: "进价" },
   { key: "sale_price", label: "售价" },
   { key: "stockTotal", label: "库存" },
@@ -1439,6 +1462,47 @@ function renderFilterDrawerIfOpen() {
   }
 }
 
+/**
+ * 问后端「每个编号有几张图」—— 只服务「图片」那一组（有图 / 无图）。
+ *
+ * 为什么不塞进 loadAll：图片在 imageDir 里按编号文件夹放着，不在库里；要知道有没有图只能读目录，
+ * 共享盘上一次 readdir 就是一趟 SMB 往返。loadAll 是每次刷新、每次改完数据都要走的，
+ * 128 个编号扫一遍会把日常操作拖慢。所以做成"真要筛的时候才问一次"，回来缓存在 state.imgStats。
+ *
+ * 幂等：已经统计过、或者上一次还在路上，都不重复问（面板开开关关不会连着扫）。
+ */
+function requestImgStats() {
+  if (state.imgStatsLoaded || state.imgStatsBusy || !state.products.length) {
+    return;
+  }
+  state.imgStatsBusy = true;
+  post({ type: "loadImageStats", codes: state.products.map((p) => p.code) });
+}
+
+/**
+ * 商品编号集合变了（新建 / 导入 / 删除 / 改号 / 撤销）→ 之前那份图数就对不上了，作废它。
+ *
+ * 只在**集合真的变了**时才作废：单纯手动刷新（整库重读）不该白白重扫一遍目录。
+ * 作废之后若「图片」正筛着、或筛选抽屉正开着，立刻重新统计一次 —— 否则会出现一个空窗：
+ * 筛选条上还挂着「图片：无图」，列表却因为"还没统计"把这一列放行了。
+ */
+function invalidateImgStatsIfCodesChanged() {
+  if (!state.imgStatsLoaded) {
+    return;
+  }
+  const same =
+    Object.keys(state.imgStats).length === state.products.length &&
+    state.products.every((p) => state.imgStats[p.code] !== undefined);
+  if (same) {
+    return;
+  }
+  state.imgStats = {};
+  state.imgStatsLoaded = false;
+  if (filterDrawerOpen || filters.f_img) {
+    requestImgStats();
+  }
+}
+
 function openFilterDrawer() {
   const el = $("filterDrawer");
   const mask = $("filterDrawerMask");
@@ -1447,6 +1511,9 @@ function openFilterDrawer() {
   }
   // 跟商品详情抽屉互斥：两个都是右侧 440px，叠一起就是"抽屉套抽屉"
   closeProductDrawer();
+  // 打开就问一次图数：面板里「图片」那一组要它才画得出「有图 N / 无图 M」。
+  // 回来之前那组显示"正在统计…"（见 filterGroupHtml），异步回来后再重画一次。
+  requestImgStats();
   renderFilterDrawer();
   el.style.display = "flex";
   if (mask) {
@@ -1495,6 +1562,16 @@ function filterGroupHtml(g) {
     `<span class="fd-sum">${esc(sum)}</span></div>`;
   const outer = `<div class="fd-group${open ? "" : " folded"}" data-fd-group="${g.key}">`;
   if (filterKind(g.key) === "enum") {
+    if (g.key === "img" && !state.imgStatsLoaded) {
+      // 统计没回来之前，图片张数一个都不知道 → 画出来只会是「全选 (0) / 没有匹配的选项」，
+      // 看着像"这一组筛不了"。给一句话，比给一个空清单诚实（手机版同款处理）。
+      return (
+        outer +
+        head +
+        `<div class="fd-gbody"><div class="fd-hint">正在统计每个编号的图片数量…</div></div>` +
+        `</div>`
+      );
+    }
     const opts = enumOptions(g.key);
     const picked = new Set(cur);
     const allOn = opts.length > 0 && opts.every((o) => picked.has(o.v));

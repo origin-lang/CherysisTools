@@ -52,6 +52,14 @@ window.toolClients = window.toolClients || {};
       // 抽屉里这个**普通商品**属于哪些套装（setOfCode 回包填）。空数组 = 谁都不属于 / 还没回来 ——
       // 两种情况的画法一样（整行不渲染），所以不用再分一个"加载中"。
       drawerSetsOf: [],
+      // 每个编号有几张图（键 = code，值 = 张数），「筛选：图片（有图/无图）」用。
+      // 图片是按编号文件夹放在 imageDir 里的，不在库里 —— 要知道有没有图只能扫目录，
+      // 而一次 readdir 就是一趟 SMB 往返，塞进 loadAll 会拖慢每次刷新。
+      // 所以只在真要筛「图片」时问后端一次（loadImageStats），回来缓存在这儿；
+      // 之后本机上传/删除图片由 imagesLoaded 就地改这一格，不必重扫。
+      imgStats: {},
+      imgStatsLoaded: false,
+      imgStatsBusy: false,
       // 大图 base64 缓存，键 = `${code}:${文件名}`。键不中的代价只是重新取一次图，
       // 键错中的代价是显示成别的图，所以宁可多取。
       lbFullCache: {},

@@ -888,6 +888,11 @@ function onMessage(msg) {
     case "productsLoaded": {
       state.products = msg.products || [];
       state.settings.stock_alert = msg.stockAlert || 0;
+      // 整库重读之后编号集合可能变了（新建/删除/导入/撤销都走这条路）——
+      // 变了就把「每个编号几张图」那份作废重扫；没变（纯手动刷新）不白扫。
+      if (typeof invalidateImgStatsIfCodesChanged === "function") {
+        invalidateImgStatsIfCodesChanged();
+      }
       // ===== 套装（可整体移除）===== 套装的「含 N 件 / 合计进价 / 合计售价」，
       // 后端现算好跟着整库一起下来（见 shopTool/index.ts 的 loadAll）
       state.setSummaries = msg.setSummaries || {};
@@ -952,6 +957,10 @@ function onMessage(msg) {
       }
       // 增量也会带进新产品（新导入的行是 push 进来的），筛选面板要跟着重建，
       // 否则新分类/新系列在面板里点不出来 —— 以前这条路径只由整库 productsLoaded 兜
+      // 图数同理：导入进来的新编号在这份统计里压根没有，集合一变就作废重扫
+      if (typeof invalidateImgStatsIfCodesChanged === "function") {
+        invalidateImgStatsIfCodesChanged();
+      }
       populateFilters();
       break;
     }
@@ -1266,7 +1275,37 @@ function onMessage(msg) {
       toast(`❌${String(msg.message ?? "操作失败")}`);
       break;
     }
+    // 后端扫完目录回来的「每个编号有几张图」—— 只服务筛选面板里「图片」那一组（有图/无图）。
+    case "imageStatsLoaded": {
+      state.imgStats = msg.stats || {};
+      state.imgStatsLoaded = true;
+      state.imgStatsBusy = false; // 请求在路上的标记顺手清掉（post 是单向的，没 promise 可挂）
+      // 异步的东西回来了：这一刻筛选抽屉可能正开着（那组要从「正在统计…」变成「有图 N / 无图 M」），
+      // 「图片」也可能正筛着（统计到之前那一列是整列跳过的，现在才真正生效）—— 两边都重画。
+      if (typeof renderFilterDrawerIfOpen === "function") {
+        renderFilterDrawerIfOpen();
+      }
+      renderProducts();
+      break;
+    }
     case "imagesLoaded": {
+      // 本机刚传 / 删过图，这一格的张数直接按回包的张数改 —— 不必为一张图重扫整个库。
+      // 只在已经统计过时改：没统计过就没有这份缓存，别半路塞几个编号进去（会变成半个真相）。
+      if (state.imgStatsLoaded) {
+        const n = Array.isArray(msg.images) ? msg.images.length : 0;
+        // 只在张数真的变了才动界面（打开大图也会回这条，那时数目没变，不该白重画一遍）
+        if (state.imgStats[msg.code] !== n) {
+          state.imgStats[msg.code] = n;
+          // 正筛着「图片」时，这一件的归类可能刚翻了个面（无图 → 有图）——
+          // 列表得跟着重算，否则界面在说谎：条件还写着「无图」，它还赖在表里。
+          if (filters.f_img) {
+            renderProducts();
+          }
+          if (typeof renderFilterDrawerIfOpen === "function") {
+            renderFilterDrawerIfOpen();
+          }
+        }
+      }
       if (msg.images && msg.images.length) {
         state.coverCache[msg.code] = msg.images[0];
       }
