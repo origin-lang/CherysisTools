@@ -3,6 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <style>
+      /* ===== 按钮尺寸令牌（2026-10-12）=====
+         面板里所有按钮只有两级，值只在这里写一次：
+         · 工具级 = 工具栏 / 视图栏 / 子标签 / 子面板操作 / 输入框和下拉 —— --ui-fs + --ui-py
+         · 行内级 = 商品表格每行 / 抽屉 / 小弹窗里的操作 —— --ui-fs-sm + --ui-py-sm
+         --ui-r 两级共用。
+         ⚠️ 按钮高度不是写死的，是「纵向内边距 + 行高 + 边框」算出来的 ——
+            想整体调高就调 --ui-py，别改写成 height（按钮里放两行字会溢出）。
+         ⚠️ 横向内边距故意抽不进来：各按钮宽窄本来就不同（12 / 14 / 20 / 8 / 7），
+            那是"同为一级但宽窄有别"的设计，不是散值。 */
+      :root {
+        --ui-fs: 12px;
+        --ui-py: 5px;
+        --ui-r: 4px;
+        --ui-fs-sm: 11px;
+        --ui-py-sm: 2px;
+      }
       .module-title {
         margin: 0 0 16px 0;
         font-size: 18px;
@@ -17,10 +33,11 @@
         flex-wrap: wrap;
       }
       .sub-tab {
-        padding: 5px 12px;
+        padding: var(--ui-py) 12px;
         border: 1px solid var(--vscode-button-secondaryBackground);
         cursor: pointer;
-        border-radius: 3px;
+        border-radius: var(--ui-r);
+        font-size: var(--ui-fs);
       }
       .sub-tab.active {
         background: var(--vscode-button-background);
@@ -41,10 +58,11 @@
         flex-wrap: wrap;
       }
       .mini-tab {
-        padding: 5px 12px;
+        padding: var(--ui-py) 12px;
         border: 1px solid var(--vscode-button-secondaryBackground);
         cursor: pointer;
-        border-radius: 3px;
+        border-radius: var(--ui-r);
+        font-size: var(--ui-fs);
       }
       .mini-tab.active {
         background: var(--vscode-button-background);
@@ -77,14 +95,21 @@
         align-items: center;
         margin-bottom: 12px;
       }
+      /* 按钮尺寸分两级（2026-10-12 统一，之前散成 6 档高度 / 8 档字号 / 5 档圆角）：
+         · 工具级 = 24px 高 / 12px 字 / 4px 圆角 —— 工具栏、视图栏、子面板操作、
+           以及跟它们并排的输入框和下拉，全部跟这一级齐。
+         · 行内级 = 17px 高 / 11px 字 / 4px 圆角 —— 表格每行、抽屉、小弹窗里的操作。
+         新增按钮请挂这两级，别在别处再写死别的 padding / 字号 —— 一写死就又散了。
+         高度上先做过一版更大胆的（28 / 13 / 6），实看下来还是贴着 VS Code 自身的
+         按钮高度更省地方（一屏能多看好几行商品），所以退回这一版。 */
       button {
-        padding: 5px 12px;
+        padding: var(--ui-py) 12px;
         border: 1px solid var(--vscode-button-secondaryBorder, transparent);
         background: var(--vscode-button-secondaryBackground);
         color: var(--vscode-foreground);
-        border-radius: 4px;
+        border-radius: var(--ui-r);
         cursor: pointer;
-        font-size: 12px;
+        font-size: var(--ui-fs);
       }
       button:hover {
         background: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-secondaryBackground));
@@ -106,18 +131,18 @@
         color: var(--vscode-errorForeground);
       }
       .btn-lg {
-        padding: 7px 18px;
-        font-size: 13px;
+        padding: var(--ui-py) 20px;
+        font-size: var(--ui-fs);
       }
       select,
       input,
       textarea {
-        padding: 5px 6px;
+        padding: var(--ui-py) 6px;
         background: var(--vscode-input-background);
         color: var(--vscode-input-foreground);
         border: 1px solid var(--vscode-input-border);
-        border-radius: 4px;
-        font-size: 12px;
+        border-radius: var(--ui-r);
+        font-size: var(--ui-fs);
       }
       input[type="checkbox"] {
         accent-color: #23a884;
@@ -268,8 +293,8 @@
       }
       .badge {
         display: inline-block;
-        padding: 1px 7px;
-        border-radius: 3px;
+        padding: 1px 8px;
+        border-radius: var(--ui-r);
         font-size: 11px;
       }
       .badge-on {
@@ -293,8 +318,8 @@
         position: absolute;
         top: 6px;
         left: 6px;
-        padding: 1px 7px;
-        border-radius: 3px;
+        padding: 1px 8px;
+        border-radius: var(--ui-r);
         font-size: 11px;
         background: var(--vscode-button-background, #0e639c);
         color: var(--vscode-button-foreground, #fff);
@@ -305,8 +330,8 @@
         gap: 6px;
       }
       .np-kind button {
-        padding: 3px 12px;
-        border-radius: 4px;
+        padding: var(--ui-py) 12px;
+        border-radius: var(--ui-r);
       }
       .np-kind button.on {
         background: var(--vscode-button-background, #0e639c);
@@ -318,7 +343,7 @@
         height: calc(var(--row-py, 5px) * 2 + 24px);
         max-width: 140px;
         object-fit: contain;
-        border-radius: 3px;
+        border-radius: 4px;
         cursor: pointer;
         border: 1px solid var(--vscode-panel-border);
         vertical-align: middle;
@@ -349,8 +374,9 @@
         text-decoration: none;
       }
       .mini-btn {
-        padding: 2px 7px;
-        font-size: 11px;
+        padding: var(--ui-py-sm) 7px;
+        font-size: var(--ui-fs-sm);
+        border-radius: var(--ui-r);
         margin-right: 3px;
       }
       .mini-btn:disabled {
@@ -394,13 +420,13 @@
       .mode-tabs {
         display: inline-flex;
         border: 1px solid var(--vscode-panel-border);
-        border-radius: 6px;
+        border-radius: var(--ui-r);
         overflow: hidden;
         margin-bottom: 10px;
       }
       .mode-tab {
-        padding: 5px 14px;
-        font-size: 12px;
+        padding: var(--ui-py) 14px;
+        font-size: var(--ui-fs);
         border: none;
         background: transparent;
         color: var(--vscode-descriptionForeground);
@@ -453,15 +479,18 @@
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        padding: 5px 8px;
+        padding: var(--ui-py) 8px;
         min-width: 28px;
-        font-size: 13px;
-        line-height: 1.15;
+        font-size: var(--ui-fs);
+        line-height: 1.2;
+        border-radius: var(--ui-r);
         text-align: center;
       }
       /* 按钮里的图标跟随文字色 —— 别在 SVG 上写死 fill，换主题就不跟了 */
       .icon-btn svg {
         display: block;
+        width: 12px;
+        height: 12px;
         fill: currentColor;
         pointer-events: none;
       }
@@ -482,11 +511,11 @@
         display: flex;
         flex: none;
         border: 1px solid var(--vscode-panel-border, transparent);
-        border-radius: 5px;
+        border-radius: var(--ui-r);
         overflow: hidden;
       }
       .tb-seg > button {
-        padding: 4px 12px;
+        padding: var(--ui-py) 12px;
         border: 0;
         border-radius: 0;
         background: transparent;
@@ -541,7 +570,7 @@
         color: var(--vscode-descriptionForeground);
         background: transparent;
         border: none;
-        border-radius: 3px;
+        border-radius: var(--ui-r);
         cursor: pointer;
       }
       .tb-search-x:hover {
@@ -616,8 +645,8 @@
         position: absolute;
         top: 6px;
         right: 6px;
-        padding: 1px 7px;
-        border-radius: 3px;
+        padding: 1px 8px;
+        border-radius: var(--ui-r);
         font-size: 11px;
         background: rgba(0, 0, 0, 0.6);
         color: #fff;
@@ -695,7 +724,7 @@
         width: 64px;
         height: 64px;
         object-fit: cover;
-        border-radius: 3px;
+        border-radius: 4px;
         cursor: pointer;
         border: 2px solid transparent;
       }
@@ -1072,7 +1101,7 @@
         right: 6px;
         padding: 2px 8px;
         border: none;
-        border-radius: 3px;
+        border-radius: var(--ui-r);
         font-size: 11px;
         background: rgba(35, 168, 132, 0.85);
         color: #fff;
@@ -1260,7 +1289,7 @@
         gap: 2px;
         padding: 6px 4px 4px;
         cursor: pointer;
-        border-radius: 3px;
+        border-radius: 4px;
         font-size: 11px;
         user-select: none;
       }
@@ -1407,7 +1436,7 @@
         color: #fff;
         background: #23a884;
         border: none;
-        border-radius: 3px;
+        border-radius: var(--ui-r);
         padding: 3px 8px;
         cursor: pointer;
       }
@@ -1433,7 +1462,7 @@
         z-index: 2;
         background: rgba(0, 0, 0, 0.6);
         color: #fff;
-        border-radius: 3px;
+        border-radius: 4px;
         padding: 0 5px;
         font-size: 11px;
       }
@@ -1509,7 +1538,7 @@
         z-index: 2;
         background: rgba(0, 0, 0, 0.6);
         color: #fff;
-        border-radius: 3px;
+        border-radius: 4px;
         padding: 0 5px;
         font-size: 11px;
       }
