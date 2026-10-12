@@ -9,14 +9,40 @@
   <body>
     <!-- ① 商品列表 / 画册 -->
     <section id="screen-list" class="screen show">
-      <header class="bar">
-        <span class="title">🏪 商品</span>
-        <div class="seg">
-          <button id="viewGallery" class="on">画册</button>
-          <button id="viewList">列表</button>
-        </div>
-        <!-- 漏斗图标 + 条数徽标：不写「筛选」两个字了 —— 图标本身够认得，
-             省下的宽度给按钮（用户要的"扁一点、宽一点"）。有筛选条件时旁边显示条数 -->
+      <!-- 顶上这一行只放「找东西」：搜哪一列 + 搜索框 + 筛选 + 新建。
+           原先这一行还挤着 🏪标题 / 画册·列表 / ⚙ 三样（"顶栏当抽屉用"），再加功能就放不下了。
+           2026-10-12 重排成三层（见 docs/手机版-界面重构示意.html）：
+             ① 顶上只放"找东西"（这一行）
+             ② 画册/列表挪到内容区顶上一排小 tab（.subtabs，见下）
+             ③ ⚙ 与「日志」挪到底部 tab 栏（#tabbar） -->
+      <header class="topbar">
+        <!-- 「搜哪一列」：与电脑版工具栏那个下拉同一口径，默认「全部」= 跨列找。
+             ⚠️ **选到哪一列，右边的控件就跟着换**（见 app.js 的 applyScope）：
+               编号      → 同一个输入框改吃 A1~A33 区间语法（回车 / 失焦才生效）
+               状态      → 换成一个下拉（只有在售/已下架，不用手打）
+               品类/等级 → 也换成下拉（值就那么几个，选比手打准）
+               名称/系列 → 照旧文字模糊找（系列值太多，不做成下拉）
+             ⚠️ 状态/品类/等级**共用同一个下拉** #scopeValue（选项按当前列重建）——
+                桌面端也是一个 #keywordSelect（见 client-product.js 的 KW_SELECT_SCOPES）。
+             2026-10-12：品类/等级在手机版上原先是"一排圆片"，商家不要圆圈圈 —— 改成下拉，
+             与桌面端对齐（圆圈只留在筛选面板里，那边要多选）。
+             这个「换控件」的套路桌面端早就有，这里只是把同一套口径补齐。顺带把原先筛选面板里
+             那组「编号范围」并了过来 —— 同一件事不该有两个入口，而且那组还挂着三行说明文字，太占地方。 -->
+        <select id="scope" class="scope" title="搜哪一列">
+          <option value="all">全部</option>
+          <option value="code">编号</option>
+          <option value="name">名称</option>
+          <option value="category">品类</option>
+          <option value="series">系列</option>
+          <option value="grade">等级</option>
+          <option value="status">状态</option>
+        </select>
+        <input id="q" class="grow2" type="search" placeholder="🔍 搜…" autocomplete="off" />
+        <!-- 状态 / 品类 / 等级共用这一个下拉：选项按当前「搜哪一列」重建（见 renderScopeValue）。
+             **单选** —— 要多选去筛选面板（那边勾几个都行）。选完立即生效，不用按回车。 -->
+        <select id="scopeValue" class="grow2" title="选完立即生效，不用按回车" hidden></select>
+        <!-- 漏斗图标 + 条件数徽标：不写「筛选」两个字了 —— 图标本身够认得，
+             省下的宽度给搜索框（合并成一行之后，这一行的宽度比以前更紧）。有筛选条件时旁边显示条数 -->
         <button id="btnFilter" class="icon" title="筛选：品类/系列/等级/状态/数值范围/有图无图">
           <svg class="ico" viewBox="0 0 16 16" aria-hidden="true">
             <path
@@ -28,33 +54,11 @@
             />
           </svg><span id="btnFilterText"></span>
         </button>
-        <button id="btnSettings" class="icon" title="等级规则与设置">⚙</button>
-        <button id="btnNew" class="primary">＋ 新建</button>
+        <!-- ＋ 新建：只留一个加号（原先写「＋ 新建」）。合并成一行之后，这一行要塞下
+             「搜哪一列 + 搜索框 + 漏斗 + 新建」四样，那两个字占的宽度在 360px 屏上
+             正好是溢出的那几像素。加号是通行的"新增"语义，这里又是页面上唯一的加号。 -->
+        <button id="btnNew" class="primary" title="新建商品">＋</button>
       </header>
-      <div class="searchbar">
-        <!-- 「搜哪一列」：与电脑版工具栏那个下拉同一口径，默认「全部」= 跨列找。
-             ⚠️ **选到哪一列，右边的控件就跟着换**（见 app.js 的 applyScope）：
-               编号    → 同一个输入框改吃 A1~A33 区间语法（回车 / 失焦才生效）
-               状态    → 换成一个下拉（只有在售/已下架，不用手打）
-               品类/等级 → 换成一排圆片（值就那么几个，直接点）
-               名称/系列 → 照旧文字模糊找（系列值太多，不做成圆片）
-             这个「换控件」的套路桌面端早就有（#keywordScope 选「状态」时换成 #keywordStatus），
-             这里只是把同一套口径补齐。顺带把原先筛选面板里那组「编号范围」并了过来 ——
-             同一件事不该有两个入口，而且那组还挂着三行说明文字，太占地方。 -->
-        <select id="scope" class="scope" title="搜哪一列">
-          <option value="all">全部</option>
-          <option value="code">编号</option>
-          <option value="name">名称</option>
-          <option value="category">品类</option>
-          <option value="series">系列</option>
-          <option value="grade">等级</option>
-          <option value="status">状态</option>
-        </select>
-        <input id="q" class="grow2" type="search" placeholder="🔍 搜…" autocomplete="off" />
-        <select id="scopeStatus" class="grow2" title="按状态筛：选完立即生效，不用按回车" hidden></select>
-        <div id="scopeChips" class="scopechips grow2" hidden></div>
-        <span id="count" class="muted"></span>
-      </div>
       <!-- 编号表达式的写法提示：只在该模式下出现。
            打字中途不筛列表（中间态 A → A1 → A1~ 一路闪会很难受），所以必须有个地方
            告诉你「现在写的这句到底成不成立」—— 否则就是「填了没反应」。 -->
@@ -90,15 +94,37 @@
           <p class="muted small">放大只作用于表格，顶栏、筛选、分页条都不跟着变（也可以直接在表格上双指捏）。画册和商品详情不套这一层：详情页用浏览器自己的双指缩放捏着看。筛选是「勾一批出来」，顶部搜索是「凭印象找一行」，两者叠加（AND）。</p>
         </div>
       </div>
+      <!-- 内容区顶上一排小 tab：换个方式看**同一批**商品（现在只有画册/列表两种）。
+           原先它是顶栏里那个 .seg（占着最金贵的一行），挪下来之后顶栏空出两格。
+           右边那个数目字是「筛出来的 / 一共多少条」（renderList 里写的 #count），
+           跟分页条中间那句「第几条–第几条 · 第几页/共几页」说的是两件事，不重复。
+           末尾那个虚线 ＋ 是**留的扩展位**：以后「只看星标 / 只看套装 / 按品类分组」
+           这类"换个看法"的东西加在这里，不用再往顶栏挤。它现在是 disabled 的占位。 -->
+      <div class="subtabs">
+        <div class="stabs">
+          <button id="viewGallery" class="stab on" type="button">画册</button>
+          <button id="viewList" class="stab" type="button">列表</button>
+          <button id="viewMore" class="stab ghost" type="button" disabled title="扩展位：以后的「只看星标 / 只看套装 / 按品类分组」加在这里">＋</button>
+        </div>
+        <span id="count" class="cnt muted"></span>
+      </div>
       <main id="content" class="content"></main>
-      <div class="pager">
-        <button id="pageFirst" class="mini" title="第一页">«</button>
-        <button id="pagePrev" class="mini">‹ 上一页</button>
-        <!-- 手机上弹数字键盘输页码很难受，跳页用下拉 -->
-        <select id="pageJump" class="pagejump" title="跳到第几页"></select>
-        <span id="pageInfo" class="pi muted"></span>
-        <button id="pageNext" class="mini">下一页 ›</button>
-        <button id="pageLast" class="mini" title="最后一页">»</button>
+      <!-- 翻页条：内容区正下方、底部 tab 栏之上，**画册/列表共用同一条**（两边都渲染进 #content）。
+           2026-10-12 第 2 批：六个控件收成三个（见 docs/手机版-界面重构示意.html）。
+           原来是 `« / ‹ 上一页 / 跳页下拉 / 第X–Y条·共N条·第P/Q页 / 下一页 › / »` ——
+           300px 一排挤六个太密。现在：
+             ‹ 上一页 · [1/7 页 ▾] · 下一页 ›
+           中间那颗就是原来的跳页下拉（#pageJump），只是**外观做成胶囊、选项文字写成「N/M 页」**：
+           这样"收起时看到的那行字"和"点开后的页列表"是同一份东西，也省掉一个自定义浮层。
+           条数不再写在这儿 —— 内容区顶上那一排小 tab 的右边已经有「筛出来的 / 一共多少条」，
+           同一件事写两遍反而让人以为是两个数。
+           ≤1 页时整条 hidden（renderPager 里控）：只有一页还摆"上一页/下一页"纯属干扰。
+           ⚠️ `hidden` 必须配一条 `.pager[hidden]{display:none}` —— `.pager` 自己是 display:flex，
+           光靠 [hidden] 的默认样式盖不住。 -->
+      <div id="pager" class="pager" hidden>
+        <button id="pagePrev" class="mini pg" type="button">‹ 上一页</button>
+        <select id="pageJump" class="pj" title="跳到第几页"></select>
+        <button id="pageNext" class="mini pg" type="button">下一页 ›</button>
       </div>
     </section>
 
@@ -107,10 +133,12 @@
       <header class="bar">
         <!-- 返回做成 iOS 风格的绿色幽灵按钮（‹ 商品）：跟右上那个带框的 📷 一眼区分开，
              也跟底下「上一个/下一个」彻底分开——那组是翻商品，这个是退出详情，不是一回事。
-             文字用"商品"= 回到的那一屏的标题（列表页标题就是 🏪 商品）。
-             **文字会变**：从套装点进子商品后，这里显示的是"要回到的那个编号"
-             （‹ T001）—— 否则用户不知道这一下会退到哪儿，套装和子商品互相点几次就更晕。
-             见 app.js 的 updateBackLabel。 -->
+             文字固定「商品」= 回到的那一屏的标题（列表页标题就是 🏪 商品）。
+             ⚠️ **这一下永远是"回商品列表"，没有"返回上一步"**（2026-10-12 改，跟电脑端一致）：
+                原先从套装点进子商品后，它是回那个**套装**（还会把文字改成 ‹ T001）—— 套装和子商品
+                能互相点几次，用户根本不知道这一下会退到哪儿。
+                现在想看回套装，点子商品页顶部的「属于 T001」那一条。
+                （所以文字不再变了，`#backText` 只是个固定的「商品」。） -->
         <button id="btnBack" class="back" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -314,15 +342,19 @@
 
     <!-- ④ 规则与设置（只读：改规则仍然去电脑版） -->
     <section id="screen-settings" class="screen">
+      <!-- 只剩一个标题：返回靠底部 tab 栏的「商品」格（这一屏整屏时是返回、宽屏抽屉时是关门）。
+           ⚠️ 原来这里有个「‹ 返回」按钮（#btnSetBack），2026-10-12 撤掉 ——
+           底部 tab 已经承担了这件事，顶上再放一个"返回"和底部那个"商品"是同一个动作。 -->
       <header class="bar">
-        <button id="btnSetBack" class="icon">‹ 返回</button>
-        <span class="title">⚙ 规则与设置</span>
+        <span class="title">⚙ 设置</span>
       </header>
       <main class="content">
-        <!-- 两个页签：系统配置（跟库/服务有关，只读）与页面配置（跟这台设备有关，能改、存本机） -->
+        <!-- 三个页签：系统配置（跟库/服务有关，只读）、页面配置（跟这台设备有关，能改、存本机）、
+             日志（原先是底部细条上那个「日志」按钮弹的浮层，2026-10-12 并进来当第三个页签） -->
         <div class="tabs" id="setTabs">
           <button class="tab on" type="button" data-tab="sys">系统配置</button>
           <button class="tab" type="button" data-tab="page">页面配置</button>
+          <button class="tab" type="button" data-tab="log">日志</button>
         </div>
 
         <div id="tabSys">
@@ -351,6 +383,21 @@
             <h3>表格大小（列表视图）</h3>
             <div class="zoomtiers" id="tableZoomRow"></div>
             <p class="muted small">与列表页筛选区里那三个按钮（A− / 100% / A＋）是同一个设置，改哪边都一样。</p>
+          </div>
+        </div>
+
+        <!-- 日志页签：排查时才看的东西（普通用户的操作结果都走 #toast 那个浮层）。
+             越新的越靠下，最后 200 条（renderLogs 里切的）。 -->
+        <div id="tabLog" style="display: none">
+          <div class="card logview">
+            <div class="listhead">
+              <span class="k">运行日志 <span class="muted small">最近 200 条</span></span>
+              <!-- 清空的是**本机这一份**日志（state.logs，最多 300 条）：纯展示的东西，
+                   清了不影响服务端、也不影响别人那台手机。所以不弹确认框，清完给个提示就够了。 -->
+              <button type="button" class="mini" id="btnClearLog">清空</button>
+            </div>
+            <p class="muted small">越新的越靠下。这是排查时才看的地方 —— 平时的操作结果都走底部那个提示浮层。</p>
+            <div id="logList"></div>
           </div>
         </div>
       </main>
@@ -384,27 +431,27 @@
       <button id="viewerRetake" class="viewer-retake" style="display: none">🔄 重拍</button>
     </div>
 
-    <!-- 底部条：左边「日志」入口 + 「有改动」时冒出来的刷新按钮，右边一个实时连接指示灯。
-         整条不可点（会挡翻页），只有这两个明确的按钮能按；指示灯是纯展示，不占触控目标。
-         「有改动」用 .logbtn 的尺寸（22px）——底部细条是那条约 44px 规则的唯一例外。 -->
-    <div id="status" class="status">
-      <button id="btnLog" class="logbtn" type="button">日志</button>
-      <button
-        id="btnStale"
-        class="logbtn"
-        type="button"
-        style="display: none"
-        title="别人（或电脑版）改过数据了，点一下重新读一遍"
-      >
-        🔄 有改动
+    <!-- 底部 tab 栏：两个大模块（商品 / 设置）+ 右侧一个连接指示灯。
+         原先是 #status 那条 30px 高的细条（左「日志」+「🔄 有改动」+ 右灯），2026-10-12 改：
+           · 「日志」     → 并进设置页当第三个页签（#tabLog）
+           · 「🔄 有改动」 → 变成「设置」格上的小红点（#staleDot）；重读走自动刷新，
+                              或「设置 → 系统配置」里那个「重新从数据库读一遍」
+           · 连接灯       → 缩成右侧一个小圆点（三档：绿=连着、灰=重连中、红=断了）
+         整条 fixed 铺满整宽，所以 .screen 要给它留出高度（见 style.css 的 --tabbar）；
+         宽屏抽屉模式下它只铺到抽屉左边（body.drawer #tabbar）。 -->
+    <nav id="tabbar" class="tabbar">
+      <button id="tabProducts" class="tb on" type="button">
+        <span class="ic">🏪</span>商品
+      </button>
+      <button id="tabSettings" class="tb" type="button">
+        <span class="ic">⚙</span>设置<i id="staleDot" class="red" style="display: none" title="别人（或电脑版）改过数据了"></i>
       </button>
       <span id="conn" class="conn" title="与服务的实时连接">
         <i></i><span id="connText">连接中…</span>
       </span>
-    </div>
+    </nav>
     <!-- 给用户看的提示（日志是排查用的，不该要求人人去读） -->
     <div id="toast" class="toast"></div>
-    <div id="logPanel" class="logpanel"><div id="logList"></div><button id="logClose" class="primary wide">关闭</button></div>
 
     <!-- ===== 套装（可整体移除）=====
          电脑端的「移出子商品」入口：手机版页面在鼠标设备上没有左滑手势，

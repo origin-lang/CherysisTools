@@ -183,19 +183,22 @@
   ENUM_COLS.forEach(function (c) {
     ENUM_COL_LABEL[c[0]] = c[1];
   });
-  // 「搜哪一列」里哪几列换成"一排圆片"（值少且封闭，点比打字快）。
-  // ⚠️ **系列不在里面**：它值可能很多，做成圆片会铺一大片（商家定的），照旧文字找。
+  // 「搜哪一列」里哪几列右边换成**下拉**（值少且封闭，选比手打准 —— 手打中文错一个字就是个空表）。
+  // ⚠️ **系列不在里面**：它值可能很多，做成下拉会铺一长条（商家定的），照旧文字找。
   // 编号也不在里面 —— 它是"区间输入框"，不是点选。
-  // ⚠️ 这里存的是**标记**不是中文名：字段名就是 scope 本身（`renderScopeChips(scope)`），
-  //    中文名在 ENUM_COL_LABEL 里，别把两者混着用（拿中文名去查 state.filters.enum 会得到 undefined）。
-  var SCOPE_CHIP_COLS = { category: 1, grade: 1 };
+  // ⚠️ 这里存的是**标记**不是中文名：字段名就是 scope 本身（`renderScopeValue(scope)`），
+  //    中文名在 SCOPE_LABEL 里，别把两者混着用（拿中文名去查 state.filters.enum 会得到 undefined）。
+  // 2026-10-12：品类/等级在手机版上原先是"一排圆片"，商家不要圆圈圈 —— 改成下拉，
+  //    与桌面端对齐（client-product.js 的 KW_SELECT_SCOPES 就是这三个，那边注释写着同一个理由）。
+  //    圆圈只留在筛选面板里：那边要多选，下拉给不了。
+  var SCOPE_SELECT_COLS = { status: 1, category: 1, grade: 1 };
   /**
-   * scope 选到这几列时，右边**不是文字框**（是区间输入 / 下拉 / 圆片），
+   * scope 选到这几列时，右边**不是文字框**（是区间输入 / 下拉），
    * 所以 `state.q` 那句文字**不参与过滤** —— 否则从"名称"切到"品类"，
    * 上一段文字会悄悄留着继续筛，看着像 bug。
    */
   function scopeUsesText(scope) {
-    return !(scope === "code" || scope === "status" || SCOPE_CHIP_COLS[scope]);
+    return !(scope === "code" || SCOPE_SELECT_COLS[scope]);
   }
 
   var SORT_LABEL = { code: "编号", stock: "库存少→多", sale: "售价低→高", new: "最近新建" };
@@ -359,22 +362,22 @@
     }
   }
 
-  /** 有改动：只亮按钮，不动数据（用户正在填的那一格不能被别人的广播冲掉） */
+  /** 有改动：只点亮点，不动数据（用户正在填的那一格不能被别人的广播冲掉） */
   function markStale() {
     if (stale) {
       return;
     }
     stale = true;
-    var b = $("btnStale");
+    var b = $("staleDot");
     if (b) {
       b.style.display = "";
     }
   }
 
-  /** 用户点了「🔄 有改动」（或自己点了别处的重读）→ 角标收起来 */
+  /** 用户自己重读了一遍（或自动刷新补上了）→ 角标收起来 */
   function clearStale() {
     stale = false;
-    var b = $("btnStale");
+    var b = $("staleDot");
     if (b) {
       b.style.display = "none";
     }
@@ -865,9 +868,10 @@
     if (state.logs.length > 300) {
       state.logs.splice(0, state.logs.length - 300);
     }
-    // 底部不再滚日志文字：结果统一走提示浮层，日志是排查时才点开看的东西
-    var panel = $("logPanel");
-    if (panel.classList.contains("show")) {
+    // 底部不再滚日志文字：结果统一走提示浮层，日志是排查时才点开看的东西。
+    // 日志 2026-10-12 从"底部细条弹的浮层"改成「设置 → 日志」页签 —— 只有正在看那一页时才重画，
+    // 别的页签上攒日志纯属白花时间（pushLog 每次操作都会走）。
+    if (isLogTabVisible()) {
       renderLogs();
     }
   }
@@ -891,7 +895,23 @@
     }, 2800);
   }
 
+  /**
+   * 「设置 → 日志」这一页此刻是不是正显示着。
+   * 日志是每来一条就 push 的东西，不在看那一页时重画等于白干（列表页上 pushLog 很频繁）。
+   * ⚠️ 判定只看 display：showSettingsTab 把它设成 ""/none，HTML 里初始就是 none。
+   */
+  function isLogTabVisible() {
+    var p = $("tabLog");
+    return !!p && p.style.display !== "none";
+  }
+
   function renderLogs() {
+    // 清空之后（或者服务刚起来、还什么都没干时）不能留一片白 —— 一片白看着像"页面坏了"，
+    // 写一行灰字说明"是真没有"，人才敢接着用。
+    if (!state.logs.length) {
+      $("logList").innerHTML = '<p class="muted small">（现在是空的。之后的操作会一条条记在这儿）</p>';
+      return;
+    }
     $("logList").innerHTML = state.logs
       .slice(-200)
       .map(function (l) {
@@ -2019,45 +2039,55 @@
   }
 
   // ---------- 搜索行：按「搜哪一列」换右侧控件 ----------
-  // 桌面端早就有这个套路（#keywordScope 选「状态」时换成 #keywordStatus 下拉），
+  // 桌面端早就有这个套路（#keywordScope 选「状态/品类/等级」时换成 #keywordSelect 那个下拉），
   // 这里把同一套口径补齐。换的只是**控件形态**，条件本身还是存在同一份 state 里
   // （离散列 → state.filters.enum[列]，编号 → state.q），所以筛选面板与搜索行天然联动。
 
-  /** 状态那一列只有在售/已下架两种，勾选框比手打顺手 */
-  function renderScopeStatus() {
-    var sel = $("scopeStatus");
+  /**
+   * 状态 / 品类 / 等级：取值封闭，**统一用一个下拉**（选完立即生效，不用按回车）。
+   * 选项按当前列重建；值从 `state.filters.enum[列]` 读回来 —— 跟筛选面板是同一份数据，天然联动。
+   * 桌面端就是一个 #keywordSelect，这里是同一套口径（client-product.js 的 scopeSelectOptions）。
+   *
+   * ⚠️ 下拉只能**单选**，面板那边是**多选**。面板里勾了两个以上时这里只显示第一个
+   *    （`Object.keys(...)[0]`，桌面端也是这个取舍）。宁可只显示一个，也不能因为它显示不出来
+   *    就把条件偷偷留着 / 或者显示"全部"却还在筛 —— 那叫界面说谎。多选的那几个在列表上方的
+   *    条件胶囊条里都写着，一条也不丢。
+   *
+   * ⚠️ 品类里"取值是空串"那一档（`enumValues` 里标成「（空）」）**不列进来**：
+   *    空串跟"全部"撞在同一个 value 上，放进来就成了不可选中的死选项。
+   *    要筛"品类为空"的商品，去筛选面板勾（那边的圆片还在）。
+   */
+  function renderScopeValue(scope) {
+    var sel = $("scopeValue");
     if (!sel) {
       return;
     }
-    var set = state.filters.enum.status || {};
-    sel.innerHTML =
-      '<option value="">全部状态</option><option value="on">在售</option><option value="off">已下架</option>';
-    sel.value = set.off ? "off" : set.on ? "on" : "";
-  }
-
-  /** 品类/等级：值就那么几个，直接列成一排圆片（系列值太多，不做） */
-  function renderScopeChips(field) {
-    var box = $("scopeChips");
-    if (!box) {
-      return;
+    var label = SCOPE_LABEL[scope] || scope;
+    var opts = [{ v: "", t: "全部" + label }];
+    if (scope === "status") {
+      opts.push({ v: "on", t: "在售" }, { v: "off", t: "已下架" });
+    } else {
+      enumValues(scope).forEach(function (o) {
+        if (o.k === "") {
+          return; // 见上面那条说明：空串和"全部"撞 value
+        }
+        // 带上"这一类有多少个"——原来圆片上就有这个数（全量统计，不受当前筛选影响），
+        // 改成下拉别把它弄丢
+        opts.push({ v: o.k, t: o.n === undefined ? o.label : o.label + "（" + o.n + "）" });
+      });
     }
-    var set = state.filters.enum[field] || {};
-    box.innerHTML = enumValues(field)
+    sel.innerHTML = opts
       .map(function (o) {
-        return (
-          '<button type="button" class="chip' +
-          (set[o.k] ? " on" : "") +
-          '" data-field="' +
-          field +
-          '" data-v="' +
-          esc(o.k) +
-          '">' +
-          esc(o.label) +
-          (o.n === undefined ? "" : " " + o.n) +
-          "</button>"
-        );
+        return '<option value="' + esc(o.v) + '">' + esc(o.t) + "</option>";
       })
       .join("");
+    var set = state.filters.enum[scope] || {};
+    var keys = Object.keys(set);
+    sel.value = keys.length ? keys[0] : "";
+    sel.title =
+      keys.length > 1
+        ? "共 " + keys.length + " 个" + label + "条件（面板里勾的），这里只显示第一个"
+        : "按" + label + "筛：选完立即生效，不用按回车";
   }
 
   /** 编号模式下的写法提示。打字中途不筛列表，所以必须有个地方告诉你"这句成不成立" */
@@ -2092,21 +2122,19 @@
 
   /**
    * 按当前 scope 把搜索行右侧换成对应控件；顺带同步值。
-   * 幂等 —— 任何地方改完离散条件都可以调它一次（clearOne / 圆片点击 / 回包）。
+   * 幂等 —— 任何地方改完离散条件都可以调它一次（clearOne / 下拉选择 / 回包）。
    */
   function applyScope() {
     var scope = state.scope;
     var q = $("q");
-    var st = $("scopeStatus");
-    var chips = $("scopeChips");
+    var sel = $("scopeValue");
     var hint = $("qHint");
-    if (!q || !st || !chips || !hint) {
+    if (!q || !sel || !hint) {
       return;
     }
-    var isChipCol = !!SCOPE_CHIP_COLS[scope];
-    q.hidden = scope === "status" || isChipCol;
-    st.hidden = scope !== "status";
-    chips.hidden = !isChipCol;
+    var isSelectCol = !!SCOPE_SELECT_COLS[scope];
+    q.hidden = isSelectCol;
+    sel.hidden = !isSelectCol;
     hint.hidden = scope !== "code";
     if (scope === "code") {
       q.placeholder = "A1~A33";
@@ -2116,24 +2144,24 @@
       q.placeholder = "🔍 搜…";
       q.title = "";
     }
-    if (scope === "status") {
-      renderScopeStatus();
-    } else if (isChipCol) {
-      // 字段名就是 scope 本身（SCOPE_CHIP_COLS 里存的是标记，不是中文名）
-      renderScopeChips(scope);
+    if (isSelectCol) {
+      // 字段名就是 scope 本身（SCOPE_SELECT_COLS 里存的是标记，不是中文名）
+      renderScopeValue(scope);
     }
   }
 
   /** 只刷控件上的值（不动形态）—— 条件被别处改了（点胶囊、清除全部）时调 */
   function syncScopeControls() {
-    if (state.scope === "status") {
-      renderScopeStatus();
-    } else if (SCOPE_CHIP_COLS[state.scope]) {
-      renderScopeChips(state.scope);
+    if (SCOPE_SELECT_COLS[state.scope]) {
+      renderScopeValue(state.scope);
     }
   }
 
-  /** 点一个离散圆片：亮的灭、灭的亮（img 那组互斥）。面板与搜索行共用 */
+  /**
+   * 点一个离散圆片：亮的灭、灭的亮（img 那组互斥）。
+   * ⚠️ 只有**筛选面板**在用。搜索行那排圆片 2026-10-12 改成下拉了（商家不要圆圈圈），
+   *    所以这里不再是"面板与搜索行共用"。
+   */
   function toggleEnumChip(field, v) {
     var set = state.filters.enum[field];
     if (set[v]) {
@@ -2251,9 +2279,12 @@
     }).join("");
   }
 
-  /** 设置页的两个页签：sys=系统配置（只读），page=页面配置（本机观感） */
+  /**
+   * 设置页的三个页签：sys=系统配置（只读），page=页面配置（本机观感），
+   * log=日志（2026-10-12 从"底部细条弹的浮层"并进来当第三个页签）。
+   */
   function showSettingsTab(name) {
-    var panes = { sys: $("tabSys"), page: $("tabPage") };
+    var panes = { sys: $("tabSys"), page: $("tabPage"), log: $("tabLog") };
     Object.keys(panes).forEach(function (k) {
       panes[k].style.display = k === name ? "" : "none";
     });
@@ -2261,33 +2292,57 @@
     for (var i = 0; i < tabs.length; i++) {
       tabs[i].classList.toggle("on", tabs[i].dataset.tab === name);
     }
+    // 日志平时是攒着不画的（见 pushLog 的注释）：切进来的这一刻必须补画一次，
+    // 否则在这一页上看到的是"切进来之前"那一次的内容 —— 看着像日志不更新。
+    if (name === "log") {
+      renderLogs();
+    }
     // 记在内存里：从列表页再进设置时停在上次那个页签，刷新回到「系统配置」
     state.setTab = name;
   }
 
+  /**
+   * 翻页条。2026-10-12 第 2 批收成三控件（原来六个：`«` / `‹ 上一页` / 跳页下拉 / 条数 /
+   * `下一页 ›` / `»` —— 300px 一排挤六个太密，见 docs/手机版-界面重构示意.html）：
+   *
+   *   ‹ 上一页 · [1/7 页 ▾] · 下一页 ›
+   *
+   * 中间那颗就是原来的跳页下拉（#pageJump）：只是**外观做成胶囊、选项文字写成「N/M 页」**。
+   * 这样"收起时看到的那行字"和"点开后的页列表"是同一份东西，**不用另做浮层**，
+   * 手机上弹的还是系统自带的页列表（本来就用它跳页，不用数字键盘）。
+   * 代价：`«` / `»`（第一页 / 最后一页）撤了 —— 跳页还在（收进中间那颗），只是"一键到末页"要多点一下。
+   * 条数（第 X–Y 条 · 共 N 条）不写在这儿了：内容区顶上小 tab 那一行的右边已经有
+   * 「筛出来的 / 一共多少条」，同一件事写两遍反而像两个数。
+   * ≤1 页：整条 hidden（只有一页还摆"上一页/下一页"是干扰）。
+   *
+   * ⚠️ `total` 只用来写悬停提示（手机上没悬停，主要是桌面端鼠标停上去能看到总数）。
+   */
   function renderPager(total, pages) {
-    var from = total === 0 ? 0 : state.page * PAGE_SIZE + 1;
-    var to = Math.min(total, (state.page + 1) * PAGE_SIZE);
-    $("pageInfo").textContent =
-      total === 0
-        ? "共 0 条"
-        : "第 " + from + "–" + to + " 条 · 共 " + total + " 条 · " + (state.page + 1) + "/" + pages + " 页";
-    $("pagePrev").disabled = state.page <= 0;
-    $("pageNext").disabled = state.page >= pages - 1;
-    $("pageFirst").disabled = state.page <= 0;
-    $("pageLast").disabled = state.page >= pages - 1;
-    // 页数变了才重填下拉：每次渲染都重建会把用户刚展开的下拉收回去
+    var one = pages <= 1;
+    var pager = $("pager");
+    if (pager) {
+      pager.hidden = one;
+    }
+    var prev = $("pagePrev");
+    var next = $("pageNext");
     var jump = $("pageJump");
+    prev.disabled = one || state.page <= 0;
+    next.disabled = one || state.page >= pages - 1;
+    jump.disabled = one;
+    // 页数变了才重填下拉：每次渲染都重建会把用户刚展开的页列表收回去
     if (jump.dataset.pages !== String(pages)) {
       jump.dataset.pages = String(pages);
       var opts = "";
       for (var i = 0; i < pages; i++) {
-        opts += '<option value="' + i + '">第 ' + (i + 1) + " 页</option>";
+        opts += '<option value="' + i + '">' + (i + 1) + "/" + pages + " 页</option>";
       }
       jump.innerHTML = opts;
     }
     jump.value = String(state.page);
-    jump.disabled = pages <= 1;
+    jump.title =
+      total === 0
+        ? "共 0 条"
+        : "共 " + total + " 条 · 第 " + (state.page + 1) + "/" + pages + " 页（点这里跳到别的页）";
   }
 
   function fillCategoryList() {
@@ -2720,7 +2775,6 @@
     var all = filtered();
     for (var i = 0; i < all.length; i++) {
       if (num(all[i].id) === num(id)) {
-        detailBack.length = 0; // ===== 套装（可整体移除）===== 从列表点进来 = 一段新的浏览，来路清空
         openDetailAt(i);
         return;
       }
@@ -2745,7 +2799,7 @@
   /**
    * 真正把一屏详情画出来。
    * `off = true` 表示这个商品**不在当前筛选结果里**（从套装点进来的子商品就可能这样）：
-   * 这时「上一个/下一个」没有意义，两个按钮都停掉，返回键走 detailBack 那条栈。
+   * 这时「上一个/下一个」没有意义，两个按钮都停掉（返回键永远是回列表，见 openDetailByCode）。
    */
   function renderDetail(p, idx, off) {
     state.detail = {
@@ -2794,21 +2848,21 @@
       cv.innerHTML = '<span class="muted small">封面读取中…</span>';
     }
     show("screen-detail");
-    updateBackLabel(); // ===== 套装（可整体移除）===== 返回键上写清"这一下退到哪儿"
     loadImages(p.code);
   }
 
   // ===== 套装（可整体移除）=====
   /**
-   * 从套装点进子商品时记的"来路"，返回键先回这里（栈式）。
-   * 为什么需要：套装里的子商品点开后，用户改完价、看完图，按返回应该是"回那个套装"，
-   * 而不是被扔回列表再重新翻。存**编号**不存 id —— 编号才是这套系统的锚点，
-   * 日志和图片夹都按它对，出问题时能直接对上。
+   * 按编号开详情（可能不在当前筛选结果里，所以绕开 filtered）。
+   *
+   * ⚠️ **这里没有"来路栈"**（2026-10-12 删掉，跟电脑端保持一致）：原先从套装点进子商品会把
+   * 套装的编号压进一个 `detailBack` 栈，返回键先回栈顶。问题是套装和子商品能互相点
+   * （A→B→A→B），堆几次之后用户根本不知道那个 ‹ 会把他带到哪儿 —— 还会有"按十来下才回得到列表"
+   * 的观感。现在的规矩简单到没有歧义：
+   *   **‹ 永远是"回商品列表"**；想看回套装就点子商品页顶部的「属于 T001」。
+   * 电脑端一直就是这个规矩（见 docs/套装-使用说明.md：那边"没有返回上一步按钮，别找"）。
    */
-  var detailBack = [];
-
-  /** 按编号开详情（可能不在当前筛选结果里，所以绕开 filtered） */
-  function openDetailByCode(code, pushBack) {
+  function openDetailByCode(code) {
     var want = String(code || "").toUpperCase();
     var p = null;
     for (var i = 0; i < state.products.length; i++) {
@@ -2821,26 +2875,6 @@
       toast("找不到 " + code, true);
       return;
     }
-    var cur = state.detail;
-    if (pushBack && cur && cur.code) {
-      // ⚠️ 去重是**必须的**，不是优化。
-      // 套装里能点进子商品、子商品上又能点回套装，用户可以就这么 A→B→A→B 来回点。
-      // 一路 push 的话，返回键要按十来下才回得到列表 —— 那种"回不去"的感觉就是这么来的。
-      // 照浏览器历史那条规矩办：目标已经在栈里 → 把栈截到它那儿（它自己成为当前页），
-      // 于是"A 跳 B、B 跳回 A" = 回到 A 且栈清空，返回键一下就回列表。
-      var at = -1;
-      for (var k = 0; k < detailBack.length; k++) {
-        if (String(detailBack[k]).toUpperCase() === want) {
-          at = k;
-          break;
-        }
-      }
-      if (at >= 0) {
-        detailBack.length = at;
-      } else {
-        detailBack.push(cur.code);
-      }
-    }
     // 在当前筛选结果里能找到就还按老路走（保住「上一个/下一个」），找不到就单独开一屏
     var all = filtered();
     for (var j = 0; j < all.length; j++) {
@@ -2850,20 +2884,6 @@
       }
     }
     renderDetail(p, -1, true);
-  }
-
-  /**
-   * 返回键上写清楚这一下会退到哪儿。
-   * 原来固定写「商品」，可是从套装点进子商品之后，这一下其实是回那个**套装** ——
-   * 套装和子商品互相点过几次，用户就完全不知道返回键会把他带到哪儿。
-   * 栈里有来路就显示那个编号，没有就是回列表（「商品」）。
-   */
-  function updateBackLabel() {
-    var el = $("backText");
-    if (!el) {
-      return;
-    }
-    el.textContent = detailBack.length ? String(detailBack[detailBack.length - 1]) : "商品";
   }
 
   function updateDetailNav() {
@@ -3868,6 +3888,10 @@
       $(s).classList.toggle("show", s === id || (s === "screen-list" && keepList));
     });
     document.body.classList.toggle("drawer", keepList);
+    // 底部 tab 栏的高亮：详情 / 新建都算「商品」这一格 —— 它们是从商品页点进去的，
+    // 底下亮着「设置」而人正在看商品详情，那才是真的怪。
+    $("tabProducts").classList.toggle("on", id !== "screen-settings");
+    $("tabSettings").classList.toggle("on", id === "screen-settings");
     if (id === "screen-list") {
       state.detail = null;
     }
@@ -3952,8 +3976,6 @@
       return invoke("loadAll"); // 交给下拉刷新判断何时收提示条
     };
     $("btnReload2").onclick = reload;
-    // 「有改动」那个角标本身就是个按钮：点它 = 重读一遍（角标在 productsLoaded 里收起来）
-    $("btnStale").onclick = reload;
     // 筛选不再另起一屏：就在列表页里展开，改的时候下面那张表一直看得见
     $("btnFilter").onclick = function () {
       setFilterOpen(!state.panelOpen);
@@ -3973,13 +3995,16 @@
       }
       setFilterOpen(false);
     });
-    $("btnSettings").onclick = function () {
+    // 底部 tab 栏：商品 / 设置。两个大模块互相切 —— 原来「设置」是顶栏里的一个 ⚙ 图标，
+    // 现在顶栏那一行留给"找东西"，⚙ 挪到底部变成一格；「返回」那个按钮也一并撤了
+    // （底部「商品」格就是它的返回：详情/新建开着时先结算再回列表）。
+    $("tabProducts").onclick = function () {
+      closePanel();
+    };
+    $("tabSettings").onclick = function () {
       renderSettings();
       showSettingsTab(state.setTab || "sys"); // 停在上次那个页签
       show("screen-settings");
-    };
-    $("btnSetBack").onclick = function () {
-      closePanel();
     };
     // 页签切换 + 「页面配置」里的档位按钮（都是每次重画，所以走容器上的委托）
     $("setTabs").onclick = function (e) {
@@ -3987,6 +4012,17 @@
       if (b) {
         showSettingsTab(b.dataset.tab);
       }
+    };
+    // 「清空」日志：清的只是本机上这一份展示副本（state.logs，在内存里，最多 300 条）——
+    // 服务端那台机器上的日志文件不动，别人那台手机上也不受影响。
+    // 纯展示的东西，清错了再操作一次就又有了，所以不弹确认框（为这点事拦一道不值），
+    // 清完给个提示就够。
+    // 注意 renderSettings() 只重画 ruleTable/settingTable/serverTable，不会重建 #tabLog，
+    // 所以这个绑定不会被重画冲掉。
+    $("btnClearLog").onclick = function () {
+      state.logs.length = 0;
+      renderLogs();
+      toast("日志已清空");
     };
     $("tabPage").onclick = function (e) {
       var b = e.target.closest(".zoomtier");
@@ -4216,7 +4252,7 @@
       }
       // 折着的时候标题右边那行摘要就是唯一线索，点完必须跟着变
       updateGroupSummary(g);
-      // 搜索行那边可能正开着同一列的圆片（品类/等级），一起同步
+      // 搜索行那边可能正开着同一列的下拉（品类/等级/状态是同一个 #scopeValue），一起同步
       syncScopeControls();
       state.page = 0;
       renderList();
@@ -4241,30 +4277,19 @@
       state.page = 0;
       renderList();
     };
-    // 状态：只有两种取值，下拉选完立即生效
-    $("scopeStatus").onchange = function () {
-      var set = state.filters.enum.status;
+    // 状态 / 品类 / 等级：搜索行右侧那个下拉（三列共用一个控件，选项按当前列重建）。
+    // 下拉没有"回车才生效"的说法，选完就是选完了（跟桌面端一致）。
+    // **单选** —— 写进 state.filters.enum[列] 那一份，所以跟筛选面板是同一个条件，天然联动；
+    // 要多选就去面板里勾（那边的圆片还在）。
+    $("scopeValue").onchange = function () {
+      var set = state.filters.enum[state.scope];
       Object.keys(set).forEach(function (k) {
         delete set[k];
       });
-      if ($("scopeStatus").value) {
-        set[$("scopeStatus").value] = 1;
+      if ($("scopeValue").value) {
+        set[$("scopeValue").value] = 1;
       }
       // 面板里那一组也亮起来
-      if (state.panelOpen) {
-        renderFilter();
-      }
-      state.page = 0;
-      renderList();
-    };
-    // 品类/等级：搜索行里那排圆片，跟面板里的是同一份 state
-    $("scopeChips").onclick = function (e) {
-      var chip = e.target.closest(".chip");
-      if (!chip) {
-        return;
-      }
-      toggleEnumChip(chip.dataset.field, chip.dataset.v);
-      chip.classList.toggle("on");
       if (state.panelOpen) {
         renderFilter();
       }
@@ -4307,16 +4332,8 @@
       renderList();
       $("content").scrollTop = 0;
     };
-    $("pageFirst").onclick = function () {
-      state.page = 0;
-      renderList();
-      $("content").scrollTop = 0;
-    };
-    $("pageLast").onclick = function () {
-      state.page = 999999; // renderList 里会夹到最后一页
-      renderList();
-      $("content").scrollTop = 0;
-    };
+    // 跳页：中间那颗胶囊（#pageJump 下拉）。`« 第一页` / `» 最后一页` 两个按钮
+    // 2026-10-12 撤了（六个控件收成三），一键到末页没了 —— 跳页本身还在，收进这颗胶囊里。
     $("pageJump").onchange = function () {
       state.page = num($("pageJump").value);
       renderList();
@@ -4409,13 +4426,10 @@
       openFieldSheet(row, cell);
     });
     $("btnBack").onclick = function () {
-      // ===== 套装（可整体移除）===== 从套装点进子商品的来路栈：有来路就先回上一步
-      // （改完子商品的价、看完图，按返回应该回那个套装，而不是被扔回列表重新翻）
-      if (detailBack.length) {
-        flushDetailEdits();
-        openDetailByCode(detailBack.pop(), false);
-        return;
-      }
+      // ⚠️ 这一下**永远是"回商品列表"**，不做"返回上一步"（2026-10-12 改，跟电脑端一致）。
+      // 原先从套装点进子商品后这里会回那个套装（来路栈），但套装和子商品能互相点几次，
+      // 用户根本不知道这一下会退到哪儿。想看回套装，子商品页顶部有「属于 T001」。
+      // 焦点那一格由 closePanel() 自己结算（它内部会先 flushDetailEdits）。
       closePanel();
     };
     // 详情页签：基本信息 / 价格库存 / 备注说明（套装也是这三个）。切页前把正在编辑的那一格结算掉
@@ -4572,7 +4586,7 @@
             row.classList.remove("open"); // 已经推开着，点一下先收回去，别跳
             return;
           }
-          openDetailByCode(go.dataset.openChild, true);
+          openDetailByCode(go.dataset.openChild);
           return;
         }
         // ⑤ 点空白处：把推开的行收回去
@@ -4630,24 +4644,23 @@
       });
       window.addEventListener("scroll", closeSetMenu, true);
     })();
-    // 子商品详情页顶部「属于 T001」：点一下跳到那个套装（同一条来路栈，返回键能回来）
+    // 子商品详情页顶部「属于 T001」：点一下跳到那个套装（**回套装只有这一条路** ——
+    // 返回键永远是回列表，见 openDetailByCode 的说明）
     $("dSetOf").onclick = function (e) {
       var b = e.target.closest("[data-goto]");
       if (!b) {
         return;
       }
-      openDetailByCode(b.dataset.goto, true);
+      openDetailByCode(b.dataset.goto);
     };
     $("btnPrevItem").onclick = function () {
       flushDetailEdits();
-      detailBack.length = 0; // 一按「上一个/下一个」就是"顺着列表翻"，来路作废
       if (state.detail) {
         openDetailAt(state.detail.idx - 1);
       }
     };
     $("btnNextItem").onclick = function () {
       flushDetailEdits();
-      detailBack.length = 0;
       if (state.detail) {
         openDetailAt(state.detail.idx + 1);
       }
@@ -4798,14 +4811,6 @@
     }
 
     wirePicker("btnUploadPick", "filePickGallery", uploadFiles);
-    // 日志改成显式按钮：状态条整条可点的话，手指碰到底部就弹出一大片日志，很烦
-    $("btnLog").onclick = function () {
-      renderLogs();
-      $("logPanel").classList.add("show");
-    };
-    $("logClose").onclick = function () {
-      $("logPanel").classList.remove("show");
-    };
     // ---- 新建页 ----
     // ===== 套装（可整体移除）===== 普通 / 套装开关：切之前先把当前那一格结算掉（编号/名称可能刚打完）
     $("nKind").onclick = function (e) {

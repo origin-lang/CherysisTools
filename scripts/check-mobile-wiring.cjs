@@ -114,20 +114,24 @@ if (!jsBreak) {
   );
 }
 if (jsBreak && cssBreak && jsBreak[1] === cssBreak[1]) {
-  for (const need of ["body.drawer #screen-list", "body.drawer #status", "body.drawer #toast"]) {
-    if (!css.includes(need)) {
-      fails.push(`style.css 里缺少 "${need}"：抽屉会盖住那一块（分页按钮/状态条/提示浮层）`);
+  // ⚠️ 必须是"选择器 + 花括号"才算数：光 includes 选择器字符串会被**注释里提到的那一句**骗过
+  //    （`.screen` 和浮动底条的注释里都写过 body.drawer #tabbar），实测那样子变异自检是假绿。
+  const hasRule = (sel) =>
+    new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\{").test(css);
+  for (const need of ["body.drawer #screen-list", "body.drawer #tabbar", "body.drawer #toast"]) {
+    if (!hasRule(need)) {
+      fails.push(`style.css 里缺少 "${need} { }" 这条规则：抽屉会盖住那一块（分页按钮/tab 栏/提示浮层）`);
     }
   }
-  // 筛选抽屉（宽屏时也从右边出）同样必须让位，否则分页按钮/状态条会被压住
+  // 筛选抽屉（宽屏时也从右边出）同样必须让位，否则分页按钮/tab 栏会被压住
   for (const need of [
     "body.filterdrawer #screen-list",
-    "body.filterdrawer #status",
+    "body.filterdrawer #tabbar",
     "body.filterdrawer #toast",
     "body.filterdrawer #filterPanel",
   ]) {
-    if (!css.includes(need)) {
-      fails.push(`style.css 里缺少 "${need}"：宽屏筛选抽屉会盖住那一块或整屏铺开`);
+    if (!hasRule(need)) {
+      fails.push(`style.css 里缺少 "${need} { }" 这条规则：宽屏筛选抽屉会盖住那一块或整屏铺开`);
     }
   }
   // 抽屉样式必须**同时**覆盖详情/新建/设置三屏：JS 的 keepList 里三个都有，
@@ -465,6 +469,247 @@ if (!renderFilterFn || !refreshGroupsFn) {
     if (/NO_SPACE_TEXT_FIELDS = \{[^}]*remark/.test(js)) {
       fails.push("NO_SPACE_TEXT_FIELDS 里不该有 remark：备注是要能带空格的自由文本");
     }
+  }
+}
+
+// ---------- ⑥ 三层外壳：顶上「找东西」/ 内容区小 tab / 底部 tab 栏 ----------
+// 2026-10-12 重排了手机版外壳（见 docs/手机版-界面重构示意.html）。这一层全是
+// **不报错但界面坏** 的东西，所以逐条钉住：
+//   ① 底部 tab 栏是 fixed 铺满整宽的，四个 .screen 都得给它留高度 —— 高度只有一个出处
+//      （:root 的 --tabbar），任一边改了名/写死了数字，表现就是"分页条被 tab 栏压住半行"。
+//   ② 日志从"底部细条弹的浮层"并进设置页当第三个页签：showSettingsTab 必须有 log 这一页，
+//      而且切进去要补画一次（日志平时攒着不画，不补画看着就是「日志不更新」）。
+//   ③ 旧壳的东西不许回来：#status / #btnLog / #logPanel / #btnStale / #btnSetBack / #btnSettings。
+//      一旦有人"顺手加回来"，就是两个入口干同一件事、或者点了没反应。
+{
+  if (!/:root\s*\{[^}]*--tabbar\s*:\s*\d+px/.test(css)) {
+    fails.push("style.css 的 :root 里找不到 --tabbar：底部 tab 栏的高度没有唯一出处了");
+  }
+  if (!/\.screen\s*\{[^}]*padding-bottom:\s*calc\(var\(--tabbar\)/.test(css)) {
+    fails.push(
+      ".screen 的 padding-bottom 应写成 calc(var(--tabbar) + env(safe-area-inset-bottom))："
+        + "否则屏幕内容会被底部 tab 栏压住（分页条少半行就是这么来的）",
+    );
+  }
+  if (!/\.tabbar\s*\{[^}]*height:\s*calc\(var\(--tabbar\)/.test(css)) {
+    fails.push(
+      ".tabbar 的高度必须写成 calc(var(--tabbar) + env(safe-area-inset-bottom))，与 .screen 那份用同一个变量",
+    );
+  }
+  if (!html.includes('id="tabbar"')) {
+    fails.push('index.html 里没有 id="tabbar"：底部 tab 栏（商品 / 设置）不在');
+  }
+  if (!html.includes('id="staleDot"')) {
+    fails.push('index.html 里没有 id="staleDot"：「有改动」那个小红点没地方长');
+  }
+  if (!/isLogTabVisible/.test(js)) {
+    fails.push(
+      "app.js 里找不到 isLogTabVisible()：pushLog 会不看场合地重画日志"
+        + "（日志页签没打开时纯属白干）",
+    );
+  }
+  // 「清空」按钮要两头都钉住：HTML 里挂着一个按钮、app.js 里没接 onclick = 点了没反应。
+  // 这类「死按钮」最不容易被发现 —— 页面看上去完全正常，只是那一下永远没反应。
+  // （上面那条 id 存在性检查只管 app.js → index.html 一个方向，管不到这里。）
+  if (!html.includes('id="btnClearLog"')) {
+    fails.push('index.html 里没有 id="btnClearLog"：「设置 → 日志」那个清空按钮不在');
+  }
+  if (!/\$\("btnClearLog"\)\s*\.\s*onclick/.test(js)) {
+    fails.push("app.js 里没给 #btnClearLog 接 onclick：日志那个「清空」按钮点了没反应");
+  }
+  const settingsTabFn = fnBody("showSettingsTab");
+  if (!settingsTabFn) {
+    fails.push("找不到 showSettingsTab()：这条闸门就失效了，请同步更新 check-mobile-wiring.cjs");
+  } else {
+    if (!/log:\s*\$\("tabLog"\)/.test(settingsTabFn)) {
+      fails.push('showSettingsTab 里少了 log: $("tabLog")：设置页第三个页签（日志）没接上');
+    }
+    if (!/name === "log"[\s\S]{0,80}renderLogs\(\)/.test(settingsTabFn)) {
+      fails.push(
+        "showSettingsTab 里切到 log 页签时没有 renderLogs()：日志平时攒着不画，"
+          + "切进去不补画一次，看着就是「日志不更新」",
+      );
+    }
+  }
+  for (const legacy of ["status", "btnLog", "logPanel", "btnStale", "btnSetBack", "btnSettings"]) {
+    if (html.includes(`id="${legacy}"`) || js.includes(`$("${legacy}")`) || css.includes(`#${legacy}`)) {
+      fails.push(
+        `#${legacy} 又出现了：2026-10-12 已经把它并进新外壳（日志→设置页签、有改动→设置格小红点、`
+          + "设置→底部 tab 栏）。加回来就是两个入口干同一件事、或者点了没反应",
+      );
+    }
+  }
+}
+
+// ---------- ⑦ 翻页条：六个控件收成三个（2026-10-12 第 2 批） ----------
+// 收成 `‹ 上一页 · [1/7 页 ▾] · 下一页 ›`，中间那颗就是跳页下拉（#pageJump）做成胶囊。
+// 这里钉住四件"不报错但界面坏"的事：
+//   ① 旧的三件不许回来（#pageFirst / #pageLast / #pageInfo）—— 回来就是第四五个控件；
+//   ② `.pager` 是 display:flex，浏览器给 [hidden] 的那条 display:none **盖不住它** →
+//      少了 `.pager[hidden]{display:none}`，≤1 页时会顶出一条空的分页条（手机上白占 50px）；
+//   ③ 中间那颗的选项文字必须是「N/M 页」—— 胶囊收起时显示的就是选中项那行字，
+//      写成「第 N 页」就跟这张图不一样了（也看不出"共几页"）；
+//   ④ `appearance:none` 不能丢：丢了浏览器按系统样式画那个下拉，胶囊外观整个出不来。
+{
+  for (const legacy of ["pageFirst", "pageLast", "pageInfo"]) {
+    if (html.includes(`id="${legacy}"`) || js.includes(`$("${legacy}")`)) {
+      fails.push(
+        `#${legacy} 又出现了：翻页条已收成三控件（‹ 上一页 · 1/7 页 · 下一页 ›），`
+          + "加回来就是第四五个控件（`«`/`»`/条数都撤了）",
+      );
+    }
+  }
+  if (!html.includes('id="pager"')) {
+    fails.push('index.html 里没有 id="pager"：renderPager 就没法把整条收起来（≤1 页时）');
+  }
+  if (!/\.pager\[hidden\]\s*\{[^}]*display:\s*none/.test(css)) {
+    fails.push(
+      "style.css 里缺 .pager[hidden]{display:none}：.pager 自己是 display:flex，"
+        + "浏览器给 [hidden] 的那条盖不住它 —— ≤1 页时会出现一整条空的分页条",
+    );
+  }
+  if (!/\.pager select\.pj\s*\{[^}]*appearance:\s*none/.test(css)) {
+    fails.push(
+      ".pager select.pj 里没有 appearance:none：浏览器会按系统样式画那个下拉，胶囊外观出不来",
+    );
+  }
+  if (!html.includes('class="pj"')) {
+    fails.push('index.html 的跳页下拉少了 class="pj"：中间那颗胶囊的样式没了着落');
+  }
+  const rpFn = fnBody("renderPager");
+  if (!rpFn) {
+    fails.push("找不到 renderPager()：这条闸门就失效了，请同步更新 check-mobile-wiring.cjs");
+  } else {
+    // ⚠️ 断言必须精确到「设成 one」：只写 /\.hidden\s*=/ 的话，改成 `pager.hidden = false`
+    //    照样绿（变异自检真抓到过这条漏网）。
+    if (!/\$\("pager"\)/.test(rpFn) || !/\.hidden\s*=\s*one\b/.test(rpFn)) {
+      fails.push(
+        "renderPager 里应写成 `pager.hidden = one;`（one = 页数 ≤1）："
+          + "否则 ≤1 页时那条分页条收不起来",
+      );
+    }
+    // ⚠️ 这条**必须锚在 `opts +=` 那一行**：文件下面 jump.title 里也有一模一样的
+    //    `"/" + pages + " 页`（"共 N 条 · 第 P/Q 页"），只搜全文会被它救活（变异抓过一次漏网）。
+    if (!/opts\s*\+=[^\n]*?\/"\s*\+\s*pages\s*\+\s*"\s*页/.test(rpFn)) {
+      fails.push(
+        "renderPager 里跳页下拉（opts += …）的选项文字不是「N/M 页」："
+          + "中间那颗胶囊收起时显示的就是这行字",
+      );
+    }
+  }
+}
+
+// ---------- ⑧ 搜索行右侧：状态 / 品类 / 等级统一下拉（2026-10-12） ----------
+// 原先品类/等级在搜索行里是"一排圆片"，而**桌面端当时就做成了下拉**
+// （client-product.js 的 KW_SELECT_SCOPES = 状态/品类/等级，那边注释写着"商家明确说过不喜欢圆圈圈"）。
+// 手机版漏了两列，2026-10-12 补齐。这里钉住四件事：
+//   ① 那排圆片的痕迹（#scopeChips / .scopechips / SCOPE_CHIP_COLS / renderScopeChips）
+//      不许回来 —— 圆圈只留在筛选面板里（那边要**多选**，下拉给不了）；
+//   ② 三列共用**一个** #scopeValue 下拉，不许再拆出 #scopeStatus 那样"一列一个控件"；
+//   ③ 圆片换下拉最容易漏的一步：**搜索框要跟着藏起来**（这三列的条件在下拉里，不在搜索框里）。
+//      漏了这一步，切到"品类"时搜索框还露着、上一段文字还接着筛（看着像 bug）；
+//   ④ 选完要真的写进 state.filters.enum[列]（跟筛选面板同一份），且值要**读得回来** ——
+//      否则就是下拉显示一套、实际筛另一套（界面说谎）。
+{
+  if (html.includes('id="scopeChips"') || js.includes('$("scopeChips")')) {
+    fails.push(
+      '#scopeChips 又出现了：搜索行的品类/等级已统一成下拉（商家不要圆圈圈），'
+        + "圆圈只留在筛选面板里（那边要多选）",
+    );
+  }
+  // ⚠️ 先剥掉 CSS 注释再查：style.css 里那段"圆片撤了"的说明**本身就写着 .scopechips**，
+  //    直接 css.includes 会被自己的注释救活（"注释骗过断言"这个坑抽屉断点那段真栽过）。
+  const cssNoComment = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  if (/\.scopechips\b/.test(cssNoComment)) {
+    fails.push(
+      "style.css 里还有 .scopechips 规则：搜索行那排圆片已改成下拉（圆圈只留在筛选面板里）",
+    );
+  }
+  for (const gone of ["SCOPE_CHIP_COLS", "renderScopeChips", "renderScopeStatus"]) {
+    if (js.includes(gone)) {
+      fails.push(`${gone} 又出现了：搜索行那排圆片（以及"状态单开一个下拉"）的残骸，已并进 renderScopeValue`);
+    }
+  }
+  if (!html.includes('id="scopeValue"')) {
+    fails.push('index.html 里没有 id="scopeValue"：状态/品类/等级共用的那个下拉没地方长');
+  }
+  if (html.includes('id="scopeStatus"')) {
+    fails.push(
+      'index.html 里还有 id="scopeStatus"：状态下拉已并进 #scopeValue（三列共用一个），'
+        + "留着就是两套控件管同一个条件",
+    );
+  }
+  const asFn = fnBody("applyScope");
+  if (!asFn) {
+    fails.push("找不到 applyScope()：这条闸门就失效了，请同步更新 check-mobile-wiring.cjs");
+  } else {
+    if (!/SCOPE_SELECT_COLS\[scope\]/.test(asFn)) {
+      fails.push("applyScope 里没按 SCOPE_SELECT_COLS 判断这一列要不要换成下拉");
+    }
+    // ⚠️ 必须精确到 `q.hidden = isSelectCol`：只写 /q\.hidden\s*=/ 的话，
+    //    改成 `q.hidden = false`（搜索框永远露着）照样绿。
+    if (!/q\.hidden\s*=\s*isSelectCol\b/.test(asFn)) {
+      fails.push(
+        "applyScope 里搜索框的显隐要走 isSelectCol（`q.hidden = isSelectCol`）："
+          + "漏了这一步，切到品类/等级时搜索框还露着、上一段文字还接着筛",
+      );
+    }
+    if (!/renderScopeValue\(scope\)/.test(asFn)) {
+      fails.push("applyScope 里切到那几列时要调 renderScopeValue(scope) 把选项摆上");
+    }
+  }
+  const rvFn = fnBody("renderScopeValue");
+  if (!rvFn) {
+    fails.push("找不到 renderScopeValue()：状态/品类/等级那个下拉的选项就没出处了");
+  } else {
+    if (!/state\.filters\.enum\[scope\]/.test(rvFn)) {
+      fails.push(
+        "renderScopeValue 里要从 state.filters.enum[scope] 把当前值读回来："
+          + "不读就是下拉显示一套、实际筛另一套（界面说谎）",
+      );
+    }
+  }
+  if (!/\$\("scopeValue"\)\s*\.\s*onchange/.test(js)) {
+    fails.push('app.js 里没给 #scopeValue 接 onchange：那个下拉选了没反应');
+  } else if (!/state\.filters\.enum\[state\.scope\]/.test(js)) {
+    fails.push(
+      "scopeValue 的 onchange 要写进 state.filters.enum[当前列]（跟筛选面板同一份），否则两边不联动",
+    );
+  }
+}
+
+// ---------- ⑨ 详情页那个 ‹ ：永远是「回商品列表」，没有「返回上一步」（2026-10-12） ----------
+// 原先从套装点进子商品，那个 ‹ 会回**那个套装**（一个来路栈），按钮文案也跟着改成 ‹ T001。
+// 问题是套装和子商品能互相点（A→B→A→B），堆几次之后用户根本不知道这一下会退到哪儿。
+// **电脑端一直没有这个「返回上一步」**（docs/套装-使用说明.md 里写着"没有返回上一步按钮，别找"），
+// 手机版这次跟它对齐。这里钉三件事：
+//   ① 来路栈那套名字不许回来（栈变量、对它的操作、改文案的 updateBackLabel）；
+//   ② 返回键文案固定「商品」，不再随来路变；
+//   ③ 回套装的路只剩子商品页顶部那条「属于 T001」—— 它必须还在（删了就是真的回不去了）。
+{
+  // ⚠️ 断言一律写"代码形状"，不写裸的标识符：上面那段说明里就写着 `detailBack`，
+  //    用 js.includes("detailBack") 会被自己的注释救活（.scopechips 那次就是这么假绿的）。
+  if (/\bvar\s+detailBack\b/.test(js) || /detailBack\s*\.\s*(length|push|pop)\b/.test(js)) {
+    fails.push(
+      "app.js 里又出现了来路栈 detailBack：详情页的 ‹ 已定成「永远回商品列表」，"
+        + "再压栈就等于这一下有两个去向，用户猜不出来",
+    );
+  }
+  if (/\bupdateBackLabel\b/.test(js)) {
+    fails.push(
+      "app.js 里又出现了 updateBackLabel：返回键文案已固定「商品」，不再随来路变（见上一条）",
+    );
+  }
+  if (!/id="backText"\s*>\s*商品\s*</.test(html)) {
+    fails.push('index.html 里 #backText 的文案应固定写「商品」（它不再随来路变了）');
+  }
+  if (!/\$\("btnBack"\)\s*\.\s*onclick/.test(js)) {
+    fails.push('app.js 里没给 #btnBack 接 onclick：详情页那个 ‹ 点了没反应');
+  }
+  if (!html.includes('id="dSetOf"')) {
+    fails.push(
+      'index.html 里没有 id="dSetOf"：从子商品回套装**只剩这一条路**了，删掉就真的回不去',
+    );
   }
 }
 

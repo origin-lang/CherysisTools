@@ -63,6 +63,13 @@
   .seg2 span{flex:1;text-align:center;font-size:12.5px;padding:7px 0;border-radius:7px;color:#5d646d;}
   .seg2 span.on{background:var(--brand);color:#fff;font-weight:700;}
 
+  /* ③.5 分页条：内容区正下方、底部 tab 之上；画册/列表共用同一条 */
+  .pager{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px 11px;background:var(--card);border-top:1px solid var(--line);}
+  .pager .pg{font-size:12.5px;color:#5d646d;background:var(--soft);border:1px solid var(--line);border-radius:9px;padding:7px 12px;white-space:nowrap;}
+  .pager .pg.off{color:#c3ccd5;background:#fafbfc;}
+  .pager .pj{font-size:12.5px;font-weight:700;color:var(--brand);background:rgba(35,168,132,.09);border:1px solid rgba(35,168,132,.28);border-radius:999px;padding:6px 13px;white-space:nowrap;}
+  .pager .pj i{font-style:normal;font-size:10px;opacity:.75;margin-left:2px;}
+
   /* ④ 底部 tab 栏（两格居中，连接灯靠右浮着） */
   .tabbar{display:flex;align-items:center;justify-content:center;background:var(--card);border-top:1px solid var(--line);padding:6px 8px 8px;position:relative;}
   .tb{flex:none;width:116px;text-align:center;font-size:11.5px;color:var(--muted);padding:4px 0;position:relative;}
@@ -114,7 +121,7 @@
         </div>
         <span class="cnt">348 条</span>
       </div>
-      <div class="body">
+      <div class="body" style="min-height:214px">
         <div class="grid2">
           <div class="gcard">
             <div class="ph"><svg viewBox="0 0 60 60"><circle cx="22" cy="37" r="7.5" fill="none" stroke="#c3ccd5" stroke-width="2"/><circle cx="40" cy="37" r="7.5" fill="none" stroke="#c3ccd5" stroke-width="2"/><path d="M22 29.5V19M40 29.5V19" stroke="#c3ccd5" stroke-width="2" fill="none"/></svg></div>
@@ -138,13 +145,18 @@
           </div>
         </div>
       </div>
+      <div class="pager">
+        <span class="pg off">‹ 上一页</span>
+        <span class="pj">1/7 页<i>▾</i></span>
+        <span class="pg">下一页 ›</span>
+      </div>
       <div class="tabbar">
         <span class="tb on"><span class="ic">🏪</span>商品</span>
         <span class="tb"><span class="ic">⚙</span>设置<span class="red"></span></span>
         <span class="conn"><i></i></span>
       </div>
     </div>
-    <p class="cap"><b>① 商品页（画册）</b><br>顶上一行只有「搜索 + 筛选 + 新建」；<br>画册/列表从顶栏挪到内容区顶上（虚线＋是留给以后的扩展位）。</p>
+    <p class="cap"><b>① 商品页（画册）</b><br>顶上一行只有「搜索 + 筛选 + 新建」；<br>画册/列表从顶栏挪到内容区顶上（虚线＋是留给以后的扩展位）。<br><b>内容区底下是分页条</b>（画册/列表共用一条）：<br>一排六个控件收敛成 <code>‹ 上一页 · 1/7 页 · 下一页 ›</code>，<br>第一页时「上一页」是灰的。</p>
   </div>
 
   <!-- ② 列表档 -->
@@ -167,7 +179,7 @@
         </div>
         <span class="cnt">348 条</span>
       </div>
-      <div class="body">
+      <div class="body" style="min-height:214px">
         <table class="t">
           <tr><th>编号</th><th>名称</th><th>进价</th><th>售价</th><th>库存</th></tr>
           <tr><td>A001</td><td>淡水珍珠耳环</td><td>12</td><td>39</td><td>8</td></tr>
@@ -176,13 +188,18 @@
           <tr><td>L004</td><td>手链</td><td>8</td><td>32</td><td>3</td></tr>
         </table>
       </div>
+      <div class="pager">
+        <span class="pg">‹ 上一页</span>
+        <span class="pj">3/7 页<i>▾</i></span>
+        <span class="pg">下一页 ›</span>
+      </div>
       <div class="tabbar">
         <span class="tb on"><span class="ic">🏪</span>商品</span>
         <span class="tb"><span class="ic">⚙</span>设置<span class="red"></span></span>
         <span class="conn"><i></i></span>
       </div>
     </div>
-    <p class="cap"><b>② 商品页（列表）</b><br>同一页切到列表档。套装的进价是<b>灰字汇总值</b>（不是能改的数），库存那格是 <code>—</code>。</p>
+    <p class="cap"><b>② 商品页（列表）</b><br>同一页切到列表档。套装的进价是<b>灰字汇总值</b>（不是能改的数），库存那格是 <code>—</code>。<br><b>分页条跟画册是同一条</b>（切 tab 不换位置、不重画）。<br>这档画在第 3 页，所以「上一页」是能点的。</p>
   </div>
 
   <!-- ③ 设置 · 日志页签 -->
@@ -244,9 +261,192 @@
     <tr><td><b>筛选面板</b></td><td>条件（不改变"看什么"，只是筛）</td><td>只看套装、有图/无图</td></tr>
     <tr><td><b>顶部工具行</b></td><td>跟"找东西"直接相关</td><td>基本不用再动</td></tr>
   </table>
+  <h2>分页条（这次补画的）</h2>
+  <p>原来这张图漏了它 —— 而它是<b>现成的功能</b>：现在画册和列表底下共用一条
+  <code>« | ‹ 上一页 | 跳页下拉 | 第 1–50 条 · 共 348 条 · 1/7 页 | 下一页 › | »</code>。</p>
+  <p><b>位置不动</b>：还是<b>内容区正下方、底部 tab 之上</b>，画册/列表<b>共用同一条</b>（切 tab 不重画、不换位置）。<br>
+  <b>只把一排六个控件收敛成三个</b>：<code>‹ 上一页 · 1/7 页 · 下一页 ›</code>，
+  点中间那颗「1/7 页」弹出页列表跳页（手机上本来就用下拉跳页，不用数字键盘）。</p>
+  <p><b>⚠️ 代价说清楚</b>：<code>«</code> / <code>»</code>（第一页 / 最后一页）和那个独立的下拉<b>撤掉了</b> ——
+  <b>功能没丢</b>（跳页还在，只是收进中间那颗），但「一键跳到末页」要多点一下。这是刻意换来的宽度（300px 一排挤六个控件太密）。
+  页数少（≤1 页）时整条可以收起来。</p>
+  <p><b>「348 条」没跟着下移</b>，还留在小 tab 那一行最右边：分页条精简之后已经不写条数了，
+  总数总得有个地方说 —— 于是小 tab 行右边是<b>总数（348 条）</b>、分页条中间是<b>第几页/共几页（1/7 页）</b>，各说一件事不重复。</p>
+
+  <h2>两处位置的挪动</h2>
+  <p><b>①</b> 那行 <code>348 条</code> 原来挤在搜索框右边，挪到小 tab 那一行的最右边（它说的是"现在显示多少条"，跟内容区更近）。<br>
+  <b>②</b> 分页条本身不挪窝，但控件从六个收到三个（见上）。</p>
+
   <p><b>这次一个功能都不会丢</b>：<b>搜索那行的"搜哪一列"下拉（全部/编号/名称/品类/系列）和漏斗筛选按钮原样保留</b>（漏斗上的小数字＝生效中的条件数，跟现在一样）；画册/列表变成内容区的小 tab；设置从顶栏挪到底部 tab（<b>日志并进去当第三个页签</b>）；「🔄 有改动」变成底部「设置」格上的小红点；连接指示灯缩成底部右侧一个小圆点。</p>
-  <p><b>只动了一处位置</b>：那行"348 条"原来是挤在搜索框右边的，挪到了小 tab 那一行的最右边 —— 因为它说的是"现在显示多少条"，跟内容区更近。</p>
   <p><b>代价说清楚</b>：这是<b>重构手机版的框架</b>，动的是 <code>src/webview/mobile/index.html</code> 的骨架和 <code>app.js</code> 里跟显隐/切换有关的那部分 —— 比套装那个功能的风险大，因为所有页面的外壳都过一遍。建议先定设计，再分批改（可以一个 tab 一个 tab 地搬）。</p>
+
+  <h2>实施记录 · 第 1 批「外壳」（2026-10-12 已完成）</h2>
+  <p>改了 <code>src/webview/mobile/</code> 的 <code>index.html</code> / <code>style.css</code> / <code>app.js</code>，并给
+  <code>scripts/check-mobile-wiring.cjs</code> 加了一道外壳闸门（<code>--tabbar</code> 的出处、日志页签补画、
+  旧壳的六个 id 不许回来、抽屉让位）。<b>后端零改动</b>。跟这张图有几处不一样，都是实施时才发现必须这么定的：</p>
+  <table>
+    <tr><th style="width:150px">图上画的</th><th>实际做成</th><th style="width:260px">为什么</th></tr>
+    <tr>
+      <td>顶栏 <code>＋</code> 是正方形图标</td>
+      <td>照样是 <code>＋</code>，不再写「＋ 新建」</td>
+      <td>合并成一行后要塞下「搜哪一列 + 搜索框 + 漏斗 + 新建」四样；那两个字在 360px 屏上正好是溢出的几像素</td>
+    </tr>
+    <tr>
+      <td>设置页右上角有个「清空」</td>
+      <td><b>没做</b></td>
+      <td>原来就没有"清空日志"这个功能，属于新功能；要的话单独说一声（已撤的浮层上也只有一个「关闭」）</td>
+    </tr>
+    <tr>
+      <td>设置页没有返回箭头</td>
+      <td>照做：撤掉 <code>#btnSetBack</code>，返回靠底部「商品」格</td>
+      <td>底部 tab 已经承担了返回；顶上再放一个"返回"和底部「商品」是同一个动作</td>
+    </tr>
+    <tr>
+      <td>小 tab 右边写「348 条」</td>
+      <td>仍是<b>「筛出来的 / 一共多少条」</b>（如 <code>12 / 348</code>）</td>
+      <td>现有的 <code>#count</code> 本来就是"现在显示多少条"，只挪了位置没改口径。要换成"只写总数"再说</td>
+    </tr>
+    <tr>
+      <td>分页条收成三控件</td>
+      <td><b>已做（第 2 批）</b>，见下面那张表</td>
+      <td>六控件 → <code>‹ 上一页 · 1/7 页 · 下一页 ›</code>，中间那颗点开可跳页</td>
+    </tr>
+    <tr>
+      <td>小红点在「设置」格上</td>
+      <td>照做，但它是<b>纯提示、不是按钮</b></td>
+      <td>⚠️ 这意味着底部那个「🔄 有改动」的<b>一键重读没了</b>：自动刷新照旧，手动重读走「设置 → 系统配置 → 🔄 重新从数据库读一遍」。
+        要是觉得列表页少了个"点一下就刷"的入口，说一声 —— 可以让「点当前那个 tab」= 重读</td>
+    </tr>
+    <tr>
+      <td>图里头每台手机底部各有一条</td>
+      <td>实际是<b>全局一条</b>（四个屏共用，跟着 fixed 在底部）</td>
+      <td>跟原来那条 <code>#status</code> 细条一个位置；每屏各画一条会有四份状态要同步</td>
+    </tr>
+  </table>
+  <p><b>第 2 批（分页条）</b>已做完（见下），<b>第 3 批（细节收尾）</b>、<b>第 4 批（搜索行统一下拉）</b>、
+  <b>第 5 批（详情页返回键）</b>见最后几节。
+  验收步骤见 <code>docs/手工测试清单.md</code>：外壳看「3b. 外壳三层」（3b.1 ~ 3b.15）、
+  分页条看「3c. 分页条收成三控件」（3c.1 ~ 3c.8）、搜索行换控件看「3.1c」。</p>
+
+  <h2>实施记录 · 第 2 批「分页条」（2026-10-12 已完成）</h2>
+  <p>只动了 <code>index.html</code> 里 <code>.pager</code> 那一段 + <code>app.js</code> 的
+  <code>renderPager()</code> 和三个翻页按钮的绑定 + <code>style.css</code> 的分页条样式。<b>后端零改动</b>。</p>
+  <table>
+    <tr><th style="width:150px">图上画的</th><th>实际做成</th><th style="width:260px">为什么</th></tr>
+    <tr>
+      <td>点中间的「1/7 页」<b>弹出页列表</b></td>
+      <td>用的是<b>原来的跳页下拉</b>（<code>#pageJump</code>），只是外观改成胶囊、选项文字写成「N/M 页」</td>
+      <td>这样"收起时看到的那行字"和"点开后的列表"是同一份东西，<b>不用另做一个浮层</b>；
+        手机上弹的就是系统自带的页列表（本来就用它跳页，不用数字键盘）。代价：列表里每一项写的是
+        「3/7 页」，比图上的「第 3 页」多带了个总页数</td>
+    </tr>
+    <tr>
+      <td>胶囊文字 12.5px</td>
+      <td><b>16px</b>（跟其它下拉一样）</td>
+      <td>⚠️ iOS 上聚焦 <code>font-size &lt; 16px</code> 的输入框/下拉会<b>把整页放大</b>，
+        放大之后就很难缩回来（我们还专门拦了系统手势）。这条是硬约束，不是审美</td>
+    </tr>
+    <tr>
+      <td>中间那颗一直显示</td>
+      <td><b>≤1 页时整条分页条收起</b>（<code>#pager.hidden</code>）</td>
+      <td>只有一页还摆"上一页/下一页"是干扰。⚠️ <code>.pager</code> 自己是 <code>display:flex</code>，
+        必须配一条 <code>.pager[hidden]{display:none}</code>，否则 hidden 盖不住它（<code>check:mobile</code> 第 ⑦ 道闸门钉着）</td>
+    </tr>
+    <tr>
+      <td>图上没提「第 12–50 条」</td>
+      <td>整串条数<b>不写在这儿了</b></td>
+      <td>内容区顶上那一排小 tab 的右边已经有「筛出来的 / 一共多少条」，同一件事写两遍像两个数。
+        总数没丢：鼠标停在胶囊上会提示「共 348 条 · 第 1/7 页」</td>
+    </tr>
+  </table>
+
+  <h2>实施记录 · 第 3 批「收尾」（2026-10-12 已完成）</h2>
+  <p>第 2 批做完、上手机看了一遍之后的两处反馈。只动 <code>src/webview/mobile/</code> 三个文件 +
+  闸门 <code>scripts/check-mobile-wiring.cjs</code>，<b>后端零改动</b>。</p>
+  <table>
+    <tr><th style="width:150px">反馈</th><th>改成了什么</th><th style="width:260px">为什么</th></tr>
+    <tr>
+      <td>日志那边<b>没有清空</b></td>
+      <td>「设置 → 日志」的标题行右边加了一个「清空」按钮（<code>#btnClearLog</code>，
+        复用现成的 <code>.listhead</code> 排法），点了就把这一页清干净 + 弹一句「日志已清空」</td>
+      <td>清的是<b>本机这一份展示副本</b>（<code>state.logs</code>，内存里，最多 300 条）——
+        服务端那台机器上的日志文件不动、别人那台手机也不受影响。纯展示的东西，<b>不弹确认框</b>：
+        清错了再操作一次就又有了，为这点事拦一道不值</td>
+    </tr>
+    <tr>
+      <td>清空之后列表一片白</td>
+      <td><code>renderLogs()</code> 里加了个空态：没有日志时显示一行灰字
+        「（现在是空的。之后的操作会一条条记在这儿）」</td>
+      <td>一片白看着像<b>页面坏了</b>，人会以为按钮把日志页点死了；一行灰字说清"是真没有"，才敢接着用</td>
+    </tr>
+    <tr>
+      <td>中间那颗「1/11 页」<b>跟上一页下一页不自然</b></td>
+      <td><code>.pager select.pj</code> 从<b>品牌绿胶囊</b>（绿字 + 9% 绿底 + 绿描边）改成
+        <b>并进两侧那一套</b>：底色 <code>--soft</code>、描边 <code>--line</code>、同 36px 高；
+        仍然保留两处标记 —— 圆角 999px 的胶囊（两侧是 8px 方角）+ 文字品牌绿加粗</td>
+      <td>原来那版整块绿底，实机上看它成了<b>整条最抢眼的一坨</b>，两侧按钮反倒像配角，一排三个不像一家人。
+        现在一排三个是同一套浅底 + 细描边，唯一那点彩色留给"当前在第几页"。
+        ⚠️ 字号仍是 16px，<b>不许改小</b>（iOS 聚焦 &lt;16px 的下拉会把整页放大）</td>
+    </tr>
+  </table>
+
+  <h2>实施记录 · 第 4 批「搜索行统一下拉」（2026-10-12 已完成）</h2>
+  <p>商家反馈：「上方那个搜索还是统一比较好，就是类别那边不要做成圆圈，圆圈还是直接用筛选那边的功能吧，
+  搜索那边统一下拉吧」。只动 <code>src/webview/mobile/</code> 三个文件 + 闸门 + 文档，<b>后端零改动</b>。</p>
+  <p>这是在<b>补齐一个早就定过的口径</b>：电脑端当年就把「状态 / 品类 / 等级」统一做成了下拉
+  （<code>client-product.js</code> 的 <code>KW_SELECT_SCOPES</code>，那行注释写着「商家明确说过不喜欢圆圈圈」），
+  手机版只把「状态」做了，品类/等级两列漏下来还是圆片 —— 所以同一件事两边长相不一样。</p>
+  <table>
+    <tr><th style="width:150px">原来的样子</th><th>改成了什么</th><th style="width:260px">为什么</th></tr>
+    <tr>
+      <td>搜索行里<b>两套</b>控件：<code>#scopeStatus</code> 下拉（状态）+ <code>#scopeChips</code>
+        一排圆片（品类/等级）</td>
+      <td>合并成<b>一个</b> <code>#scopeValue</code> 下拉，选项按当前列重建
+        （「全部状态 / 在售 / 已下架」、「全部品类 / 个护（12）/ 香薰（7）…」）</td>
+      <td>这三列本来就是同一类「取值封闭、选比手打准」的列，没必要一列一个控件。
+        电脑端就是一个 <code>#keywordSelect</code>，口径对齐</td>
+    </tr>
+    <tr>
+      <td>圆片能<b>多选</b></td>
+      <td>下拉只能<b>单选</b>；要多选回筛选面板勾 —— <b>圆圈只留在面板里</b></td>
+      <td>商家原话「圆圈还是直接用筛选那边的功能吧」：面板的活是"勾一批"，搜索行的活是"点一个"。
+        面板里勾多个时这个下拉只显示第一个，但条件一条不少（顶部胶囊上都写着）</td>
+    </tr>
+    <tr>
+      <td>圆片上带着「这一类有多少个」</td>
+      <td>数字挪进下拉选项：<code>个护（12）</code></td>
+      <td>那个数是全量统计，看"库里还剩几种"挺有用 —— 换控件别顺手把它弄丢</td>
+    </tr>
+    <tr>
+      <td>「品类为空」那一档在圆片上勾得到</td>
+      <td>下拉里<b>不放</b>（它会和"全部"撞同一个空串 value，变成永远选不中的死选项）；要筛它去面板勾</td>
+      <td>空串和"全部"只能二选一；面板那条路还通着，能力没丢</td>
+    </tr>
+  </table>
+
+  <h2>实施记录 · 第 5 批「详情页返回键」（2026-10-12 已完成）</h2>
+  <p>商家反馈：「点套装 → 进套装详情 → 又点子商品，之前上一步是返回套装，我感觉不需要这样，
+  直接上面的 <code>&lt;</code> 就是返回商品主页，不需要返回上一步的操作」。
+  只动 <code>src/webview/mobile/</code> 三个文件 + 闸门 + 文档，<b>后端零改动</b>。</p>
+  <p>这同样是<b>补齐电脑端早就定下的口径</b>：<code>docs/套装-使用说明.md</code> 里明明白白写着桌面端
+  「<b>没有</b>"返回上一步"按钮，别找 —— 想回套装就点子商品底下的「属于 …」里的编号」。手机版当年多做了一套
+  来路栈，反而和电脑端不一样。</p>
+  <table>
+    <tr><th style="width:150px">原来的样子</th><th>改成了什么</th><th style="width:260px">为什么</th></tr>
+    <tr>
+      <td>详情页那个 <code>&lt; 商品</code> <b>会变</b>：从套装点进子商品后，它变成
+        <code>&lt; T001</code>，点一下<b>退回那个套装</b>（有一套 <code>detailBack</code> 来路栈在记）</td>
+      <td>删掉来路栈（<code>detailBack</code> / <code>updateBackLabel</code> / <code>pushBack</code> 一起删）。
+        那个 <code>&lt;</code> <b>永远是「回商品列表」</b>，文字固定「商品」、不再变</td>
+      <td>套装和子商品能<b>互相点</b>（A→B→A→B…），堆几层之后用户<b>根本不知道这一下会退到哪儿</b>；
+        还有"得连着按十来下才回得到列表"的观感。回列表本身就该是一步到位的事</td>
+    </tr>
+    <tr>
+      <td>想回套装只能靠那个会变的返回键</td>
+      <td>回套装走子商品页<b>顶部那行「属于：T001」</b>（编号胶囊，点了跳过去）</td>
+      <td>那个入口本来就在、且是"我在哪个套装里"唯一说得清的地方；返回键只剩一个含义，两边都不打架</td>
+    </tr>
+  </table>
 </div>
 </body>
 </html>

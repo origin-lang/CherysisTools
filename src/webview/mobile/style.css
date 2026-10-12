@@ -13,6 +13,9 @@
   --tap: 44px; /* 触控目标下限，手指点得准 */
   --pad: 12px; /* 屏幕左右留白：这一版统一提到 12，之前 10 太贴边 */
   --gap: 10px; /* 一行里相邻元素（按钮之间、输入框之间）的间距 */
+  /* 底部 tab 栏（#tabbar）的高度：四个 .screen 都要给它留出这一块，否则内容会被压在它下面。
+     改 .tabbar 的 padding/字号时**必须同步改这里** —— 两边不一致就是"分页条被盖住半行"。 */
+  --tabbar: 54px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -46,9 +49,9 @@ body {
   display: none;
   flex-direction: column;
   height: 100dvh;
-  /* 底部那条是 fixed 的：统一在屏幕底部留出它的高度，否则分页条会被压在它下面。
-     30px = 细条里的按钮 22px + 上下各 3px padding + 1px 上边框，跟着 .status 一起改 */
-  padding-bottom: calc(30px + env(safe-area-inset-bottom));
+  /* 底部 tab 栏（#tabbar）是 fixed 铺满整宽的：统一在屏幕底部留出它的高度，
+     否则分页条会被压在它下面。高度取 --tabbar（与 .tabbar 的实际高度同步）。 */
+  padding-bottom: calc(var(--tabbar) + env(safe-area-inset-bottom));
 }
 .screen.show {
   display: flex;
@@ -111,8 +114,7 @@ button.icon {
   padding: 8px 10px;
 }
 button.mini {
-  /* 跟主按钮同高（只有底部细条里的「日志」是例外，那个见 .logbtn）。
-     原先 38px 混在 44px 的按钮里显得矮一截 */
+  /* 跟主按钮同高。原先 38px 混在 44px 的按钮里显得矮一截 */
   min-height: var(--tap);
   font-size: 13px;
   white-space: nowrap;
@@ -184,7 +186,9 @@ textarea {
   min-height: var(--tap);
   width: 100%;
 }
-.searchbar {
+/* 顶上那一行（原 .searchbar）：搜哪一列 + 搜索框 + 筛选 + 新建，都挤在一行里。
+   2026-10-12 把顶栏和搜索行合成了一条 —— 标题/画册列表/⚙ 都搬走了，只剩"找东西"四样。 */
+.topbar {
   display: flex;
   align-items: center;
   gap: var(--gap);
@@ -192,30 +196,85 @@ textarea {
   background: var(--card);
   border-bottom: 1px solid var(--line);
 }
-.searchbar .muted {
+.topbar .muted {
   font-size: 12px;
   white-space: nowrap;
 }
-/* 搜索行的可变区：按「搜哪一列」在 输入框 / 下拉 / 圆片 三种形态间切换，都占同一块宽度 */
-.searchbar .grow2 {
+/* 搜索行的可变区：按「搜哪一列」在 输入框 / 下拉 两种形态间切换，都占同一块宽度。
+   （2026-10-12 之前还有第三种"一排圆片"，品类/等级用的 —— 改成下拉后就没它了。） */
+.topbar .grow2 {
   flex: 2 1 120px;
   min-width: 120px;
 }
-/* hidden 要真的收起来：.scopechips 自己是 display:flex，光靠 [hidden] 的默认样式盖不住 */
-.searchbar [hidden] {
+/* hidden 要真的收起来。input/select 靠 [hidden] 的默认样式就能收，
+   但这条**不能删**：它是这个行里"显隐"的唯一保险 —— 哪天又往顶栏塞一个 display:flex
+   的块（原来那排圆片就是），光靠 [hidden] 是盖不住 flex 的（那正是当初加它的原因）。 */
+.topbar [hidden] {
   display: none !important;
 }
-/* 品类/等级那排圆片：跟搜索行同排，所以矮一点（38px 的 .chip 会把整行撑高） */
-.scopechips {
+/* ＋ 新建：正方形（跟旁边的漏斗按钮一样大），不写"新建"两个字 —— 顶栏这一行放不下 */
+.topbar #btnNew {
+  min-width: var(--tap);
+  padding: 8px 0;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* ---------- 内容区顶上一排小 tab（画册 / 列表 / 扩展位） ----------
+   原来画册·列表是顶栏里的 .seg，2026-10-12 挪到内容区正上方：顶栏那一行要留给"找东西"。
+   左边那排可横滑（以后加了 tab 不至于把右边的条数挤掉），右边的条数固定不动。 */
+.subtabs {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px var(--pad);
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+.stabs {
+  display: flex;
   gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
-.scopechips .chip {
+/* 「筛出来的 / 一共多少条」，由 renderList 写（#count） */
+.subtabs .cnt {
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+}
+.stab {
+  flex: none;
   min-height: 30px;
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: 0 13px;
+  font-size: 12.5px;
+  color: var(--muted);
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
 }
+.stab.on {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+  font-weight: 700;
+}
+/* 末尾那个虚线 ＋ 是**留的扩展位**（disabled，现在没内容）：虚线是让它一眼看出"这不是按钮" */
+.stab.ghost {
+  background: transparent;
+  border-style: dashed;
+  color: var(--muted);
+}
+.stab.ghost:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+/* 品类/等级原先是"搜索行里的一排圆片"（.scopechips + 矮一圈的 .chip），
+   2026-10-12 按商家要求撤了 —— 圆圈只留在筛选面板里（那边要多选），搜索行统一成下拉。
+   面板里的 .chip 不受影响，别把那一套一起删了。 */
 /* 编号表达式的写法提示（只在该模式下出现）—— 一行灰字，写岔了就转红 */
 .q-hint {
   margin: 0;
@@ -823,9 +882,12 @@ textarea {
      图标按钮最小宽拉到 46px（不再是个小方块）
    - 这不推翻定论 §十二·补 第 8 条"列表页按钮统一 44px"：那条讲的是**同一排里别混高度**。
      现在每一排各自统一：顶栏/翻页条 36；筛选面板里的 chip 与跳页下拉仍是 44（那是输入类）
-   - seg（画册/列表）的 1px 边框在外层容器上，里头的 button 少 2px 才和旁边齐平
-   - 跳页下拉（.pagejump）要收回 width:auto，否则基础 select 的 width:100% 会把它拉爆
-   - 条件 pill 不在这里：它是「标签」不是按钮，故意小一号 */
+   - `seg`（画册/列表）的 1px 边框在外层容器上，里头的 button 少 2px 才和旁边齐平
+   - 跳页下拉（现在是 `.pager select.pj` 那颗胶囊）要收回 width:auto，
+     否则基础 select 的 width:100% 会把它拉爆
+   - 条件 pill 不在这里：它是「标签」不是按钮，故意小一号
+   - ⚠️ 2026-10-12 之后**列表页顶栏（.topbar）不在此列**：它和搜索行合并成一行，
+     里面全是输入类控件（下拉/搜索框/漏斗/＋），一律 44px（`--tap`），不再是 36。 */
 .bar button,
 .pager button {
   min-height: 36px;
@@ -867,7 +929,7 @@ textarea {
   padding-top: 6px;
   padding-bottom: 6px;
 }
-#screen-list .bar {
+#screen-list .topbar {
   padding-left: 8px;
   padding-right: 8px;
 }
@@ -881,10 +943,8 @@ textarea {
 #screen-list .chip {
   min-height: var(--tap);
 }
-/* 跳页下拉跟翻页按钮同高 —— 同一排里别混高度（定论 §十二·补 第 8 条） */
-#screen-list .pager select {
-  min-height: 36px;
-}
+/* 注：跳页下拉（现在那颗「1/7 页」胶囊 `.pager select.pj`）跟翻页按钮同高 36px，
+   规则写在下面 .pager 那一段里 —— 同一排里别混高度（定论 §十二·补 第 8 条）。 */
 /* 筛选按钮：只有漏斗 + 条数徽标（不写"筛选"两个字），尺寸与 ⚙ 一致；
    有筛选条件时描边变绿，一眼看得出"现在筛着东西" */
 #btnFilterText {
@@ -917,12 +977,10 @@ textarea {
 }
 /* 注：顶栏按钮"扁一点、宽一点"之后一度担心窄机放不下标题，曾用 @media(max-width:379px) 把
    列表页标题藏掉。后来「筛选」去掉了那两个字（只留漏斗），正好把这段宽度还了回来 ——
-   360px 的屏留给标题还有 68px，够显示「🏪 商品」，所以那条补丁撤了。 */
-#screen-list .pager select {
-  width: auto;
-  flex: none;
-  padding: 6px 8px;
-}
+   360px 的屏留给标题还有 68px，够显示「🏪 商品」，所以那条补丁撤了。
+   （2026-10-12 之后列表页连标题都没有了：那一行只剩「搜哪一列 + 搜索框 + 漏斗 + ＋」。）
+   跳页下拉要收回 width:auto，否则基础 select 的 width:100% 会把它拉爆 ——
+   这条和它的胶囊外观一起写在下面 `.pager select.pj` 那一段里。 */
 
 /* 「搜哪一列」下拉：不跟着输入框撑满 */
 .scope {
@@ -1063,25 +1121,52 @@ input.inline.wide {
   font-weight: 700;
 }
 
-/* 分页条：固定在列表下方，不跟着内容滚 */
+/* 分页条：固定在列表下方，不跟着内容滚。
+   2026-10-12 收成三控件（‹ 上一页 · [1/7 页] · 下一页 ›），所以用 space-between 把两头撑开；
+   中间那颗是下拉（.pj），宽度自己撑。 */
 .pager {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--gap);
   padding: 10px var(--pad);
   background: var(--card);
   border-top: 1px solid var(--line);
 }
-.pager .pi {
-  flex: 1;
-  text-align: center;
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* ⚠️ 这条不能省：`.pager` 自己是 display:flex，浏览器给 [hidden] 的那条 display:none
+   权重比它低 —— 少了这条，≤1 页时 renderPager 设了 hidden 也照样显示一整条空的分页条 */
+.pager[hidden] {
+  display: none;
 }
 .pager button:disabled {
   opacity: 0.4;
+}
+/* 中间那颗「1/7 页」：就是原跳页下拉（#pageJump）。
+   2026-10-12 第一版做成了**品牌绿胶囊**（绿字 + 9% 绿底 + 绿描边）—— 上手机一看，
+   它成了整条里最抢眼的一坨，两侧的「‹ 上一页 / 下一页 ›」反倒像配角，一排三个不像一家人。
+   现在把它并进两侧那一套：底色 --soft（两侧是 --card，同一族的浅色）+ --line 描边 +
+   同 36px 高，只留下两处"我不是个按钮"的标记：
+     ① 圆角仍是 999px 的胶囊（两侧是 8px 方角）—— 一眼区分"这是个值 / 这是个动作"；
+     ② 文字仍是品牌绿加粗 —— 一排三个里唯一的彩色，就是"现在在第几页、点它能跳页"。
+   ⚠️ 字号**不能改小**：iOS 聚焦 font-size < 16px 的下拉会把整页放大（见 input/select 那条注释）。
+   ▾ 用背景图画 —— select 里塞不了伪元素，而这里又不想为它多套一层 DOM。 */
+.pager select.pj {
+  width: auto;
+  flex: none;
+  min-height: 36px;
+  padding: 6px 26px 6px 12px;
+  font-weight: 700;
+  color: var(--brand);
+  background-color: var(--soft);
+  border-color: var(--line);
+  border-radius: 999px;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2323a884' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 9px 6px;
+  text-align: center;
 }
 
 /* 详情页的浮动底条「上一个 / 位置 / 下一个」：内容区怎么滚它都盖在最上面。
@@ -1090,8 +1175,8 @@ input.inline.wide {
   position: absolute;
   left: 0;
   right: 0;
-  /* 底部那条固定的 .status 细条占掉 30px，底条浮在它上面，别被压住 */
-  bottom: calc(30px + env(safe-area-inset-bottom));
+  /* 底部固定的是 #tabbar（高 --tabbar），浮动底条要浮在它上面，别被压住 */
+  bottom: calc(var(--tabbar) + env(safe-area-inset-bottom));
   display: flex;
   align-items: center;
   gap: 4px;
@@ -1441,13 +1526,13 @@ input.bad {
   color: #fff;
 }
 
-/* 底部状态条 + 日志面板 */
+/* 底部 tab 栏 + 日志页签 */
 /* 浮层提示：操作结果给用户看的地方（日志留给排查） */
 .toast {
   position: fixed;
   left: 12px;
   right: 12px;
-  bottom: calc(38px + env(safe-area-inset-bottom)); /* 让开底部那条细条 */
+  bottom: calc(var(--tabbar) + 10px + env(safe-area-inset-bottom)); /* 让开底部的 tab 栏 */
   z-index: 70;
   padding: 10px 14px;
   border-radius: 10px;
@@ -1501,8 +1586,8 @@ input.bad {
   body.drawer #screen-list {
     width: calc(100% - var(--drawer));
   }
-  /* 底部细条与提示浮层也跟着让位（它们都是 fixed 铺满整宽） */
-  body.drawer #status {
+  /* 底部 tab 栏与提示浮层也跟着让位（它们都是 fixed 铺满整宽） */
+  body.drawer #tabbar {
     right: var(--drawer);
   }
   body.drawer #toast {
@@ -1521,8 +1606,8 @@ input.bad {
     box-shadow: -10px 0 26px rgba(0, 0, 0, 0.16);
     z-index: 40;
     animation: drawerin 0.16s ease-out;
-    /* 底部那条细条在抽屉模式下只铺到抽屉左边（body.drawer #status 缩小了），
-       所以这里不用再给它留 30px */
+    /* 底部 tab 栏在抽屉模式下只铺到抽屉左边（body.drawer #tabbar 缩小了），
+       所以这里不用再给它留 --tabbar 那一段 */
     padding-bottom: env(safe-area-inset-bottom);
   }
   /* 详情那一列在抽屉里窄（≈440px），进价/售价这种并排会挤成两半，改成一行一个。
@@ -1532,8 +1617,8 @@ input.bad {
     flex-direction: column;
     align-items: stretch;
   }
-  /* 抽屉模式下底部细条铺不到抽屉下面（body.drawer #status 缩小了），
-     所以浮动底条不用给它让 30px，贴着安全区留一点缝即可 */
+  /* 抽屉模式下底部 tab 栏铺不到抽屉下面（body.drawer #tabbar 缩小了），
+     所以浮动底条不用给它让高度，贴着安全区留一点缝即可 */
   #screen-detail .detaildock {
     bottom: calc(6px + env(safe-area-inset-bottom));
   }
@@ -1542,7 +1627,7 @@ input.bad {
   body.filterdrawer #screen-list {
     width: calc(100% - var(--drawer));
   }
-  body.filterdrawer #status {
+  body.filterdrawer #tabbar {
     right: var(--drawer);
   }
   body.filterdrawer #toast {
@@ -1628,72 +1713,91 @@ input.bad {
   font-weight: 700;
 }
 
-/* 底部只剩一条 26px 高的细条：原来 12px 字 + 44px 按钮，把分页条顶得只剩半个 */
-.status {
+/* ---------- 底部 tab 栏（商品 / 设置 + 连接灯） ----------
+   2026-10-12 换掉了原 .status 那条 30px 细条：
+     · 「日志」并进设置页当第三个页签、「🔄 有改动」变成「设置」格上的小红点
+     · 高度改用 --tabbar（.screen 的 padding-bottom 也读同一个变量，两边必须一致）
+   两格居中（拇指区），连接灯靠右浮着 —— 它是纯展示，不占触控目标。 */
+.tabbar {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
+  height: calc(var(--tabbar) + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
   display: flex;
-  justify-content: flex-start; /* 按钮靠左：右下角是拇指区，容易误碰 */
   align-items: center;
-  padding: 3px var(--pad) calc(3px + env(safe-area-inset-bottom));
+  justify-content: center;
   background: var(--card);
   border-top: 1px solid var(--line);
   z-index: 6;
 }
-.status .logbtn {
-  min-height: 22px;
-  padding: 2px 10px;
-  font-size: 11px;
-  line-height: 1.4;
-  border-radius: 6px;
+.tabbar .tb {
+  flex: none;
+  width: 116px;
+  min-height: 0;
+  padding: 3px 0;
+  text-align: center;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  position: relative;
 }
-/* 两个按钮之间留一点缝（原来只有一个按钮，没这个需要） */
-.status .logbtn + .logbtn {
-  margin-left: 6px;
+.tabbar .tb .ic {
+  display: block;
+  font-size: 17px;
+  line-height: 1.3;
 }
-/* 「有改动」按钮：跟「日志」同一个尺寸，但描边用品牌绿 —— 一眼能看出它是要按的 */
-.status #btnStale {
+.tabbar .tb.on {
   color: var(--brand);
-  border-color: var(--brand);
+  font-weight: 700;
 }
-/* 实时连接指示灯：靠右、纯展示，不占触控目标（底部条右侧就是拇指常驻区，不能再放能按的东西）。
+/* 「有改动」小红点：长在「设置」格右上角（原先是底部细条上一个「🔄 有改动」按钮） */
+.tabbar .tb .red {
+  position: absolute;
+  top: 1px;
+  right: 26px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+/* 实时连接指示灯：靠右、纯展示，不占触控目标。
    三档——绿=连着、灰=重连中、红=断了。 */
-.status .conn {
-  margin-left: auto;
+.tabbar .conn {
+  position: absolute;
+  right: var(--pad);
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--muted);
 }
-.status .conn i {
+.tabbar .conn i {
   flex: none;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--muted);
 }
-.status .conn.on i {
+.tabbar .conn.on i {
   background: var(--brand);
 }
-.status .conn.down i {
+.tabbar .conn.down i {
   background: var(--danger);
 }
-.logpanel {
-  display: none;
-  position: fixed;
-  inset: 0;
-  background: var(--bg);
-  z-index: 60;
-  padding: 10px;
+/* 「设置 → 日志」页签里的日志行（原来是整屏浮层里的 .line，那个浮层已撤掉） */
+.logview #logList {
+  max-height: 60vh;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
-.logpanel.show {
-  display: block;
-}
-.logpanel .line {
+.logview .line {
   font-size: 12px;
   padding: 4px 0;
   border-bottom: 1px dashed var(--line);
@@ -1909,6 +2013,6 @@ input.bad {
     position: relative;
   }
   #screen-detail.show ~ #toast {
-    bottom: calc(84px + env(safe-area-inset-bottom));
+    bottom: calc(var(--tabbar) + 56px + env(safe-area-inset-bottom));
   }
 }
