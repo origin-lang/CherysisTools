@@ -100,11 +100,14 @@ window.toolClients = window.toolClients || {};
       state.readOnly = !!on;
       var btn = document.getElementById("readOnlyBtn");
       if (btn) {
-        btn.textContent = on ? "🔒 只读" : "🔓 可写";
+        // 2026-10-12：工具栏改成图标按钮了，这个按钮上只留一把锁（文字全进 title）。
+        // ⚠️ 这句是**唯一**改按钮文案的地方 —— 别在 HTML 里写死「可写」，
+        //    首屏同步一到就被这里覆盖。
+        btn.textContent = on ? "🔒" : "🔓";
         btn.classList.toggle("btn-danger", !!on);
         btn.title = on
-          ? "当前只读：不会写共享库。点一下解除，可以改数据（同一时间只让一台机器写）"
-          : "当前可写：会改共享库。点一下锁上，只看不动最稳";
+          ? "当前只读（🔒）：不会写共享库。点一下解除，可以改数据（同一时间只让一台机器写）"
+          : "当前可写（🔓）：会改共享库。点一下锁上，只看不动最稳";
       }
       var hint = document.getElementById("readOnlyHint");
       if (hint) {

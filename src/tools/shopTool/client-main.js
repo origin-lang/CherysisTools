@@ -26,17 +26,20 @@ function updateNameTemplatePreview() {
 }
 
 function bindEvents() {
+  // 视图二选一：选中态是 .active，交给工具栏那个连体分段开关（.tb-seg）去画。
+  // 原来这里是 add/remove("btn-teal") —— 用品牌绿表示选中，但它跟右上角
+  // 「＋ 新建商品」的绿撞在一起，一个颜色两种含义。品牌绿现在只留给主操作。
   $("viewListBtn").onclick = () => {
     viewMode = "list";
-    $("viewListBtn").classList.add("btn-teal");
-    $("viewGalleryBtn").classList.remove("btn-teal");
+    $("viewListBtn").classList.add("active");
+    $("viewGalleryBtn").classList.remove("active");
     syncGallerySizeVisibility();
     renderProducts();
   };
   $("viewGalleryBtn").onclick = () => {
     viewMode = "gallery";
-    $("viewGalleryBtn").classList.add("btn-teal");
-    $("viewListBtn").classList.remove("btn-teal");
+    $("viewGalleryBtn").classList.add("active");
+    $("viewListBtn").classList.remove("active");
     syncGallerySizeVisibility();
     renderProducts();
   };

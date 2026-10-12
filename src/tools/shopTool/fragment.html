@@ -436,12 +436,71 @@
         background: var(--vscode-editor-background);
         border-top: 1px solid var(--vscode-panel-border);
       }
-      .tb-sep {
-        width: 1px;
-        height: 22px;
-        align-self: center;
-        background: var(--vscode-panel-border);
-        margin: 0 2px;
+      /* ===== 商品管理工具栏（2026-10-12 第二轮：图标化 + 视图栏挪位） =====
+         第一轮试过「把 17 个控件收进 4 个浅底分组盒」，商家反馈是
+         "按钮是对齐了 但是感觉好丑啊 就是灰色底" —— 四个灰块趴在浅色面板上像补丁，
+         那个方案整体否掉，别捡回来。
+         这一轮走结构级：
+           ① 工具栏只留「找东西 + 全局操作」：搜索行、一排图标动作、主操作；
+           ② 「列表 / 画册 / 字段显示 / 画册大小」本质都是**当前视图的显示控制**，
+              从工具栏挪到内容区上面的 .viewbar —— 紧贴它们控制的那张表格 / 画册；
+           ③ 文字按钮改图标（语义靠 title 提示），宽度和视觉重量一起降。
+         ⚠️ 控件只是换位置，**id 一个都不许改** —— js 全按 id 取元素（含 client-core.js 里
+            对 readOnlyBtn 文案的动态改写）。 */
+      /* 图标动作按钮：一排小按钮，点击区域保证不小于 24px 高。
+         内容可能是字符（★ ▾ / ⇅ / ↩ / 🔓），也可能是内联 SVG（筛选那个漏斗）。 */
+      .icon-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 5px 8px;
+        min-width: 28px;
+        font-size: 13px;
+        line-height: 1.15;
+        text-align: center;
+      }
+      /* 按钮里的图标跟随文字色 —— 别在 SVG 上写死 fill，换主题就不跟了 */
+      .icon-btn svg {
+        display: block;
+        fill: currentColor;
+        pointer-events: none;
+      }
+      /* 主操作跟图标区之间留一口气，不然「＋ 新建商品」贴着图标显得挤 */
+      #newProductBtn {
+        margin-left: 6px;
+      }
+      /* 内容区上面的视图栏：只放「当前视图的显示控制」三个东西 */
+      .viewbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      /* 视图二选一：连体分段开关。取代原来「两个平级按钮 + 拿品牌绿区分选中」——
+         品牌绿现在只表示「主操作」（＋ 新建商品）一种含义，视线才有落点。 */
+      .tb-seg {
+        display: flex;
+        flex: none;
+        border: 1px solid var(--vscode-panel-border, transparent);
+        border-radius: 5px;
+        overflow: hidden;
+      }
+      .tb-seg > button {
+        padding: 4px 12px;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+      }
+      .tb-seg > button + button {
+        border-left: 1px solid var(--vscode-panel-border, transparent);
+      }
+      .tb-seg > button:hover:not(.active) {
+        background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.18));
+      }
+      .tb-seg > button.active,
+      .tb-seg > button.active:hover {
+        background-color: #23a884;
+        color: #ffffff;
       }
       /* 全局搜索框：✕ 单独一层做定位上下文，这样 right/top 锚的是输入框本身，
          不会因为工具栏换行而飘 */
@@ -449,6 +508,12 @@
         position: relative;
         display: flex;
         align-items: center;
+        /* 吃掉工具栏的剩余宽度（商家 2026-10-12：「搜索栏那个可以长一点其实」）。
+           原来是写死 132px、右边靠 .toolbar-fill 撑着一大片空白 —— 那块空白给搜索框更值。
+           flex-basis 220px 会参与换行计算：面板窄到放不下时它自己占一整行，不会把
+           右边的图标区挤爆。 */
+        flex: 1 1 220px;
+        min-width: 160px;
       }
       /* 选项全是两个字宽，给固定宽度免得它按最长项撑开、把右边的工具栏按钮挤掉 */
       #keywordScope {
@@ -456,8 +521,8 @@
         padding: 5px 2px 5px 4px;
       }
       .tb-search input {
-        /* 比原来窄：左边让出一块给「搜哪一列」的下拉，净增只有十来个像素 */
-        width: 132px;
+        /* 宽度交给外层 .tb-search 的弹性去算，别写死 —— 一写死就吃不掉剩余宽度了 */
+        width: 100%;
         padding-right: 22px;
       }
       .tb-search-x {
@@ -1705,17 +1770,11 @@
 
     <div id="tabProducts" class="sub-panel show">
       <div class="toolbar">
-        <button id="viewListBtn" class="btn-teal">列表</button>
-        <button id="viewGalleryBtn">画册</button>
-        <select id="gallerySize" title="画册卡片多大。只影响本机（各人各设，不写共享库），切到「列表」时会自动收起。想看得更清楚就往大了调，屏幕宽就选特大。" hidden>
-          <option value="s">小</option>
-          <option value="m">标准</option>
-          <option value="l">大</option>
-          <option value="xl">特大</option>
-        </select>
-        <span class="tb-sep"></span>
-        <button id="colSetBtn">字段显示</button>
-        <span class="tb-sep"></span>
+        <!-- 工具栏：只留「找东西 + 全局操作」——搜索行 + 一排图标动作 + 主操作。
+             「列表 / 画册 / 字段显示 / 画册大小」已经挪到下面内容区上面的 .viewbar
+             （它们本质都是"当前视图的显示控制"，贴着表格 / 画册才对）。
+             ⚠️ 控件只是换位置、换图标，**id 一个都不许改** —— js 全按 id 取元素
+                （含 client-core.js 里对 readOnlyBtn 文案的动态改写）。 -->
         <select id="keywordScope" title="选要搜哪一列。默认「全部」是编号/名称/品类/系列拼起来一起做子串匹配；选定某一列就只搜那一列。选「编号」时右边的框改吃区间语法（A1~A33，回车生效）；选「状态 / 品类 / 等级」时右边换成一个下拉（这几列取值封闭，选比打字准）。和左边的「筛选」面板是叠加关系，不是二选一（状态/品类/等级这三列两边写的是同一份值）。">
           <option value="all">全部</option>
           <option value="code">编号</option>
@@ -1730,18 +1789,14 @@
           <button id="keywordSearchX" class="tb-search-x" type="button" title="清空搜索" aria-label="清空搜索" hidden>✕</button>
         </div>
         <select id="keywordSelect" title="这一列的取值是封闭的几个，直接选；选完立即生效。（选中「编号」时这里换成区间输入框，吃 A1~A33 语法）" hidden></select>
-        <button id="filterOpenBtn" class="mini-btn" title="打开筛选面板：所有可筛列收在一个面板里，勾一下就生效">筛选</button>
-        <span class="tb-sep"></span>
-        <button id="starMenuBtn" title="星标操作：只看/复制清单/总览图预览/全部取消">⭐ 星标 ▾</button>
-        <span class="toolbar-fill"></span>
+        <button id="filterOpenBtn" class="icon-btn" title="筛选面板：所有可筛列收在一个面板里，勾一下就生效。跟左边搜索框是叠加关系（AND），不是替代。" aria-label="筛选"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M2.6 3h10.8l-4.2 5.2v4.1l-2.4 1.2V8.2L2.6 3z"/></svg></button>
+        <button id="starMenuBtn" class="icon-btn" title="星标操作（点开有菜单）：只看星标 / 复制星标清单 / 总览图预览 / 全部取消">★ ▾</button>
+        <button id="ioBtn" class="icon-btn" title="导入 / 导出商品清单（点开有菜单）">⇅</button>
+        <button id="undoBtn" class="icon-btn" disabled title="撤销上一步修改（最多回退 20 步）">↩</button>
+        <button id="redoBtn" class="icon-btn" disabled title="重做上一步被撤销的操作">↪</button>
+        <button id="refreshProductsBtn" class="icon-btn" title="重新从数据库加载商品（共享盘被别的电脑改过后，点这里看最新数据）">↻</button>
+        <button id="readOnlyBtn" class="icon-btn" title="只读开关（当前可写）：点一下锁上，之后商品/销售/结算/图片/排品一律不写共享库（读取、刷新、导出、生成图照常）。同一时间只让一台机器写，别的机器点这个锁上最稳。">🔓</button>
         <button id="newProductBtn" class="btn-teal">＋ 新建商品</button>
-        <button id="ioBtn" title="导入 / 导出商品清单">导入/导出</button>
-        <span class="tb-sep"></span>
-        <button id="undoBtn" disabled title="撤销上一步修改（最多回退 20 步）">↩</button>
-        <button id="redoBtn" disabled title="重做上一步被撤销的操作">↪</button>
-        <span class="tb-sep"></span>
-        <button id="refreshProductsBtn" class="mini-btn" title="重新从数据库加载商品（共享盘被别的电脑改过后，点这里看最新数据）">🔄 刷新</button>
-        <button id="readOnlyBtn" class="mini-btn" title="只读模式：锁上以后，商品/销售/结算/图片/排品一律不写共享库（读取、刷新、导出、生成图照常）。同一时间只让一台机器写，别的机器点这个锁上最稳。">🔓 可写</button>
       </div>
       <div id="readOnlyHint" class="muted" style="display: none; margin: -4px 0 6px">🔒 只读模式：可以看、刷新、导出、生成九宫格和星标总览；改数据前先点顶栏的 🔓。</div>
       <!-- ===== 筛选条 =====
@@ -1756,6 +1811,26 @@
         <div id="filterChips" class="fb-chips"></div>
         <span class="fb-fill"></span>
         <button id="clearFilterBtn" class="mini-btn fb-clear" style="display: none">清除全部</button>
+      </div>
+      <!-- ===== 视图栏（2026-10-12：从工具栏挪上来的）=====
+           为什么挪到这儿：「列表 / 画册 / 字段显示 / 画册大小」都不是全局操作，
+           它们是**当前这个视图的显示控制** —— 贴着它们控制的那张表格 / 画册才对。
+           工具栏也因此腾空了，一行才装得下、也不吵。
+           ⚠️ 跟 filterBar 的分工：筛选条是"全局条件"（贴着工具栏），视图栏贴着内容。
+           ⚠️ 列表和画册共用这一条，切视图只换 .active 和「画册大小」的显隐。
+           ⚠️ id 保持原样（viewListBtn / viewGalleryBtn / colSetBtn / gallerySize）。 -->
+      <div class="viewbar">
+        <div class="tb-seg">
+          <button id="viewListBtn" class="active">列表</button>
+          <button id="viewGalleryBtn">画册</button>
+        </div>
+        <button id="colSetBtn" title="勾选哪些列显示。列表和画册各有一套设置，弹窗只显示当前视图那一份。">字段显示</button>
+        <select id="gallerySize" title="画册卡片多大。只影响本机（各人各设，不写共享库），切到「列表」时会自动收起。想看得更清楚就往大了调，屏幕宽就选特大。" hidden>
+          <option value="s">小</option>
+          <option value="m">标准</option>
+          <option value="l">大</option>
+          <option value="xl">特大</option>
+        </select>
       </div>
       <div id="productListView"></div>
       <div id="productGalleryView"></div>
