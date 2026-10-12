@@ -242,17 +242,40 @@
         top: 0;
         height: 26px;
         box-sizing: border-box;
+        /* 表头浅底（2026-10-12）：底色**必须不透明** —— 它是 sticky 吸顶的，
+           写半透明色（rgba）滚动时下面的行会从表头里透出来。
+           所以走「不透明底色 + 叠一层灰」两件套，hover 同理。 */
         background-color: var(--vscode-editor-background);
+        background-image: linear-gradient(rgba(128, 128, 128, 0.1), rgba(128, 128, 128, 0.1));
         z-index: 2;
         cursor: pointer;
         user-select: none;
+        font-weight: 500;
       }
       .data-table th:has(.th-label[data-sort="code"]) {
         width: 1%;
         min-width: var(--code-col-min);
+        /* 编号是初始排序列（client-core.js: sortKey = "code"），面板一打开它就带走 .th-arrow
+           → 整格泛绿，那是系统默认排序、不是用户选的，吵。这里把颜色收回来，箭头照常显示。
+           特异度 (0,3,1) > th:has(.th-arrow) 的 (0,2,1)，与声明顺序无关。 */
+        color: inherit;
+      }
+      /* 表头跟第一行数据之间拉一条 2px 粗线 —— 原来只有 1px、跟行内分隔线同款，
+         静止时表头和数据行分不清。border-collapse 会把它和下一行的 1px 合并。
+         高度不受影响：th 是 box-sizing: border-box，粗线算在 26px 里面。 */
+      .data-table thead th {
+        border-bottom: 2px solid var(--vscode-panel-border);
+      }
+      /* 当前排序的那一列：整格（列名 + 箭头）变品牌绿，一眼看出「现在按什么排的」。
+         .th-arrow 由 client-product.js 的表头模板输出（▲ / ▼）。 */
+      .data-table th:has(.th-arrow) {
+        color: #23a884;
       }
       .data-table th:hover {
-        background: var(--vscode-list-hoverBackground);
+        background-image: linear-gradient(
+          var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.16)),
+          var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.16))
+        );
       }
       .data-table .th-label {
         display: inline-block;

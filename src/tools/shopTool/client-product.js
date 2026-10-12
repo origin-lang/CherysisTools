@@ -1120,7 +1120,7 @@ function renderListHead() {
     }
     const f = vis[i];
     headCols.push(
-      `<th><span class="th-label" data-sort="${f.key}">${f.label}${sortKey === f.key ? (sortDir === 1 ? " ▲" : " ▼") : ""}</span></th>`,
+      `<th><span class="th-label" data-sort="${f.key}">${f.label}${sortKey === f.key ? (sortDir === 1 ? ' <span class="th-arrow">▲</span>' : ' <span class="th-arrow">▼</span>') : ""}</span></th>`,
     );
   }
   if (imgAt >= vis.length) {
