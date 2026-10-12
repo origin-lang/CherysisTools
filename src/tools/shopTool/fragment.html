@@ -497,7 +497,7 @@
          ⚠️ 控件只是换位置，**id 一个都不许改** —— js 全按 id 取元素（含 client-core.js 里
             对 readOnlyBtn 文案的动态改写）。 */
       /* 图标动作按钮：一排小按钮，点击区域保证不小于 24px 高。
-         内容可能是字符（★ ▾ / ⇅ / ↩ / 🔓），也可能是内联 SVG（筛选那个漏斗）。 */
+         内容可能是字符（★ ▾ / 📥 / ↩ / 🔓），也可能是内联 SVG（筛选那个漏斗）。 */
       .icon-btn {
         display: inline-flex;
         align-items: center;
@@ -1843,7 +1843,7 @@
         <select id="keywordSelect" title="这一列的取值是封闭的几个，直接选；选完立即生效。（选中「编号」时这里换成区间输入框，吃 A1~A33 语法）" hidden></select>
         <button id="filterOpenBtn" class="icon-btn" title="筛选面板：所有可筛列收在一个面板里，勾一下就生效。跟左边搜索框是叠加关系（AND），不是替代。" aria-label="筛选"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M2.6 3h10.8l-4.2 5.2v4.1l-2.4 1.2V8.2L2.6 3z"/></svg></button>
         <button id="starMenuBtn" class="icon-btn" title="星标操作（点开有菜单）：只看星标 / 复制星标清单 / 总览图预览 / 全部取消">★ ▾</button>
-        <button id="ioBtn" class="icon-btn" title="导入 / 导出商品清单（点开有菜单）">⇅</button>
+        <button id="ioBtn" class="icon-btn" title="导入 / 导出商品清单（点开有菜单）">📥</button>
         <button id="undoBtn" class="icon-btn" disabled title="撤销上一步修改（最多回退 20 步）">↩</button>
         <button id="redoBtn" class="icon-btn" disabled title="重做上一步被撤销的操作">↪</button>
         <button id="refreshProductsBtn" class="icon-btn" title="重新从数据库加载商品（共享盘被别的电脑改过后，点这里看最新数据）">↻</button>
