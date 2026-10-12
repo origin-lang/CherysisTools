@@ -816,13 +816,19 @@ textarea {
   width: 100%;
   /* 字号和最小宽度都跟着 --zoom：放大后列变宽、更早开始横滑，但字是真的大了 */
   font-size: calc(13px * var(--zoom));
-  min-width: calc(540px * var(--zoom)); /* 低于这个宽度宁可横滑，也别把七列压成一团 */
+  min-width: calc(630px * var(--zoom)); /* 低于这个宽度宁可横滑，也别把八列压成一团
+                                           （2026-10-12 加图片列：原来的 540 是七列；
+                                           图片列 44 → 75 宽时再 +30） */
   /* 双击进详情：touch-action 一并关掉双击缩放，否则手机上双击会先放大页面 */
   touch-action: manipulation;
 }
 .tbl th,
 .tbl td {
-  padding: calc(11px * var(--zoom)) calc(10px * var(--zoom));
+  /* 数据行的上下 padding 2026-10-12 从 11 → **27px**（商家："图片还是太小了 / 表格要再大一点"，选了 C 档）：
+     行高 = 字高 19.5（13 × 1.5）+ 27×2 = **73.5px**，缩略图 67px 才塞得下、还余 0.5。
+     ⚠️ 这笔账要跟 `.tblpic` 的高（67）一起看：padding 一改回 11，行高只剩 41.5 < 73，
+     图片格就会**反过来把整表行高撑高**（第一版那个老 bug 复发）。闸门 ⑩ 两边都钉着。 */
+  padding: calc(27px * var(--zoom)) calc(10px * var(--zoom));
   border-bottom: 1px solid var(--line);
   /* 竖线：比横线更浅一档（--grid），只要「能看出是一格一格」，不抢数字的注意力 */
   border-right: 1px solid var(--grid);
@@ -841,7 +847,11 @@ textarea {
   font-weight: 400;
   color: var(--muted);
   background: var(--soft);
-  /* 表头吸顶：往下翻表格时列名一直看得见（七列横滑+纵滑时最需要它）。
+  /* ⚠️ 表头**不跟数据行一起长高**（2026-10-12）：它吸在顶上，跟着长到 27px 就是白吃掉
+     小半屏 —— 数据行 73.5px 是给缩略图腾的地方，表头不需要。这里把上面那条覆盖回 11px。 */
+  padding-top: calc(11px * var(--zoom));
+  padding-bottom: calc(11px * var(--zoom));
+  /* 表头吸顶：往下翻表格时列名一直看得见（八列横滑+纵滑时最需要它）。
      border-collapse: collapse 会让 sticky 单元格的下边框跟着消失，
      所以用 box-shadow 画那条线；z-index 要压过普通单元格，否则数字会从表头底下透出来 */
   position: sticky;
@@ -854,6 +864,80 @@ textarea {
 }
 .tbl td.num {
   text-align: right;
+}
+/* 图片列（2026-10-12 加）：缩略图填满整格的高度，位置在**「名称」之后**（先看编号和名字，再看图）。
+   「这个编号有没有图」不用先问后端：src 取不到时 onerror 把 <img> 换成 .tblpic-no 占位
+   （画册视图当年就是这套：/api/image 没图回 404，前端收尾），所以这里不做 imgStats 判断 ——
+   那玩意儿只在"要按图片筛"的时候才请求，拿它当条件会让整个列表先显示成"全都没图"。
+
+   ⚠️ 尺寸账（**行高为什么没被撑高**）：`td.pic` 上下各 3px + 图 **67px** = **73**
+   ≤ 数据行的 73.5（`.tbl` 13px × line-height 1.5 = 19.5 + 上下 padding **27**×2 = 54）
+   → 图片格**不参与决定行高**，行高只由别的列说了算。
+   三个数（3 / 67 / 75）是一套，改任何一个都要重算这笔账 —— 而且行那头的 27 也算在内，
+   把行的 padding 改小到 11，行高就只剩 41.5 < 73，图片格**反过来**把整表撑高（第一版的老 bug）。
+
+   ⚠️ 这里**故意不用绝对定位**（2026-10-12 一天之内返工四次换来的写法）。走过的两条死路：
+   ① 图片留在普通流里 + 定高 32 + td 上下 padding 11 → **行高 32+22 = 54**，整张表虚胖
+      （商家："图片那么小 / 空了好多"）；
+   ② 图片 absolute + `inset:3px/4px` + `width/height:100%` → 图**从格子里捅出去**
+      （商家："好像超出单元格了"）。原因是 `<img>` 是**替换元素**，绝对定位时同时写
+      left/right 和 width:100% 属于**过度约束**：宽按 100% 算、right 被丢掉，右边就多出 4px。
+      而且这条路还依赖 `td { position: relative }` 建包含块 —— 商家反馈"**电脑没有，手机有点偏**"，
+      正是这种"引擎各自算各自的"写法最容易出的事。
+   现在这版是**纯普通流 + 只写死 px（跟着 --zoom 缩放）**：没有百分比、没有包含块、
+   没有过度约束，任何浏览器算出来都是 67×67，不可能有偏移。 */
+.tbl th.pic,
+.tbl td.pic {
+  width: calc(75px * var(--zoom));
+  text-align: center;
+}
+.tbl th.pic {
+  padding: calc(11px * var(--zoom)) calc(4px * var(--zoom));
+}
+.tbl td.pic {
+  /* ⚠️ 留缝就靠这里的 padding；但 padding 加图片高必须 ≤ 行高 73.5（见上面那笔账），
+     一超出去整表行高就被撑高。 */
+  padding: calc(3px * var(--zoom)) calc(4px * var(--zoom));
+}
+.tblpic,
+.tblpic-no {
+  display: block;
+  box-sizing: border-box;
+  width: calc(67px * var(--zoom));
+  height: calc(67px * var(--zoom));
+  border-radius: calc(6px * var(--zoom));
+  background: var(--soft);
+}
+.tblpic {
+  object-fit: cover;
+}
+.tblpic-no {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--line);
+  color: var(--muted);
+  font-size: calc(11px * var(--zoom));
+}
+/* 状态列：2026-10-12 从"一行普通黑字"改成**胶囊标签**。
+   它点一下就切上下架，但原来跟旁边的数字长得一模一样，看不出能点 ——
+   换成跟顶部条件 pill 同一套语言（浅绿胶囊 / 灰胶囊）就一目了然了。
+   ⚠️ 行高不变：td 的上下 padding 仍是 11px，只把里面那行文字换成 18px 高的胶囊。 */
+.stpill {
+  display: inline-block;
+  padding: calc(2px * var(--zoom)) calc(10px * var(--zoom));
+  border-radius: 999px;
+  font-size: calc(12px * var(--zoom));
+  line-height: calc(12px * var(--zoom));
+  font-weight: 700;
+  background: rgba(35, 168, 132, 0.12);
+  color: var(--brand);
+  border: 1px solid rgba(35, 168, 132, 0.3);
+}
+.stpill.off {
+  background: var(--soft);
+  color: var(--muted);
+  border-color: var(--line);
 }
 .tbl tr.off {
   opacity: 0.55;

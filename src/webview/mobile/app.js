@@ -1268,11 +1268,12 @@
           .join("") +
         "</div>";
     } else {
-      // 真表格：进价 / 售价 / 等级 / 库存 / 状态各占一列（手机上横向可滑，不再挤成一行）
+      // 真表格：编号 / 名称 / 图片 / 进价 / 售价 / 等级 / 库存 / 状态各占一列
+      // （手机上横向可滑，不再挤成一行）
       $("content").innerHTML =
         warn +
         '<div class="tblwrap"><table class="tbl"><thead><tr>' +
-        "<th>编号</th><th>名称</th><th>进价</th><th>售价</th><th>等级</th><th>库存</th><th>状态</th>" +
+        '<th>编号</th><th>名称</th><th class="pic">图片</th><th>进价</th><th>售价</th><th>等级</th><th>库存</th><th>状态</th>' +
         "</tr></thead><tbody>" +
         list
           .map(rowHtml)
@@ -1353,6 +1354,14 @@
       '<td class="nm ed' + selClass(p, "name") + '" data-ed="name" title="' + esc(p.name || "") + '">' +
       esc(p.name) +
       "</td>" +
+      // 图片列（2026-10-12 加）：取图就是 imgUrl 那个 src，「没图」交给 onerror 兜底换成占位 ——
+      // 不用**先知道**某个编号有没有图（画册视图当年就是这套：/api/image 没图回 404，前端收尾）。
+      // 不借用详情页缩略图条那套 .thumbw —— 那是另一回事，这里自己一套 .tblpic / .tblpic-no。
+      // 位置：**在「名称」后面**（商家 2026-10-12 二次定：先看编号和名字，再看图长什么样；
+      // 放最左会把"编号—名称"这对主信息拆开）。
+      '<td class="pic"><img class="tblpic" loading="lazy" src="' +
+      imgUrl(p.code, "", "thumb") +
+      '" alt="" onerror="this.outerHTML=\'<span class=&quot;tblpic-no&quot;>无图</span>\'" /></td>' +
       (isSet
         ? '<td class="num mut" title="子商品进价合计（现算，不落库）">' +
           (ss ? "合 " + money(ss.sumCost) : "…") +
@@ -1391,13 +1400,21 @@
           '">' +
           num(p.stockTotal) +
           "</td>") +
-      '<td class="ed' +
+      // 状态格（2026-10-12 改成**胶囊标签**）：原来就是一行普通黑字，跟旁边的数字长得一模一样，
+      // 看不出"这里能点"。现在套个胶囊（在售=浅绿底绿字、已下架=灰底）—— 跟顶部那些条件胶囊
+      // 同一套语言，一眼看出是个能切的东西。
+      // ⚠️ `data-ed` **必须留在 <td> 上**：点一下切换的逻辑靠 closest("td[data-ed]") 找
+      //    （见 bind 里那两处），挪到内层 span 上就整个失效 —— 点了没反应。
+      // 行高不变：td 上下 padding 仍是 11px，只是把里面那行文字换成 18px 高的胶囊。
+      '<td class="ed st' +
       (off ? " low" : "") +
       '" data-ed="status" title="' +
-      (off ? "已下架" : "在售") +
+      (off ? "已下架 · 点一下上架" : "在售 · 点一下下架") +
+      '"><span class="stpill' +
+      (off ? " off" : "") +
       '">' +
       (off ? "已下架" : "在售") +
-      "</td>" +
+      "</span></td>" +
       "</tr>"
     );
   }

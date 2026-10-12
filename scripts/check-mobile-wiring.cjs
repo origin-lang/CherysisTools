@@ -713,6 +713,110 @@ if (!renderFilterFn || !refreshGroupsFn) {
   }
 }
 
+// ---------- ⑩ 列表行：图片列（名称之后）+ 状态胶囊（2026-10-12） ----------
+// 商家要的两件事：① 列表加「图片」列；② 状态格从"一行普通黑字"改成一眼看出能点的胶囊。
+// 这里钉四件最容易坏的事：
+//   ① 图片列的 src 走 imgUrl、没图靠 onerror 兜底 —— **不许**改成"先查 imgStats 判断有没有图"：
+//      imgStats 只在"要按图片筛"时才请求，拿它当条件会让整个列表先显示成"全都没图"；
+//   ② 图片列在**「名称」之后、「进价」之前**（商家 2026-10-12 二次定：先看编号和名字，
+//      再看图长什么样；第一版放最左，把"编号—名称"这对主信息拆开了）；
+//   ③ 状态格的 data-ed **必须留在 <td> 上**：点一下切换靠 closest("td[data-ed]") 找，
+//      挪到内层 span 就整个失效（点了没反应）；
+//   ④ CSS 三件套 .tblpic / .tblpic-no / .stpill 都得在，表格 min-width 也要跟着八列加宽，
+//      缩略图还要**留一点缝 + 圆角**（商家："太贴合了，之前的弧形也挺好看"）。
+{
+  // ⚠️ CSS 断言先剥注释：上面这段说明里就写着 .tblpic 这些名字，直接用 includes 会被自己的注释救活
+  const cssBare = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const rowAt = js.indexOf("function rowHtml(p)");
+  const rowRaw = rowAt < 0 ? "" : js.slice(rowAt, js.indexOf("function findProduct(id)"));
+  // ⚠️ 先剥行注释再断言：rowHtml 上面那段注释里就写着 .tblpic / .tblpic-no / .stpill 这些名字，
+  //    不剥的话「图片列没了」这种断言会被自己的注释救活 —— 这轮的 w-no-nopic 真漏网过一次。
+  const row = rowRaw.replace(/\/\/[^\n]*/g, "");
+  if (!/class="tblpic"/.test(row) || !/imgUrl\(p\.code, "", "thumb"\)/.test(row)) {
+    fails.push('rowHtml 里没有图片列（或没走 imgUrl(p.code, "", "thumb")）：列表那张缩略图取不到');
+  }
+  if (!/onerror/.test(row) || !/tblpic-no/.test(row)) {
+    fails.push("图片列少了 onerror 兜底：没图的商品会显示成破图，而不是「无图」占位");
+  }
+  if (/imgStats/.test(row)) {
+    fails.push(
+      "图片列不该拿 imgStats 判断「有没有图」：它只在要按图片筛时才请求，一进列表就是空的" +
+        " → 整片显示成「无图」（实际取图靠 src + onerror 就够了）",
+    );
+  }
+  const iPic = row.indexOf('<td class="pic"');
+  const iNm = row.indexOf('<td class="nm ed');
+  const iCost = row.indexOf('data-ed="cost_price"');
+  if (iPic < 0 || iNm < 0 || iCost < 0 || !(iNm < iPic && iPic < iCost)) {
+    fails.push(
+      "图片列没排在「名称」之后、「进价」之前（商家 2026-10-12 二次定的位置：" +
+        "先看编号和名字，再看图）",
+    );
+  }
+  if (!/'" data-ed="status" title="'/.test(row)) {
+    fails.push(
+      '状态格的 data-ed="status" 不在 <td> 上：点一下切换靠 closest("td[data-ed]") 找它，' +
+        "挪到内层 span 就点了没反应",
+    );
+  }
+  if (!/class="stpill/.test(row)) {
+    fails.push("状态格没套胶囊（.stpill）：又退回成一行跟旁边数字长得一样的黑字了");
+  }
+  if (!/<th>名称<\/th><th class="pic">图片<\/th>/.test(js)) {
+    fails.push("表头里图片列不在「名称」后面（或整个没了）");
+  }
+  for (const sel of [".tblpic", ".tblpic-no", ".stpill", ".stpill.off"]) {
+    if (!new RegExp(sel.replace(/\./g, "\\.") + "\\s*\\{").test(cssBare)) {
+      fails.push(`style.css 里找不到规则 ${sel} —— 少了它图片会撑破格子 / 胶囊退化成方框`);
+    }
+  }
+  if (!/min-width:\s*calc\(630px \* var\(--zoom\)\)/.test(cssBare)) {
+    fails.push("表格 min-width 没跟着加宽到 630px：八列 + 75px 宽的图片列，窄了会把别的列挤瘦");
+  }
+  // ⚠️ 下面是图片列"尺寸账"的守门（2026-10-12 一天内返工五次的全部教训）：
+  //    账目（C 档，商家选的）：数据行上下 padding 27×2 + 字高 19.5 = 行高 **73.5**
+  //      ≥ td.pic 的 3+3 + 图高 **67** = 73 → 图片格不参与决定行高。
+  //    这一组数（27 / 3 / 67 / 75）是一套，改任一个都要重算：
+  //    死路①：图留在普通流里 + td 给 11px padding → 32+22 = 54，整表虚胖（"空了好多"）；
+  //    死路②：图改 absolute + inset 3/4 + width:100% → 替换元素**过度约束**，right 被丢掉 → 图捅出格子
+  //           （"好像超出单元格了"），而且这种写法依赖 td 建包含块 → "电脑没有、手机有点偏"；
+  //    死路③：行的 padding 改小（11）→ 行高只剩 41.5 < 73，图片格**反过来**把整表撑高。
+  //    所以现在故意**不用绝对定位**，全部用写死的 px（跟着 --zoom），哪个引擎算出来都一样。
+  if (/\.tblpic[^{]*\{[^}]*position:\s*absolute/.test(cssBare)) {
+    fails.push(
+      "列表缩略图又回到绝对定位了：配 td 的 padding 用会算错偏移（图捅出格子），" +
+        "而且依赖 td 建包含块 —— 这个写法在手机浏览器上会「有点偏」。改成普通流 + 写死 px",
+    );
+  }
+  if (!/\.tbl td\.pic\s*\{[^}]*padding:\s*calc\(3px \* var\(--zoom\)\)/.test(cssBare)) {
+    fails.push(
+      "图片格的 padding 不是上下 3px 了：它跟图高 67 一起凑成 73，必须 ≤ 数据行的 73.5，" +
+        "超了就把整表行高撑高（商家反馈过「空了好多」）",
+    );
+  }
+  if (!/\.tbl th,\s*\n\.tbl td\s*\{[^}]*padding:\s*calc\(27px \* var\(--zoom\)\)/.test(cssBare)) {
+    fails.push(
+      "数据行的上下 padding 不是 27px 了：行高 73.5 就是它撑出来的（27×2 + 字高 19.5），" +
+        "改小到 11 的话行高只剩 41.5 < 73 —— 图片格会反过来把整表撑高",
+    );
+  }
+  if (!/\.tblpic[^{]*\{[^}]*height:\s*calc\(67px \* var\(--zoom\)\)/.test(cssBare)) {
+    fails.push(
+      "列表缩略图的高度不是 67px（×zoom）了：3 + 67 + 3 = 73 这笔账要跟数据行的 73.5 一起看，" +
+        "改大了会把整表行高撑高",
+    );
+  }
+  if (!/\.tblpic[^{]*\{[^}]*width:\s*calc\(67px \* var\(--zoom\)\)/.test(cssBare)) {
+    fails.push(
+      "列表缩略图的宽度不是 67px（×zoom）了：缩略图是**正方形**，宽度必须跟高度一致" +
+        "（图片列 75 = 67 + 左右各 4）",
+    );
+  }
+  if (!/\.tblpic[^{]*\{[^}]*border-radius/.test(cssBare)) {
+    fails.push("列表缩略图没有圆角了：商家明确说「之前的弧形挺好看」");
+  }
+}
+
 if (fails.length > 0) {
   console.error(`❌ check-mobile-wiring：${fails.length} 项不通过`);
   for (const f of fails) {
