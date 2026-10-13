@@ -194,7 +194,6 @@
               <label>品类<input id="fCategory" type="text" list="catList" /></label>
               <label>系列<input id="fSeries" type="text" /></label>
             </div>
-            <p class="muted small">编号＝图片文件夹名/导入锚点，改号会连带改图片夹。名称/品类/系列不能有空格（粘贴导入按空格分列，有空格会整行列位错开）；备注不受此限。</p>
           </div>
           <!-- ===== 套装（可整体移除）=====
                子商品清单归「基本信息」这一页：它回答的是"**这一套由什么组成**"，跟名称/品类/系列
@@ -223,8 +222,6 @@
               <input id="setAddCode" type="text" autocapitalize="characters" spellcheck="false" placeholder="子商品编号，如 A003" />
               <button type="button" id="setAddBtn" class="mini primary">添加</button>
             </div>
-            <p class="muted small" id="setTipView">点编号 → 进它的详情（改价、看图）。要增删子商品，点右上「编辑」。</p>
-            <p class="muted small" id="setTipEdit">左滑一行 → 从套装里移出（电脑上右键一行也行；商品本身不会被删）；下面可添加子商品。点「取消编辑」退出。</p>
           </div>
         </div>
 
@@ -245,7 +242,6 @@
               <label>售价<div class="money"><i>¥</i><input id="fSale" type="number" inputmode="decimal" step="0.01" /></div></label>
               <label class="set-hide">库存<input id="fStock" type="number" inputmode="numeric" step="1" /></label>
             </div>
-            <p class="muted small plain-only">改等级自动按新规则重算售价；库存填实际清点数（与电脑版双击库存列同口径）；改完自动保存。</p>
             <!-- ===== 套装（可整体移除）=====
                  合计区就跟在**售价正下方** —— 「比合计 = 售价 − 合计售价」这两个数天生要并排看
                  （商家定价本来就是看着子商品每件多少钱凑出一个打包价）。
@@ -255,7 +251,6 @@
                  否则普通商品切到「价格库存」页时会露出一块空的浅底框。 -->
             <div class="sum" id="dSetSum"></div>
             <!-- ===== 套装（可整体移除）===== 上面那段对套装不适用（等级/库存两格都收掉了） -->
-            <p class="muted small set-only">上面的「合计区」是按子商品**当前**进价/售价现算的，改完自动保存。</p>
           </div>
         </div>
 

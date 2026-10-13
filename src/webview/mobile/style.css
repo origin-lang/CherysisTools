@@ -789,24 +789,24 @@ textarea {
   margin: 0 0 var(--gap);
 }
 /* 子商品详情页顶部那行「属于：T001 T002」的可点编号 —— 整站只有这一处用 .pill-link。
-   2026-10-12 商家："那个圆圈有点太大了，小一点" → 先收了字号和内边距（高 23.5 → 20）；
-   接着"宽度要小一点，我喜欢他是长方形的" → 左右内边距 8 → **6px**
-   （对最初那版 10px 来说，整条一共窄了 8px），圆角 999（胶囊）→ **6px 圆角矩形** ——
-   跟列表里「套」那个 `.badge` 用同一个圆角值，在站内"小标签"是一套语言。
-   再接着"竖直放小再小一点" → **上下内边距 2 → 1px、行高 1.15 → 1.1**（高 ≈ 20 → 17px）；
-   最后"竖直方向再小一点" → **上下内边距 1 → 0、行高 1.1 → 1**（高 ≈ **14px**，
-   已经砍到"里面那行字本身的高度"，再矮就只能动字号了）。宽度一路没动：左右 6px、字号 12px。
-   ⚠️ 行高能给到 1，是因为套装编号一定是 `T` + 数字（大写 + 数字，没有下伸字母也不会顶到边框）；
-   以后要是有别的文字进这个按钮，记得把行高放回来。
-   ⚠️ 高 14px 已经接近"手指能点"的下限（iOS 建议 44px），别再往下压了 —— 真要更小就动字号
-   （12 → 11px），别再抠内边距，不然容易点不中。
-   想要更方的就把圆角往下调，想回到胶囊就写回 999px。 */
+   ⚠️ **2026-10-14 抓到真凶**：全局 `button { min-height: var(--tap) }`（44px）一直在管它，
+   而这条规则**没写 min-height** → 这颗按钮实际一直是 **44px 高**。
+   2026-10-12 那四轮"收小"改的全是内边距/行高/圆角，高度一步都没动 ——
+   当时记的「高 ≈ 14px」是拿 字号×行高+内边距 **算出来的**，没算上 min-height。
+   现在补 `min-height: 0`，那串收小才第一次真正生效。
+   ⚠️ 2026-10-14 二次反馈：「按钮的字和边界太靠近了」—— 行高 1 + 上下 0 内边距时，
+   12px 的字框**正好贴着边框**，没有喘气的余地。上下内边距 0 → **3px**、左右 6 → **8px**
+   （高 14 → **20px**）。比 44px 的触控下限还是矮一截，但这是商家反复点名要的小标签。
+   ⚠️ 行高能给到 1，是因为套装编号一定是 `T` + 数字（大写 + 数字，没有下伸字母不会顶到边框）；
+   以后要是有别的文字进这个按钮（小写字母有下伸），记得把行高放回来。
+   想要更方就调圆角，想回胶囊就写回 999px。 */
 .pill-link {
+  min-height: 0; /* ⚠️ 必须有：不写就被全局 button 的 min-height:44px 顶成 44 高 */
   border: 1px solid var(--brand);
   color: var(--brand);
   background: transparent;
   border-radius: 6px;
-  padding: 0 6px;
+  padding: 3px 8px;
   font-size: 12px;
   line-height: 1;
 }
@@ -1356,30 +1356,50 @@ input.bad {
   border-color: var(--danger);
 }
 
-/* 详情 */
+/* 详情 · 封面：**满宽 + 定高 + 裁切**（淘宝主图那套，2026-10-14 商家指名要的）——
+   图片顶到屏幕两边（.content 有 12px 内边距，用负外边距出血），高度钉死在 4:3，
+   装不下的部分**裁掉**，点封面进灯箱才看得到整张。
+   ⚠️ **定高必须用比例（aspect-ratio），不能用 vw/vh**：宽屏（≥820px）详情走右侧抽屉，
+   抽屉才 440 宽，`60vw` 拿到的是**整个窗口**的宽 → 封面会高到离谱。
+   ⚠️ 代价要清楚：竖拍的照片在这里只露中段（约六成高）、上下被裁 —— 商家原话
+   「占据整个屏，但是不完整长度，点击去放大才会」，他要的就是这个；
+   真嫌裁得狠就把 4/3 再改大（比如 1/1，照片能露更多、区块也更高）。
+   2026-10-13 曾做成「框高封顶、框宽随图、contain」—— 那版不裁但照片偏小，被这一版替掉。 */
 .cover {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  margin: 0 calc(-1 * var(--pad)) var(--pad); /* 出血：顶到屏幕两边 */
+  aspect-ratio: 4 / 3; /* 2026-10-14 商家嫌 5/3 窄，放大一档（390 宽 ≈ 292px 高） */
   overflow: hidden;
-  margin-bottom: var(--pad);
-  /* 锁死比例：每张图的长宽比不一样，不锁的话翻「上一个/下一个」时这块会忽大忽小，
-     图片加载完成前高度还是 0，整页也会跟着跳一下 */
-  aspect-ratio: 1 / 1;
-  max-height: 46vh;
 }
 .cover img {
   width: 100%;
   height: 100%;
   display: block;
-  object-fit: contain; /* 详情页看图要看到整张，不能裁 */
-  background: var(--bg);
+  object-fit: cover; /* 满宽裁切：填满框，多余的部分裁掉（要看整张走灯箱） */
+}
+/* 没图时的空态：不留一个空白大方框（一片白比一句提示更像页面坏了） */
+.cover-empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border: 1px dashed var(--line);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
 }
 .strip {
   display: flex;
   gap: var(--gap);
   overflow-x: auto;
   padding-bottom: 10px;
+}
+/* 单图 / 无图时缩略条是空的（`innerHTML = ""`）：它自己带 10px 下内边距，
+   不收起来就会在封面和页签之间留一条看不见的空档。 */
+.strip:empty {
+  display: none;
 }
 /* 缩略图条的每一格（类名避开 .thumb —— 画册卡片那张图已经是 .thumb） */
 .thumbw {
@@ -1388,12 +1408,20 @@ input.bad {
   line-height: 0;
 }
 .strip img {
-  width: 78px;
-  height: 78px;
+  width: 56px;
+  height: 56px;
   object-fit: cover;
   border-radius: 8px;
-  border: 1px solid var(--line);
+  border: 2px solid transparent;
+  opacity: 0.6;
   flex: none;
+  cursor: pointer;
+}
+/* 当前显示的那张：绿描边 + 不透明。缩略图条的职责是**选封面**（点一下换上面那张大的），
+   要看大图点封面进灯箱 —— 得让人一眼看出上面那张是哪一张。 */
+.strip img.on {
+  border-color: var(--brand);
+  opacity: 1;
 }
 /* 缩略图右上角 ×：手指能点到的最小尺寸（28px），半透明底保证浅色图上也看得见 */
 .thumb-x {
@@ -1906,16 +1934,15 @@ input.bad {
 /* ---------- 详情页对不同手机的适配（只动详情页） ----------
    整站尺寸都是写死的 px，而双指缩放已经关掉了，用户没有手动补偿的余地，
    所以详情页自己得扛住「小屏塞不下、大屏显空」：
-   ① 封面按屏高的 42% 封顶（1:1 时大屏上会吃掉半屏，表单被推到看不见的地方）；
-   ② 数字字段放大加粗 —— 进价/售价/库存是这一页真正要看的东西，名称之类是次要的；
+   ① 封面高度封顶（原来是 1:1 方框，大屏上会吃掉半屏、表单被推到看不见的地方）；
+   ② 价格/库存用等宽数字（对齐、不跳），但**不放大加粗** —— 醒目交给 ¥ 前缀；
    ③ 行距、输入框高度放宽到 48px，手指更好点；
    ④ 窄屏（<360px）两列改单列：320px 屏上两列各只剩 145px，数字都写不开。
-   只作用于 #screen-detail，列表 / 画册 / 新建页一律不动。 */
-#screen-detail .cover {
-  width: min(100%, 42vh);
-  margin-left: auto;
-  margin-right: auto;
-}
+   只作用于 #screen-detail，列表 / 画册 / 新建页一律不动。
+
+   ⚠️ 2026-10-13：原来这里还有一条 `#screen-detail .cover { width: min(100%, 42vh) }`
+   （把封面锁成 1:1 方框）。方框和那条宽度上限都撤了 —— 现在高度由 .cover 自己的
+   `height: 32vh` 钉住、宽度随图走，不需要再为详情页单独限制宽度。 */
 #screen-detail .card label {
   margin-bottom: 14px;
   font-size: 13px;

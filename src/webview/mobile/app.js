@@ -568,6 +568,23 @@
     cover.appendChild(im);
   }
 
+  /**
+   * 详情页封面的**空态**。清单到手发现一张图都没有时走这里。
+   *
+   * 为什么不靠 setCoverImg 那个 onerror 兜底：那条路只把碎图抹掉，留下一块空白 ——
+   * 0.0.32 曾特意把「还没有图片，点右上📷传图」删掉改成"留空条"，结果就是一个
+   * 空白方框比文字更像页面坏了。现在**单图/无图时缩略图条也不出现了**，
+   * 空态更得给一句引导，否则整块什么都没。
+   */
+  function setCoverEmpty() {
+    var cover = $("dCover");
+    if (!cover) {
+      return;
+    }
+    cover.innerHTML =
+      '<div class="cover-empty">还没有图片<br />点右上角 📷 拍一张，或从相册选</div>';
+  }
+
   function tryAutoRefresh() {
     // ① 正停在详情页：图片**必须**自己刷（loadAll 碰不到它），但可以放心刷——
     //    图片不是用户能编辑的格子，重读不会冲掉他正在填的名称/价格。
@@ -2963,32 +2980,44 @@
       })
       .then(function (j) {
         var names = (j && j.names) || [];
-        // 灯箱左右切换要用这份清单（打开某张图时按它算"上一张/下一张"）
+        // ⭐ 当前显示哪一张：缩略图点选的那张优先；清单刷新后它还在就不跳回第一张
+        //   （文件名带编号前缀，跨商品不会撞；真撞了 indexOf 兜底回第一张）
+        var prev = state.detail && state.detail.code === code ? state.detail.cur : "";
+        var cur = prev && names.indexOf(prev) >= 0 ? prev : names[0] || "";
         if (state.detail && state.detail.code === code) {
           state.detail.imgs = names;
+          state.detail.cur = cur;
           // 清单到手就顺便把大图换掉（带文件名，见 setCoverImg 的注释）。
           // 打开详情时那次是"不知道第一张叫什么"的临时占位，这里才是准确的。
-          setCoverImg(code, names[0] || "");
+          if (cur) {
+            setCoverImg(code, cur);
+          } else {
+            setCoverEmpty();
+          }
         }
-        if (!names.length) {
+        // ⚠️ **只有 1 张图时不画缩略图条**（2026-10-13 商家定：一个品一般就一两张图）——
+        //    封面显示的就是那一张，下面再摆一个一模一样的方块是纯冗余，白占 88px。
+        //    连带后果：删除入口不能再挂在缩略图上（单图时它根本不存在），
+        //    统一收到灯箱那个「🗑 删除这张」—— 那里有二次确认框，比点了就删的 ✕ 还安全。
+        if (names.length < 2) {
           box.innerHTML = "";
           return;
         }
         box.innerHTML = names
           .map(function (n) {
             return (
-              // 类名不能叫 thumb：画册卡片那张图已经是 .thumb 了，会撞样式
+              // 类名不能叫 thumb：画册卡片那张图已经是 .thumb 了，会撞样式。
+              // ⚠️ 这里**不挂删除 ✕**：删除口统一收到灯箱一个（有确认框）。
+              //    新建页那排本地照片仍留着 ✕ —— 那是"还没上传"的编辑态，性质不同。
+              //    class="on" = 上面那张大的正在显示这张（点缩略图=选封面，得看得出选了谁）
               '<span class="thumbw">' +
               '<img src="' +
               imgUrl(code, n, "thumb") +
-              '" data-name="' +
+              '"' +
+              (n === cur ? ' class="on"' : "") +
+              ' data-name="' +
               esc(n) +
               '" alt="" />' +
-              // × 跟着缩略图走：不用先点进灯箱再删。按文件名删（不按序号），
-              // 别人在这期间删掉前面一张时序号会指到别的文件上
-              '<button class="thumb-x" type="button" data-del="' +
-              esc(n) +
-              '" title="删除这张图">✕</button>' +
               "</span>"
             );
           })
@@ -3002,6 +3031,11 @@
   function openViewer(code, name) {
     // name 为空 = 看封面（夹里第一张）。切到具体某张时用文件名，删图才不会删错
     var names = (state.detail && state.detail.code === code && state.detail.imgs) || [];
+    // 一张图都没有：别开灯箱。空封面也是一块可点的区域（.cover-empty），
+    // 不拦的话点下去是**一块全黑的空屏**（src 拿到 404），看着像卡死了。
+    if (!names.length) {
+      return;
+    }
     var idx = name ? names.indexOf(name) : 0;
     if (idx < 0) {
       idx = 0;
@@ -3195,8 +3229,12 @@
     var total = v.names.length;
     var name = total ? v.names[v.idx] : "";
     $("viewerImg").src = imgUrl(v.code, name, "full");
-    // 封面那一张（打开时 name 为空）不给删：与原来的口径一致 —— 从封面进来的删除入口在缩略图上
-    var deletable = !!name && !(v.cover && v.idx === 0);
+    // ⚠️ 2026-10-13：从封面进来（name 为空、cover=true）**也给删**。
+    //    原来这里是「不给删，封面那张的删除入口在缩略图上」，而缩略图现在：
+    //    ① 只有 1 张图时压根不出现；② 多图时也不再挂 ✕（删除口统一收到灯箱这里）。
+    //    那句的前提整个没了 —— 单图商品要有办法删掉唯一那张，只能靠这里。
+    //    删了封面那张之后 loadImages 会把封面换成下一张（或空态），行为是自洽的。
+    var deletable = !!name;
     $("viewerDel").style.display = deletable ? "" : "none";
     $("viewerRetake").style.display = "none"; // 已上传的图没有「重拍」一说
     var multi = total > 1;
@@ -3286,7 +3324,10 @@
           // 抢先占位一张（loadImages 是异步的，等它回来封面会空一下），但只能用 mid：
           // 先用 full 占位等于为了几十毫秒的空白白下一张 7.9MB 原图，随即被 setCoverImg 顶掉。
           // 占位与正路同尺寸，切换时不跳变；等清单到手 setCoverImg 会换成带文件名的那张。
-          $("dCover").innerHTML = '<img src="' + imgUrl(v.code, "", "mid") + '" alt="" />';
+          // ⚠️ onerror 自删：**删掉的要是最后一张**，这个不带 name 的 URL 会 404，
+          //    不留碎图占位符 —— 随后 loadImages 会把封面换成空态。
+          $("dCover").innerHTML =
+            '<img src="' + imgUrl(v.code, "", "mid") + '" alt="" onerror="this.remove()" />';
         }
         return invoke("loadAll");
       })
@@ -3294,6 +3335,32 @@
         pushLog("❌删除失败（可能被别的机器占用）");
         toast("删除失败（可能被别的机器占用）", true);
       });
+  }
+
+  /**
+   * 灯箱关掉时，把封面和缩略图的选中态同步到**刚才看到的那张**。
+   * 不然会出现：在灯箱里翻到第 5 张 → 关掉 → 上面那张大的还停在进去之前的那张。
+   * 只在真是「看已上传图片」的灯箱（非 local）且就是当前这个商品时才动。
+   */
+  function syncCoverFromViewer() {
+    var v = viewerImg;
+    if (!v || v.local || !v.names || !v.names.length) {
+      return;
+    }
+    var d = state.detail;
+    if (!d || d.code !== v.code) {
+      return;
+    }
+    var name = v.names[v.idx];
+    if (!name || d.cur === name) {
+      return;
+    }
+    d.cur = name;
+    setCoverImg(d.code, name);
+    var thumbs = $("dImages").querySelectorAll("img[data-name]");
+    for (var i = 0; i < thumbs.length; i++) {
+      thumbs[i].classList.toggle("on", thumbs[i].dataset.name === name);
+    }
   }
 
   /**
@@ -3315,43 +3382,6 @@
       }
     }
     return false;
-  }
-
-  /**
-   * 缩略图右上角 ×：直接删，不弹确认（用户明确要求「这样删起来更方便」）。
-   * 代价要说清楚 —— 后端 deleteImageFile 是真 unlink，不进回收站也不备份，删了就没了。
-   */
-  function deleteThumb(name) {
-    var d = state.detail;
-    if (!d || !name) {
-      return;
-    }
-    pushLog("⏳删除 " + name + "…");
-    toast("删除中…");
-    invoke("deleteImageFile", { code: d.code, name: name })
-      .then(function (j) {
-        if (imgDeleteFailed(j)) {
-          // 同上：后端那条红字 toast 已经说清是哪张图了，别再盖一层
-          if (!j.__opFailed) {
-            pushLog("❌没删掉，图片还在（原因见上面一行）");
-            toast("没删掉，图片还在（多半正被占用，稍等再试）", true);
-          }
-          loadImages(d.code); // 清单并没变，重画一遍确认状态
-          return;
-        }
-        pushLog("🗑已删除 " + name);
-        toast("已删除 " + name);
-        state.imgStatsLoaded = false; // 图数变了，下次用「有无图片」筛选时重新统计
-        // 自己刚删的图 → 换这个商品的号（只换它一个），不必等下一轮校验才看到它消失
-        bumpImg(d.code);
-        loadImages(d.code);
-        renderList(); // 列表里这张卡片的封面也用旧 URL，一起换掉（此时列表是隐藏的，图不会真去加载）
-        $("dCover").innerHTML = '<img src="' + imgUrl(d.code, "", "mid") + '" alt="" />';
-      })
-      .catch(function () {
-        pushLog("❌删除失败（可能被别的机器占用）");
-        toast("删除失败（可能被别的机器占用）", true);
-      });
   }
 
   /**
@@ -4724,23 +4754,37 @@
         pushLog("❌改上下架失败，已退回");
       });
     };
+    // 详情页缩略图条：**点小图 = 选封面**（上面那张大的换过去），不直接开灯箱。
+    // 要放大看整张 → 点封面（2026-10-14 商家定的分工，淘宝主图同款）。
+    // 这里没有删除：删除统一走灯箱里的「🗑 删除这张」（有二次确认框）。
+    // 新建页那排本地照片的 ✕ 是另一套，走 renderNewShots 自己的 handler，不受影响。
     $("dImages").onclick = function (e) {
-      var x = e.target.closest(".thumb-x");
-      if (x) {
-        deleteThumb(x.dataset.del);
+      var img = e.target.closest("img[data-name]");
+      if (!img || !state.detail) {
         return;
       }
-      var img = e.target.closest("img[data-name]");
-      if (img && state.detail) {
-        openViewer(state.detail.code, img.dataset.name);
+      var name = img.dataset.name;
+      if (state.detail.cur === name) {
+        return; // 已经是当前那张，别白重画一次
+      }
+      state.detail.cur = name;
+      setCoverImg(state.detail.code, name);
+      // 只切选中态，**不整条重画** —— 重画会把横滑的滚动位置丢掉
+      var thumbs = $("dImages").querySelectorAll("img[data-name]");
+      for (var i = 0; i < thumbs.length; i++) {
+        thumbs[i].classList.toggle("on", thumbs[i].dataset.name === name);
       }
     };
     $("dCover").onclick = function () {
-      if (state.detail) {
-        openViewer(state.detail.code, "");
+      var d = state.detail;
+      if (!d) {
+        return;
       }
+      // 带**当前那张**的文件名：灯箱从它开始翻，而且删除按钮才在（!!name 才可删）
+      openViewer(d.code, d.cur || "");
     };
     $("viewerClose").onclick = function () {
+      syncCoverFromViewer(); // 看完关掉：封面/选中态停在刚才那张（不然还停在进去之前那张）
       $("viewer").classList.remove("show");
       $("viewerImg").src = "";
       $("viewerRetake").style.display = "none";
