@@ -161,10 +161,16 @@ function fileFingerprint(src: string): string {
 }
 
 /**
+ * 缩图算法版本：**改了"怎么缩图"就 bump 一次**（2026-10-13 从 1 → 2：补 auto-orient，
+ * 旧缩略图全是没转方向的歪图，不清就会一直命中旧缓存）。掺在指纹最前面，
+ * 本机与共享两份缓存一起作废 —— 客机下次开面板会把原图重读重缩一遍，这是必要代价。
+ */
+const THUMB_ALGO_VERSION = "2";
+
+/**
  * 一次 stat 出两个指纹，省掉第二趟共享盘 stat（每次 stat 在网络盘上都是一趟往返）。
  *
- * - `local`：沿用原来的精确 mtimeMs（改了格式等于把所有人现存的缩略图缓存一次性作废，
- *   客机下次开面板就得把原图重读一遍——正是这次要避免的事，所以本机这份不动）。
+ * - `local`：精确 mtimeMs。
  * - `shared`：mtime 取整到毫秒。这份 meta 要跨机器比对，整数比浮点稳（不同机器的
  *   SMB 客户端把同一个时间戳换算成 mtimeMs 时，末几位理论上可能有表示差异）；
  *   毫秒内的改动照旧由 getCover 的「图片夹 mtime」那道闸兜住。
@@ -172,7 +178,10 @@ function fileFingerprint(src: string): string {
 function fingerprints(src: string): { local: string; shared: string } {
   try {
     const st = fs.statSync(src);
-    return { local: `${st.mtimeMs}|${st.size}`, shared: `${Math.round(st.mtimeMs)}|${st.size}` };
+    return {
+      local: `${THUMB_ALGO_VERSION}|${st.mtimeMs}|${st.size}`,
+      shared: `${THUMB_ALGO_VERSION}|${Math.round(st.mtimeMs)}|${st.size}`,
+    };
   } catch {
     return { local: "", shared: "" };
   }
@@ -321,6 +330,10 @@ export async function thumbToBase64(src: string, size = COVER_THUMB): Promise<st
   try {
     const out = await withSharpFile((f) =>
       f(src)
+        // auto-orient：手机拍照的 JPEG 像素是传感器原始方向，靠 EXIF Orientation 标记转多少度；
+        // 原图字节原样落盘、看图软件会自己转，但这里重编码成 webp 后 EXIF 就丢了，
+        // 不先把像素转正，缩略图整体歪 90 度（2026-10-13 商家手机实拍复现）。三处缩图同修。
+        .rotate()
         .resize(size, size, { fit: "cover" })
         .webp({ quality: 80 })
         .toBuffer(),
@@ -393,6 +406,7 @@ async function midToBase64(src: string): Promise<string> {
   try {
     const out = await withSharpFile((f) =>
       f(src)
+        .rotate() // auto-orient，理由见 thumbToBase64
         .resize(MID_SIZE, MID_SIZE, { fit: "inside", withoutEnlargement: true })
         .webp({ quality: 82 })
         .toBuffer(),
@@ -485,6 +499,7 @@ async function previewThumbToBase64(src: string): Promise<string> {
   try {
     const out = await withSharpFile((f) =>
       f(src)
+        .rotate() // auto-orient，理由见 thumbToBase64
         .resize(PREVIEW_THUMB, PREVIEW_THUMB, { fit: "inside", withoutEnlargement: true })
         .webp({ quality: 82 })
         .toBuffer(),

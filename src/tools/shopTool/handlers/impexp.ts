@@ -25,7 +25,9 @@ async function readImageForExcel(
   if (ext === ".gif") {
     return { buffer: buf, extension: "gif" };
   }
-  const png = await sharp(buf).png().toBuffer();
+  // gif/bmp/webp 转 png 嵌 Excel：顺手 auto-orient（无 EXIF 方向时是 no-op），
+  // 别把带方向的图转完 png（EXIF 丢失）在 Excel 里歪着显示
+  const png = await sharp(buf).rotate().png().toBuffer();
   return { buffer: png, extension: "png" };
 }
 
