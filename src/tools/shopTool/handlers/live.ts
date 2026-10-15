@@ -5,7 +5,7 @@ import { Handler, HandlerCtx, runLongTask } from "./types.js";
 import { LivePlanRow, Product } from "../db.js";
 import { canonicalCode } from "../pricing.js";
 import { firstImageFile, previewThumbPath } from "../images.js";
-import { renderLiveGrid, renderStarOverviewBuffer, renderStarOverviewGrid, localStamp, StarLabelOptions } from "../liveGrid.js";
+import { renderLiveGrid, renderLiveHtml, renderLiveLongImage, renderStarOverviewBuffer, renderStarOverviewGrid, localStamp, StarLabelOptions, LiveHtmlGroup } from "../liveGrid.js";
 
 // 同一时刻只准一个九宫格生成任务在跑。
 // 必须挂在模块上而不是 liveHandlers 闭包里：index.ts 每条消息都重新调一次
@@ -168,6 +168,114 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
     }
   };
 
+  /**
+   * 把排品行归拢成「组号 → 格子号 → 编号」，顺手滤掉库里已不存在的编号。
+   * 九宫格（jpg）和 HTML 样品两条路共用这一份 —— 口径分叉过一次就很难再对齐。
+   */
+  const groupsFromPlan = (
+    plan: LivePlanRow[],
+    byCode: Map<string, Product>,
+  ): Map<number, Map<number, string>> => {
+    const groups = new Map<number, Map<number, string>>();
+    for (const r of plan) {
+      if (!byCode.has(r.code)) {
+        continue;
+      }
+      let slots = groups.get(r.group_no);
+      if (!slots) {
+        slots = new Map();
+        groups.set(r.group_no, slots);
+      }
+      slots.set(r.slot_no, r.code);
+    }
+    return groups;
+  };
+
+  /** 输出目录（本机偏好 live_out_dir）：能用就用，不能用就现场要一个。九宫格 / HTML 样品共用 */
+  const resolveOutDir = async (): Promise<string> => {
+    const usable = (d: string): boolean => {
+      if (!d) {
+        return false;
+      }
+      try {
+        return fs.statSync(d).isDirectory();
+      } catch {
+        return false;
+      }
+    };
+    const saved = String(h.getSetting("live_out_dir") || "").trim();
+    if (usable(saved)) {
+      return saved;
+    }
+    gridStatus("dialog", {
+      text: saved ? `原输出目录已不可用（${saved}），请重新选择…` : "请选择输出目录…",
+    });
+    const picked = await ctx.selectFolder("选择直播排品输出目录");
+    if (!picked) {
+      return "";
+    }
+    await h.setSetting("live_out_dir", picked);
+    h.postLiveState();
+    return picked;
+  };
+
+  /**
+   * 排品消息 → 渲染载荷（HTML 样品 / 长图两条**纯读**支路共用）：
+   * 解析 plan、滤掉库里已不存在的编号、按组号排好、每组补齐 9 格并查出封面文件。
+   */
+  const livePayloadOf = (msg: any): { groupNos: number[]; payload: LiveHtmlGroup[] } => {
+    const rawPlan = Array.isArray(msg.plan) ? (msg.plan as any[]) : [];
+    const plan: LivePlanRow[] = rawPlan.map((r) => ({
+      group_no: Number(r.group_no),
+      slot_no: Number(r.slot_no),
+      code: String(r.code ?? ""),
+    }));
+    const imageRoot = h.imageDir();
+    const byCode = new Map<string, Product>();
+    for (const p of db.getProducts()) {
+      byCode.set(p.code, p);
+    }
+    const groups = groupsFromPlan(plan, byCode);
+    const groupNos = [...groups.keys()].sort((a, b) => a - b);
+    const payload = groupNos.map((g) => {
+      const slots = groups.get(g)!;
+      const cells: Array<{ code: string; img: string | null }> = [];
+      for (let s = 1; s <= 9; s++) {
+        const code = slots.get(s) ?? "";
+        cells.push({ code, img: code ? firstImageFile(imageRoot, code) : null });
+      }
+      return { groupNo: g, cells };
+    });
+    return { groupNos, payload };
+  };
+
+  /** 标注模式（三种产物共用一份校验）：不认识的值一律按「序号」 */
+  const liveLabelModeOf = (msg: any): "num" | "code" | "both" | "none" =>
+    msg.labelMode === "code" || msg.labelMode === "both" || msg.labelMode === "none" ? msg.labelMode : "num";
+
+  /**
+   * 输出目录：拿到且建得出来就返回；拿不到/建不出来时把日志与终态一并发掉、回空串（调用方直接 return）。
+   * 两条纯读支路（HTML 样品 / 长图）共用 —— 少一处就少一个"按钮卡在生成中"的机会。
+   */
+  const readyOutDir = async (): Promise<string> => {
+    const outDir = await resolveOutDir();
+    if (!outDir) {
+      log("❌未选择输出目录，已取消");
+      gridStatus("cancelled", { text: "未选择输出目录" });
+      return "";
+    }
+    if (!fs.existsSync(outDir)) {
+      try {
+        fs.mkdirSync(outDir, { recursive: true });
+      } catch (err: any) {
+        log(`❌创建输出目录失败：${err.message}`);
+        gridStatus("error", { text: "创建输出目录失败" });
+        return "";
+      }
+    }
+    return outDir;
+  };
+
   return {
     toggleLiveStar(msg) {
       const code = canonicalCode(String(msg.code ?? ""));
@@ -264,18 +372,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
         for (const p of products) {
           byCode.set(p.code, p);
         }
-        const groups = new Map<number, Map<number, string>>();
-        for (const r of plan) {
-          if (!byCode.has(r.code)) {
-            continue;
-          }
-          let slots = groups.get(r.group_no);
-          if (!slots) {
-            slots = new Map();
-            groups.set(r.group_no, slots);
-          }
-          slots.set(r.slot_no, r.code);
-        }
+        const groups = groupsFromPlan(plan, byCode);
         if (groups.size === 0) {
           log("❌先填至少一个排品格子再生成");
           gridStatus("error", { text: "没有可生成的格子" });
@@ -394,6 +491,111 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
         gridStatus("done", { count: files.length, dir: outDir });
         h.postLiveState();
         }).finally(() => {
+          gridJobActive = false;
+        }),
+      );
+    },
+
+    /**
+     * 直播排品「HTML 样品」（2026-10-14 新增）：同一份排品数据，另出一条**自包含**的 html
+     * （每格封面 base64 内嵌）—— 商家把它丢到别的平台转成网址给用户访问，所以要自包含。
+     *
+     * ⚠️ 九宫格 jpg 那条路**一个字不动**：这是并排的第二条支路，共用 groupsFromPlan / 输出目录 /
+     *    标注口径 / 同一份忙碌态（gridJobActive：一次只准一个重活儿在跑）。
+     * ⚠️ **纯读**：不落库、不写共享盘，只往本机 live_out_dir 写一个 html —— 所以它不在
+     *    WRITE_ACTIONS 里（跟 generateLiveGrid 一样，落库那一步由前端 scheduleLivePlanSave 负责）。
+     */
+    generateLiveHtml(msg) {
+      if (gridJobActive) {
+        log("⏭️已有一个生成任务在跑，这一次点击已忽略（等它出完再点）");
+        return;
+      }
+      gridJobActive = true;
+      return runLongTask(h, "生成HTML样品", () =>
+        (async () => {
+          try {
+            const { groupNos, payload } = livePayloadOf(msg);
+            if (groupNos.length === 0) {
+              log("❌先填至少一个排品格子再生成");
+              gridStatus("error", { text: "没有可生成的格子" });
+              return;
+            }
+            gridStatus("start");
+            const outDir = await readyOutDir();
+            if (!outDir) {
+              return;
+            }
+            gridStatus("running", { done: 0, total: groupNos.length });
+            const html = await renderLiveHtml(payload, {
+              labelMode: liveLabelModeOf(msg),
+              title: "直播排品",
+            });
+            const file = path.join(outDir, `直播排品样品_${localStamp()}.html`);
+            fs.writeFileSync(file, html, "utf-8");
+            try {
+              await ctx.revealInOS(outDir);
+            } catch {
+              /* 忽略打开失败 */
+            }
+            const count = payload.reduce((n, g) => n + g.cells.filter((c) => c.code).length, 0);
+            log(
+              `🌐已生成 HTML 样品：${path.basename(file)}（${groupNos.length} 组 / ${count} 款，自包含可上传）`,
+            );
+            post({ type: "liveHtmlDone", dir: outDir, file, count, groups: groupNos.length });
+            gridStatus("done", { count: groupNos.length, dir: outDir });
+          } catch (err: any) {
+            log(`❌生成 HTML 样品出错：${err?.message ?? err}`);
+            gridStatus("error", { text: "生成过程出错，已中止" });
+          }
+        })().finally(() => {
+          gridJobActive = false;
+        }),
+      );
+    },
+
+    /**
+     * 直播排品「长图」（2026-10-15 新增）：同一份排品，所有组竖着拼成**一张** jpg ——
+     * 跟 HTML 样品同一套排版（每组白卡 + 组号条 + 3×3 + 底部标注），但产物能直接发人。
+     * ⚠️ 与 generateLiveHtml 同为**纯读**：不落库、不写共享盘，只往本机 live_out_dir 写一个 jpg。
+     */
+    generateLiveLong(msg) {
+      if (gridJobActive) {
+        log("⏭️已有一个生成任务在跑，这一次点击已忽略（等它出完再点）");
+        return;
+      }
+      gridJobActive = true;
+      return runLongTask(h, "生成长图", () =>
+        (async () => {
+          try {
+            const { groupNos, payload } = livePayloadOf(msg);
+            if (groupNos.length === 0) {
+              log("❌先填至少一个排品格子再生成");
+              gridStatus("error", { text: "没有可生成的格子" });
+              return;
+            }
+            gridStatus("start");
+            const outDir = await readyOutDir();
+            if (!outDir) {
+              return;
+            }
+            gridStatus("running", { done: 0, total: groupNos.length });
+            const file = await renderLiveLongImage(payload, outDir, {
+              labelMode: liveLabelModeOf(msg),
+            });
+            try {
+              await ctx.revealInOS(outDir);
+            } catch {
+              /* 忽略打开失败 */
+            }
+            const count = payload.reduce((n, g) => n + g.cells.filter((c) => c.code).length, 0);
+            log(`🖼已生成长图：${path.basename(file)}（${groupNos.length} 组 / ${count} 款）`);
+            post({ type: "liveLongDone", dir: outDir, file, count, groups: groupNos.length });
+            gridStatus("done", { count: groupNos.length, dir: outDir });
+          } catch (err: any) {
+            log(`❌生成长图出错：${err?.message ?? err}`);
+            gridStatus("error", { text: "生成过程出错，已中止" });
+          }
+        })().finally(() => {
           gridJobActive = false;
         }),
       );

@@ -1,0 +1,16 @@
+{
+  "name": "商品店铺管理",
+  "short_name": "商品管理",
+  "description": "Cherysis 商品管理 · 手机版（连电脑上的 667 服务用）",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f6f7f9",
+  "theme_color": "#23a884",
+  "icons": [
+    { "src": "/icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

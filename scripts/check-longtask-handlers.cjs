@@ -143,6 +143,21 @@ async function main() {
   ok(terminalAfter >= 1, "2) 每一条退出路径都必须发终态（否则前端按钮永远卡在「生成中」）");
   ok(terminalAfter >= terminalBefore, "2) await 之后终态不该变少");
 
+  // ---- 3) 三条生成支路都必须是「返回 Promise + 每条退出路径发终态」
+  //   HTML 样品（2026-10-14）与长图（2026-10-15）跟九宫格共用一份忙碌闸 gridJobActive，
+  //   也都是 runLongTask 包的 —— 网页版靠这个"立刻返回"，VS Code 侧靠这个"await 能等到跑完"。
+  for (const name of ["generateLiveHtml", "generateLiveLong"]) {
+    const c = fakeCtx({ storageDir, defaultStorageDir, imageDir, outDir, products, plan: [] });
+    const r = liveHandlers(c.h)[name]({ plan: [] }, c.h);
+    ok(typeof r?.then === "function", `3) ${name} 必须返回 Promise`);
+    await r;
+    const term = c.posts.filter(
+      (m) => m && m.type === "liveGridStatus" && ["done", "error", "cancelled"].includes(m.phase),
+    ).length;
+    ok(term >= 1, `3) ${name} 的每条退出路径都要发终态（空排品这条走的也是 error）`);
+  }
+  console.log("3) generateLiveHtml / generateLiveLong：都返回 Promise，且各发了一条终态");
+
   fs.rmSync(work, { recursive: true, force: true });
 
   console.log("");

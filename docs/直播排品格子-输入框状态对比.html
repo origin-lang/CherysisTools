@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>直播排品格子 · 输入框状态呈现对比</title>
+<style>
+  :root{
+    --bg:#ffffff; --panel-border:#e5e5e5; --desc:#717171; --fg:#3b3b3b;
+    --line:#cecece; --field:#ffffff;
+    --green:#23a884; --orange:#e6a23c; --red:#e0404b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:24px 28px 60px;background:#f3f3f3;color:var(--fg);
+       font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+  h1{margin:0 0 4px;font-size:19px}
+  .lead{margin:0 0 22px;color:var(--desc);font-size:13px}
+  .lead b{color:var(--fg)}
+  .opt{background:var(--bg);border:1px solid var(--panel-border);border-radius:8px;padding:14px 16px 16px;margin-bottom:18px;max-width:640px}
+  .opt h2{margin:0 0 2px;font-size:15px}
+  .opt .cost{margin:0 0 12px;color:var(--desc);font-size:12.5px}
+  .opt .cost em{color:#b26a00;font-style:normal}
+  .pick{border-color:var(--green);box-shadow:0 0 0 1px var(--green) inset}
+  .tag{display:inline-block;margin-left:6px;padding:0 6px;border-radius:4px;background:var(--green);color:#fff;font-size:11px;font-weight:400;vertical-align:2px}
+
+  /* ==== 与面板里 .live-group / .live-grid / .live-cell 同比例：网格宽 540、3 列、gap 8 ==== */
+  .live-group{border:1px solid var(--panel-border);border-radius:6px;padding:10px 10px 12px;background:rgba(127,127,127,.06);width:562px}
+  .g-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--panel-border);font-size:12px;color:var(--desc)}
+  .g-head .g-gen{margin-left:auto;color:#fff;background:var(--green);border-radius:4px;padding:3px 8px;font-size:12px}
+  .live-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:540px}
+  .live-cell{position:relative;display:flex;flex-direction:column;gap:6px}
+  .live-cover{position:relative;aspect-ratio:1/1;width:100%;background:#ececec;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#b5b5b5;font-size:12px}
+  .cell-num{position:absolute;top:4px;left:4px;z-index:2;background:rgba(0,0,0,.6);color:#fff;border-radius:4px;padding:0 5px;font-size:11px}
+  .live-cell input{width:100%;text-align:center;padding:8px 4px;font-size:14px;font-weight:700;border-radius:2px;
+                   border:1px solid var(--line);background:var(--field);color:var(--fg);outline:none}
+  .live-meta{font-size:11px;line-height:15px;min-height:15px;text-align:center;color:var(--desc)}
+  .live-meta .price{color:var(--orange);font-weight:600}
+
+  /* —— 现状：1px 细色框 —— */
+  .s-now input.empty{color:var(--desc);font-weight:400}
+  .s-now input.ok{border-color:var(--green)}
+  .s-now input.dup{border-color:var(--orange);background:rgba(230,162,60,.1)}
+  .s-now input.err{border-color:var(--red);background:rgba(224,64,75,.08)}
+
+  /* —— A 档：2px 描边 + 底色加深 —— */
+  .s-a input.empty{color:var(--desc);font-weight:400}
+  .s-a input.ok{border:2px solid var(--green);background:rgba(35,168,132,.10)}
+  .s-a input.dup{border:2px solid var(--orange);background:rgba(230,162,60,.20)}
+  .s-a input.err{border:2px solid var(--red);background:rgba(224,64,75,.16)}
+
+  /* —— B 档：满色底 + 白字 —— */
+  .s-b input.empty{color:var(--desc);font-weight:400}
+  .s-b input.ok{border:1px solid var(--green);background:var(--green);color:#fff}
+  .s-b input.dup{border:1px solid var(--orange);background:var(--orange);color:#fff}
+  .s-b input.err{border:1px solid var(--red);background:var(--red);color:#fff}
+
+  /* —— C 档：左侧色条 + 浅底（推荐）—— */
+  .s-c input.empty{color:var(--desc);font-weight:400}
+  .s-c input.ok{border:1px solid var(--line);border-left:5px solid var(--green);background:rgba(35,168,132,.07)}
+  .s-c input.dup{border:1px solid var(--line);border-left:5px solid var(--orange);background:rgba(230,162,60,.13)}
+  .s-c input.err{border:1px solid var(--line);border-left:5px solid var(--red);background:rgba(224,64,75,.11)}
+
+  /* —— D 档：只标异常（正常不加色）—— */
+  .s-d input.empty{color:var(--desc);font-weight:400}
+  .s-d input.ok{border:1px solid var(--line)}
+  .s-d input.dup{border:2px solid var(--orange);background:rgba(230,162,60,.18)}
+  .s-d input.err{border:2px solid var(--red);background:rgba(224,64,75,.16)}
+  .s-d .live-cell.bad::after{content:"⚠";position:absolute;top:6px;right:6px;z-index:3;
+      background:var(--orange);color:#fff;border-radius:9px;width:18px;height:18px;line-height:18px;
+      text-align:center;font-size:11px}
+  .s-d .live-cell.bad.err::after{background:var(--red)}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin:0 0 20px;font-size:12.5px;color:var(--desc)}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+</style>
+</head>
+<body>
+<h1>直播排品 · 格子里输入框的"状态"怎么呈现</h1>
+<p class="lead">
+  四种状态都在同一屏里摆出来了（按面板里的真实比例：网格 540px、3 列、每格约 174px 宽）：
+  <b>空</b> / <b>填对了</b>(绿) / <b>编号重复</b>(橙) / <b>编号无效</b>(红)。
+  每组 9 格里我故意混着放，你可以直接看"9 格一起排"时的效果 —— 密排时显不显著，单看一格是看不出来的。
+</p>
+<p class="legend">
+  <span><i style="background:#fff;border:1px solid var(--line)"></i>空</span>
+  <span><i style="background:var(--green)"></i>填对</span>
+  <span><i style="background:var(--orange)"></i>重复</span>
+  <span><i style="background:var(--red)"></i>无效</span>
+</p>
+
+<!-- 现状 -->
+<div class="opt s-now">
+  <h2>现状：1px 细色框<span style="color:var(--desc);font-weight:400;font-size:12.5px">（你说"太细了"的就是这个）</span></h2>
+  <p class="cost">只有一圈 1px 描边；重复/无效再加一点点底色。<em>代价：坐在正常距离看，9 格里哪格有问题要靠"找"。</em></p>
+  <div class="live-group">
+    <div class="g-head"><span>第 1 组</span><span>· 9 格</span><span class="g-gen">🖼 生成这组</span></div>
+    <div class="live-grid">
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">1号</span><input class="ok" value="A001"><div class="live-meta"><span class="price">¥129</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">2号</span><input class="dup" value="A001"><div class="live-meta"><span class="price">¥129</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">3号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">4号</span><input class="err" value="A9X"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">5号</span><input class="ok" value="A007"><div class="live-meta"><span class="price">¥89</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">6号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">7号</span><input class="ok" value="A012"><div class="live-meta"><span class="price">¥45</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">8号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">9号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- A -->
+<div class="opt s-a">
+  <h2>A：描边加粗到 2px + 底色加深</h2>
+  <p class="cost">最小改动（3 行 CSS）。<em>代价：比 VS Code 原生控件粗一倍；9 格里 4~5 圈彩色粗框并排时会显得"吵"，格子本来就小。</em></p>
+  <div class="live-group">
+    <div class="g-head"><span>第 1 组</span><span>· 9 格</span><span class="g-gen">🖼 生成这组</span></div>
+    <div class="live-grid">
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">1号</span><input class="ok" value="A001"><div class="live-meta"><span class="price">¥129</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">2号</span><input class="dup" value="A001"><div class="live-meta"><span class="price">¥129</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">3号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">4号</span><input class="err" value="A9X"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">5号</span><input class="ok" value="A007"><div class="live-meta"><span class="price">¥89</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">6号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">7号</span><input class="ok" value="A012"><div class="live-meta"><span class="price">¥45</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">8号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">9号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- B -->
+<div class="opt s-b">
+  <h2>B：整格上色 + 白字（最醒目）</h2>
+  <p class="cost">一眼就能扫出状态。<em>代价：9 格全变彩色块像"涂色板"；橙底白字对比度只有 2.2:1，小字反白后编号反而更难认（编号是这格的主要信息）。</em></p>
+  <div class="live-group">
+    <div class="g-head"><span>第 1 组</span><span>· 9 格</span><span class="g-gen">🖼 生成这组</span></div>
+    <div class="live-grid">
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">1号</span><input class="ok" value="A001"><div class="live-meta"><span class="price">¥129</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">2号</span><input class="dup" value="A001"><div class="live-meta"><span class="price">¥129</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">3号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">4号</span><input class="err" value="A9X"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">5号</span><input class="ok" value="A007"><div class="live-meta"><span class="price">¥89</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">6号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">7号</span><input class="ok" value="A012"><div class="live-meta"><span class="price">¥45</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">8号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">9号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- C -->
+<div class="opt s-c pick">
+  <h2>C：左侧粗色条 + 浅底<span class="tag">我倾向这档</span></h2>
+  <p class="cost">左边一条 5px 状态色（绿/橙/红），其余三边保持原样 1px + 很浅的底。
+    <em>代价：比整圈描边弱一点，扫视时靠"左侧那一列色条"辨认；色条占 5px 宽，格子里的数字会略微右移。</em>
+    好处：9 格密排时不吵，但"哪几格有问题"一眼成列；编号仍是黑字，最好认。</p>
+  <div class="live-group">
+    <div class="g-head"><span>第 1 组</span><span>· 9 格</span><span class="g-gen">🖼 生成这组</span></div>
+    <div class="live-grid">
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">1号</span><input class="ok" value="A001"><div class="live-meta"><span class="price">¥129</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">2号</span><input class="dup" value="A001"><div class="live-meta"><span class="price">¥129</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">3号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">4号</span><input class="err" value="A9X"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">5号</span><input class="ok" value="A007"><div class="live-meta"><span class="price">¥89</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">6号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">7号</span><input class="ok" value="A012"><div class="live-meta"><span class="price">¥45</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">8号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">9号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- D -->
+<div class="opt s-d">
+  <h2>D：只标异常（填对不加色）</h2>
+  <p class="cost">正常/空都是中性灰框，<b>重复和无效</b>才 2px 加粗 + 底色 + 图片右上角一个 ⚠。
+    <em>代价：丢掉"这格填好了"的绿色确认感（你可能会想要这个确认）；好处：9 格里只要有颜色就一定是有问题，最省眼睛。</em></p>
+  <div class="live-group">
+    <div class="g-head"><span>第 1 组</span><span>· 9 格</span><span class="g-gen">🖼 生成这组</span></div>
+    <div class="live-grid">
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">1号</span><input class="ok" value="A001"><div class="live-meta"><span class="price">¥129</span></div></div>
+      <div class="live-cell bad dup"><div class="live-cover">封面</div><span class="cell-num">2号</span><input class="dup" value="A001"><div class="live-meta"><span class="price">¥129</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">3号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell bad err"><div class="live-cover">封面</div><span class="cell-num">4号</span><input class="err" value="A9X"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">5号</span><input class="ok" value="A007"><div class="live-meta"><span class="price">¥89</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">6号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">7号</span><input class="ok" value="A012"><div class="live-meta"><span class="price">¥45</span></div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">8号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+      <div class="live-cell"><div class="live-cover">封面</div><span class="cell-num">9号</span><input class="empty" value="" placeholder="编号"><div class="live-meta">&nbsp;</div></div>
+    </div>
+  </div>
+</div>
+
+<p class="lead" style="margin-top:6px">
+  补充：也可以混着来（比如 <b>C + D</b>：左侧色条走 C，另外给异常格加 ⚠ 角标）。你说一个字母，我就按那档改
+  <code>fragment.html</code> 里的 <code>.live-cell input.*</code> 四条颜色规则 —— 只动 CSS，不动任何逻辑。
+</p>
+</body>
+</html>

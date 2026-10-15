@@ -5,6 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>🏪 商品店铺管理（手机版）</title>
     <link rel="stylesheet" href="/style.css" />
+    <!-- ===== 加到主屏幕（PWA-lite）=====
+         手机浏览器「添加到主屏幕」后变成全屏图标，没有地址栏。只有 manifest + 这几个 meta，
+         **没有 service worker**（667 是局域网纯 HTTP，浏览器不给注册 SW；也正因如此，
+         图标指向的地址在「添加那一刻」固定 —— 建议用主机名 http://YFF:667 访问后再加，
+         电脑名不改图标就永远有效；用 IP 加的，IP 一变图标就废，得重新添加）。
+         iOS：apple-* 那几个 meta 管事（HTTP 也能加，standalone 全屏）。
+         Android Chrome：HTTP 下没有完整 PWA 安装（无 SW），菜单里「添加到主屏幕」
+         得到的是快捷方式，能用但可能带浏览器界面 —— 属于白捡，不专门伺候。 -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="商品管理" />
+    <link rel="apple-touch-icon" href="/icon-180.png" />
+    <meta name="theme-color" content="#23a884" />
   </head>
   <body>
     <!-- ① 商品列表 / 画册 -->

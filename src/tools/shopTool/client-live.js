@@ -5,10 +5,26 @@
       return v === "code" || v === "both" || v === "none" ? v : "num";
     }
 
+    // 下拉框显示必须跟 liveLabelMode() 的取值一致 —— 生成时用的是 state.settings 里那份，
+    // 不是下拉本身。设置是异步到的（init 里 bindEvents 早于 loadAll），只在绑定那一刻刷一次的话，
+    // 下拉会一直停在初始的「序号」，而后端用的是存下来的值（他的存的是「序号+编号」）——
+    // 表现就是"底部明明写着序号，生成出来却是序号+编号"。所以设置每次到达都要再刷一次。
+    function syncLiveLabelUI() {
+      const sel = $("liveGridLabel");
+      if (sel) {
+        sel.value = liveLabelMode();
+      }
+    }
+
     // ===== 九宫格生成的加载态 =====
     // 存在 state 里而不是只改 DOM：renderLiveGrid 会整块重建分组区的 innerHTML，
     // 只改按钮的话，用户中途改一格编号，忙碌提示就被冲掉了。
     // 一次只允许一个生成任务在跑（所有生成按钮共用这一份忙碌态）。
+
+    // 「生成 ▾」按钮的文案唯一出处：fragment.html 里静态写的也是这一串。
+    // 生成完要把按钮文字还原，两处对不上就会出现"生成完按钮自己改名了"这种毛病。
+    const LIVE_GEN_LABEL = "生成 ▾";
+
     function liveGridBusyText(busy) {
       if (busy.phase === "dialog") {
         return busy.text ? `生成中…（${busy.text}）` : "生成中…（选目录中）";
@@ -29,10 +45,11 @@
     function applyLiveGridBusy() {
       const busy = state.liveGridBusy;
       const text = busy ? liveGridBusyText(busy) : "";
-      const gen = $("liveGenerateBtn");
+      // 九宫格 / HTML 样品两个出口合用一个「生成 ▾」按钮，忙碌态也就只有这一处
+      const gen = $("liveGenMenuBtn");
       if (gen) {
         gen.disabled = !!busy;
-        gen.textContent = busy ? "⏳ 生成中…" : "生成全部九宫格";
+        gen.textContent = busy ? "⏳ 生成中…" : LIVE_GEN_LABEL;
       }
       const bar = $("liveGenStatus");
       if (bar) {
@@ -689,6 +706,43 @@
       });
     }
 
+    // 「生成 ▾」下拉：三个出口合到一个按钮上（全部九宫格图 / HTML 样品 / 一张长图），
+    // 不再并排占三格。复用通用菜单组件（client-core.js 的 showImageCtxMenu），
+    // 自带点外面关 / Esc / 贴右缘夹住。
+    function showLiveGenMenu(btn) {
+      const rect = btn.getBoundingClientRect();
+      showImageCtxMenu(rect.left, rect.bottom, [
+        { label: "生成全部九宫格", run: () => runLiveGenerate("grid") },
+        { label: "生成HTML样品", run: () => runLiveGenerate("html") },
+        { label: "生成一张长图", run: () => runLiveGenerate("long") },
+      ]);
+    }
+
+    // 三个出口的前置校验 / 忙碌态 / 发消息完全同构，只差消息名，收成一个函数：
+    // 免得以后改一处忘一处（校验漏了一个、或忙碌态只挂了一个按钮，都很难发现）。
+    // 消息名单独列一张表：加第四个产物时只动这里 + 上面菜单那一行。
+    const LIVE_GEN_MSG = {
+      grid: "generateLiveGrid",
+      html: "generateLiveHtml",
+      long: "generateLiveLong",
+    };
+
+    function runLiveGenerate(kind) {
+      const groupNos = liveGeneratableGroups();
+      if (groupNos.length === 0) {
+        toast("先往格子里填至少一个有效编号");
+        return;
+      }
+      // 三种产物都读库里那份 plan，所以都先把排品落库（不落库时服务端拿到的是旧一份）
+      scheduleLivePlanSave();
+      setLiveGridBusy({ phase: "start", groups: groupNos, done: 0, total: groupNos.length });
+      post({
+        type: LIVE_GEN_MSG[kind] || LIVE_GEN_MSG.grid,
+        plan: state.livePlan.map((r) => ({ ...r })),
+        labelMode: liveLabelMode(),
+      });
+    }
+
     function bindLiveEvents() {
       const add = $("liveAddGroupBtn");
       if (add) {
@@ -717,29 +771,15 @@
       }
       const labelSel = $("liveGridLabel");
       if (labelSel) {
-        const saved = String(state.settings.live_grid_label || "num");
-        labelSel.value = saved === "code" || saved === "both" || saved === "none" ? saved : "num";
+        syncLiveLabelUI();
         labelSel.onchange = () => {
           state.settings.live_grid_label = labelSel.value;
           post({ type: "saveSettings", key: "live_grid_label", value: labelSel.value });
         };
       }
-      const gen = $("liveGenerateBtn");
-      if (gen) {
-        gen.onclick = () => {
-          const groupNos = liveGeneratableGroups();
-          if (groupNos.length === 0) {
-            toast("先往格子里填至少一个有效编号");
-            return;
-          }
-          scheduleLivePlanSave();
-          setLiveGridBusy({ phase: "start", groups: groupNos, done: 0, total: groupNos.length });
-          post({
-            type: "generateLiveGrid",
-            plan: state.livePlan.map((r) => ({ ...r })),
-            labelMode: liveLabelMode(),
-          });
-        };
+      const genBtn = $("liveGenMenuBtn");
+      if (genBtn) {
+        genBtn.onclick = (e) => showLiveGenMenu(e.currentTarget);
       }
       const cpy = $("liveCopyListBtn");
       if (cpy) {

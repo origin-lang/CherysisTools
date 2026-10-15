@@ -146,6 +146,14 @@ class ToolRegistry {
     const clientUris = clientRels
       .map((rel) => this.resolveSrc(rel))
       .filter((u): u is vscode.Uri => !!u);
+    // ⚠️ 每个脚本 URI 后面必须挂一个**每次都变**的查询串（缓存击穿）。
+    // 为什么：fragment 是**消息推过去**的（每次切工具都读一遍源码，永远新鲜），
+    // 而 client-*.js 是 webview 按 URI 去加载的 —— 那条链路会缓存，
+    // 于是"只改前端 + 切工具"会出现**界面已经是新的、脚本还是旧副本**：
+    // 旧脚本按老 id 找元素（如合并前的 liveGenerateBtn），找不到就静默跳过，
+    // 表现就是「按钮合并了、点了没有任何反应」，而且一 reload 窗口就好 —— 极难排查。
+    // 加个 query 不影响 webview 读取文件，只让缓存键跟着变。
+    const cacheKey = Date.now().toString(36);
     panel.webview.postMessage({
       type: "switchFragment",
       html: fragHtml,
@@ -153,7 +161,10 @@ class ToolRegistry {
       clientScript: clientUris.length
         ? {
             // 转成 webview 可加载的 URI，按序加载
-            uris: clientUris.map((u) => panel.webview.asWebviewUri(u).toString()),
+            uris: clientUris.map((u) => {
+              const s = panel.webview.asWebviewUri(u).toString();
+              return s + (s.includes("?") ? "&" : "?") + "v=" + cacheKey;
+            }),
             toolName: meta.toolName,
           }
         : undefined,

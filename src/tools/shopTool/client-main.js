@@ -1009,6 +1009,10 @@ function onMessage(msg) {
       applyGallerySize(state.settings.gallery_size);
       syncGallerySizeUI(state.settings.gallery_size);
       syncGallerySizeVisibility();
+      // 直播「底部标注」下拉同理：设置在 init 之后才到，不补刷一次就会一直显示初始的「序号」
+      if (typeof syncLiveLabelUI === "function") {
+        syncLiveLabelUI();
+      }
       if (typeof updateSalesDeductTip === "function") {
         updateSalesDeductTip();
       }
@@ -1191,6 +1195,14 @@ function onMessage(msg) {
     }
     case "liveGenerated": {
       toast(`已生成 ${msg.count || 0} 张九宫格 → ${msg.dir || ""}`);
+      break;
+    }
+    case "liveHtmlDone": {
+      toast(`已生成 HTML 样品（${msg.groups || 0} 组 / ${msg.count || 0} 款）→ ${msg.dir || ""}`);
+      break;
+    }
+    case "liveLongDone": {
+      toast(`已生成长图（${msg.groups || 0} 组 / ${msg.count || 0} 款）→ ${msg.dir || ""}`);
       break;
     }
     case "liveGridStatus": {

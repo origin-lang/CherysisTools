@@ -370,6 +370,14 @@
           script.src = uris[i];
           script.onload = () => loadOne(i + 1);
           script.onerror = () => {
+            // 宿主给脚本地址挂了个 ?v=… 做缓存击穿（否则改完前端"界面是新的、脚本还是旧的"，
+            // 表现成按钮点了没反应）。万一某个 webview 不吃带查询串的地址，退回原地址再试一次，
+            // 免得整个工具变成白板；只有两次都失败才报错。
+            if (script.src.indexOf("?") >= 0 && !script.dataset.retry) {
+              script.dataset.retry = "1";
+              script.src = script.src.replace(/[?&]v=[^&]*/, "");
+              return;
+            }
             vscode.postMessage({
               type: "log",
               text: "❌工具客户端脚本加载失败：" + toolName,
