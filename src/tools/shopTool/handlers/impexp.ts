@@ -11,6 +11,10 @@ import { PRODUCT_FIELD_ORDER } from "../productFields.js";
 import { firstImageFile } from "../images.js";
 
 // 读取原图嵌入 Excel：jpg/jpeg/png/gif 直接用原文件（不缩小），其它格式转 png 兜底
+//
+// ⚠️ 这是**商品清单导出**那条路的口径（原图直嵌）。进货单「导出 Excel」**故意不用它**：
+//    老板的货是手机拍的（原图 1~3MB/张），原图直嵌 5 款就 7MB、40 款 50MB+，微信发不出去 ——
+//    那边自己缩到 320px/jpeg（见 handlers/purchase.ts 里那段注释）。两条路的体积差别是有意的。
 async function readImageForExcel(
   fp: string,
 ): Promise<{ buffer: Buffer; extension: "jpeg" | "png" | "gif" }> {

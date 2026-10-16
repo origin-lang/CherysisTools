@@ -16,6 +16,16 @@ const serverDir = path.join(root, "src", "server");
 const jsFile = path.join(mobileDir, "app.js");
 const htmlFile = path.join(mobileDir, "index.html");
 
+/**
+ * 手机版的**全部**前端脚本。app.js 是主页面；其余是**独立功能文件**（目前只有 purchase.js = 进货单）
+ * —— 各自一块功能，靠 app.js 结尾那个 `window.Cherysis` 接缝通话。
+ * ⚠️ 下面几处 `const js = ` 专门只读 app.js（都是主链/外壳的断言），别拿它当"全部脚本"用。
+ */
+const jsFiles = fs
+  .readdirSync(mobileDir)
+  .filter((f) => f.endsWith(".js"))
+  .sort();
+
 /** JS 动态创建、HTML 里本来就没有的 id */
 // 注：套装那块（#dSetSum / #dSetListCard / dSetCount / dSetList / setAddToggle / setAddBtn / setAddCode）
 // 现在**骨架全在 index.html 里**，不再由 renderSetList 拼 —— 所以不在豁免名单里，会被正常核对。
@@ -43,9 +53,14 @@ const serverSrc = fs
   .join("\n");
 
 // ---------- ① DOM id ----------
+// 主页面 + 每个独立功能文件都用同一套 `$("id")` 取元素，所以**全都得核**：
+// 功能文件里写错一个字母，一样是"那块点了没反应、控制台一声不响"。
 const used = new Set();
-for (const m of js.matchAll(/\$\("([A-Za-z0-9_-]+)"\)/g)) {
-  used.add(m[1]);
+for (const f of jsFiles) {
+  const src = fs.readFileSync(path.join(mobileDir, f), "utf8");
+  for (const m of src.matchAll(/\$\("([A-Za-z0-9_-]+)"\)/g)) {
+    used.add(m[1]);
+  }
 }
 const have = new Set();
 const idCount = {};
@@ -65,10 +80,10 @@ for (const id of Object.keys(idCount).sort()) {
   }
 }
 if (used.size < 20) {
-  fails.push(`app.js 里只认出 ${used.size} 个 $("...")（正常应有 80 多个）：写法变了？这条闸门就失效了`);
+  fails.push(`前端脚本里只认出 ${used.size} 个 $("...")（正常应有 80 多个）：写法变了？这条闸门就失效了`);
 }
 for (const id of [...used].filter((i) => !have.has(i) && !DYNAMIC_IDS.has(i)).sort()) {
-  fails.push(`app.js 用了 $("#${id}")，但 index.html 里没有 id="${id}" —— 点了没反应就是这么来的`);
+  fails.push(`有前端脚本用了 $("#${id}")，但 index.html 里没有 id="${id}" —— 点了没反应就是这么来的`);
 }
 
 // ---------- ② SSE 事件名 ----------
@@ -817,6 +832,78 @@ if (!renderFilterFn || !refreshGroupsFn) {
   }
 }
 
+// ---------- ⑪ 进货单：手机版第一个「独立功能文件」（2026-10-15） ----------
+// 这块功能**刻意不写进 app.js**：骨架在 index.html 里那两屏、逻辑在 purchase.js、样式在
+// purchase.css，两边靠 app.js 结尾那个 `window.Cherysis` 接缝通话（取元素/发消息/切屏/收消息）。
+// 目的很实在：以后想整体摘掉它，删这三个文件里的几处就够，不用去 app.js 里翻。
+// 这里钉住四类"页面看着完全正常、功能其实没接上"的事：
+//   ① 底部那一格与两屏的骨架必须都在（少了 = 点了没反应 / 切过去一片空白）；
+//   ② index.html 必须真的把 purchase.js / purchase.css 引进来（引不进 = 整个功能不存在）；
+//   ③ #tabPurchase 得有人在 purchase.js 里接 onclick（HTML 挂了按钮没人接 = 死按钮）；
+//   ④ 那两屏要 registerScreen 登记进 app.js 的屏幕表（不登记 → 切过去高亮还留在「商品」格，
+//      看着像没切成功）；反过来，**app.js 里不许出现进货单的 id** —— 出现了就说明又堆回去了。
+const pjsPath = path.join(mobileDir, "purchase.js");
+const pjs = fs.existsSync(pjsPath) ? fs.readFileSync(pjsPath, "utf8") : "";
+{
+  if (!/window\.Cherysis\s*=/.test(js)) {
+    fails.push(
+      "app.js 里找不到 window.Cherysis 接入缝：独立功能文件（进货单等）拿不到它，会**静默**不跑",
+    );
+  }
+  if (!html.includes('id="tabPurchase"')) {
+    fails.push('index.html 里没有 id="tabPurchase"：底部「进货」那一格不在');
+  }
+  for (const id of ["screen-purchase", "screen-purchase-detail"]) {
+    if (!html.includes(`id="${id}"`)) {
+      fails.push(`index.html 里没有 id="${id}"：进货单那一屏的骨架不在（切过去会是空白）`);
+    }
+  }
+  if (!html.includes('href="/purchase.css"')) {
+    fails.push("index.html 没引入 purchase.css：进货单的样式不会生效（骨架会以无样式铺开）");
+  }
+  if (!html.includes('src="/purchase.js"')) {
+    fails.push("index.html 没引入 purchase.js：进货单**整个不会跑**，而页面看上去完全正常");
+  }
+  if (!pjs) {
+    fails.push(
+      "找不到 purchase.js：进货单的逻辑文件不在（改名/挪走了？这条闸门就失效了，请同步更新本脚本）",
+    );
+  } else {
+    if (!/\$\("tabPurchase"\)\s*\.\s*onclick/.test(pjs)) {
+      fails.push("purchase.js 里没给 #tabPurchase 接 onclick：底部「进货」那一格点了没反应");
+    }
+    // 行内编辑走**整块委托**（行是重画的，逐行挂监听会被冲掉）。
+    // 两条都要：input 管数量/备注，change 管编号归一与已办勾 —— 少一条那类改动就进不了草稿。
+    for (const evt of ["input", "change"]) {
+      if (!new RegExp(`addEventListener\\("${evt}"`).test(pjs)) {
+        fails.push(
+          `purchase.js 里没有 "${evt}" 委托：行里那一类改动不会进本地草稿（存下去还是旧的）`,
+        );
+      }
+    }
+    for (const id of ["screen-purchase", "screen-purchase-detail"]) {
+      if (!new RegExp(`registerScreen\\("${id}"`).test(pjs)) {
+        fails.push(
+          `${id} 没在 purchase.js 里 registerScreen：切到它时底部 tab 的高亮会落在错误的格子上`,
+        );
+      }
+    }
+    for (const need of ["purchaseState", "purchaseSaved"]) {
+      if (!new RegExp(`API\\.on\\("${need}"`).test(pjs)) {
+        fails.push(`purchase.js 没订阅 "${need}" 回包：后端发了没人接，那一块永远不更新`);
+      }
+    }
+  }
+  // 反向：**app.js 里不许**出现进货单的 id（这个功能是独立文件，堆回主文件就白分了）
+  const leaked = [...new Set([...js.matchAll(/\$\("(purchase[A-Za-z0-9_-]*|tabPurchase)"\)/g)].map((m) => m[1]))];
+  if (leaked.length) {
+    fails.push(
+      `app.js 里出现了进货单的 id（${leaked.join(" / ")}）：它是**独立功能文件**，`
+        + "逻辑该待在 purchase.js 里（见那边的文件头注释）",
+    );
+  }
+}
+
 if (fails.length > 0) {
   console.error(`❌ check-mobile-wiring：${fails.length} 项不通过`);
   for (const f of fails) {
@@ -825,7 +912,8 @@ if (fails.length > 0) {
   process.exit(1);
 }
 console.log(
-  `✅ check-mobile-wiring：app.js 引用的 ${used.size} 个 id 在 index.html 里全部存在、且 ${Object.keys(idCount).length} 个 id 无重复` +
+  `✅ check-mobile-wiring：前端脚本（${jsFiles.join(" / ")}）引用的 ${used.size} 个 id 在 index.html 里全部存在、` +
+    `且 ${Object.keys(idCount).length} 个 id 无重复` +
     `（豁免 ${DYNAMIC_IDS.size} 个 JS 动态生成的：${[...DYNAMIC_IDS].join(" / ")}）；` +
     `SSE 事件名 ${SERVER_EVENTS.length} 个（${SERVER_EVENTS.join(" / ")}）与服务端一致；` +
     `宽屏抽屉断点前后端一致（${cssBreak ? cssBreak[1] : "?"}px）；` +

@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>🏪 商品店铺管理（手机版）</title>
     <link rel="stylesheet" href="/style.css" />
+    <!-- 进货单的样式单独一份（见最下面 purchase.js 那段说明）：这个功能是独立文件，
+         要整体摘掉时连同它的 js/css 一起删，别往 style.css 里塞 -->
+    <link rel="stylesheet" href="/purchase.css" />
     <!-- ===== 加到主屏幕（PWA-lite）=====
          手机浏览器「添加到主屏幕」后变成全屏图标，没有地址栏。只有 manifest + 这几个 meta，
          **没有 service worker**（667 是局域网纯 HTTP，浏览器不给注册 SW；也正因如此，
@@ -413,6 +416,155 @@
       </main>
     </section>
 
+    <!-- ⑤ 进货单 / 补货单（2026-10-15）=========================================
+         要解决的事：早上去给别人发货时发现缺货，得让去档口拿货的人知道"哪个编号、补多少"。
+         以前靠截图 + 一个个说数量，现在攒成一张单、点「复制清单」粘进微信发出去。
+         口径（详见 docs/进货单-设计方案.md）：
+           · 整单一个带年份的日期 + 一个整单备注；**不碰库存**（老板说库存统计现在不准）
+           · 每行：编号 / 需求数（要补多少，不是"补到多少"）/ 实拿数 / 已办勾 / 备注
+           · 整单状态由行**自动汇总**，不让人手填（手填一定跟数量打架、界面就在说谎）
+         这个功能是**独立的一份**：骨架在这儿、逻辑全在 purchase.js、样式全在 purchase.css。
+         想整体摘掉：删这两屏 + 底部 #tabPurchase 那一格 + head 里 purchase.css 与本文件末尾
+         purchase.js 两行；app.js 不用动（它只认自己那几屏，不认这里的任何 id）。 -->
+    <section id="screen-purchase" class="screen">
+      <header class="bar">
+        <span class="title">🧾 进货单</span>
+        <!-- 新建一张单：默认就是今天，进去先给一行空的，省得还要点一次「＋ 加一行」 -->
+        <button id="purchaseNewBtn" class="primary" type="button">＋ 新建</button>
+      </header>
+      <main class="content">
+        <!-- 单子列表：每张一行（日期 + 状态 + 款数/需求/实拿），点开进详情、点「删除」删整张。
+             空态由 purchase.js 写一行灰字（不留一片白 —— 一片白看着像页面坏了）。 -->
+        <div id="purchaseList"></div>
+      </main>
+    </section>
+
+    <!-- 进货单详情（一张单）：整单日期 + 备注、汇总、行清单 -->
+    <section id="screen-purchase-detail" class="screen">
+      <header class="bar">
+        <!-- 返回：**无框 + 品牌绿 + 只有一个箭头**（2026-10-16 改）。
+             原来写「‹ 返回」两个字，成了这一行里唯一一颗带字的宽按钮，跟右边那颗正方形图标按钮
+             一横一竖、不统一；现在两颗都是 44×44 图标按钮（左无框、右带框），跟**商品详情页顶栏**同一套
+             （那边是 `.bar button.back`：无框幽灵按钮 + 箭头）。
+             ⚠️ 只写箭头、不写文字 —— 老板明确说"不用返回两个字"；回哪儿由左边位置本身说明。
+             ⚠️ stroke-width 1.65 是配 `viewBox="7.5 4.5 9 15"` + CSS 里 20px 算的（画出来 ≈2.2px 粗、16px 高）：
+                这个 viewBox 把图形裁到边上，**stroke 会被一起放大**，所以数值看着小、其实是刻意的。
+                改 svg 尺寸时必须同步改它，否则箭头会突然变粗或变细（第一版就是这么变成"太粗太大"的）。 -->
+        <button id="purchaseBack" class="p-back" type="button" aria-label="返回进货单列表">
+          <svg viewBox="7.5 4.5 9 15" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+        </button>
+        <span id="purchaseTitle" class="title">进货单</span>
+        <!-- 单内搜索入口（2026-10-16 晚，老板挑的**甲档**）：顶栏加一颗放大镜，
+             点开才在列表上方滑出一行搜索框 —— **默认收起**，内容区一点不多占（还是 11 款一屏），
+             而入口在顶栏（滚动区之外），单子再长也不用翻回去找。
+             图形口径跟右边那颗 ⋯ 同一款：44×44、浅灰边、只有一根线的图形（别染品牌绿 —— 那样比左边返回重）。 -->
+        <button id="purchaseSearchBtn" class="p-icon" type="button" title="在这张单里搜编号或名称" aria-label="在这张单里搜编号或名称">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true">
+            <circle cx="10.5" cy="10.5" r="6.5" />
+            <path d="M15.6 15.6 21 21" />
+          </svg>
+        </button>
+        <!-- 右上角那颗图标 = 两个出口（复制清单 / 导出 Excel）的总入口。
+             图形口径 2026-10-16 晚换成 **三个点（⋯ 更多）**，原来的"文件 + 向下箭头"撤了。为什么：
+               ① 那颗图形有轮廓 + 折角 + 箭头三条线，比左边返回的一根线重得多，一左一右不称；
+               ② 它画着"下载"，点开却是"复制清单 / 导出 Excel"两件事 —— 图形承诺了它做不到的事，
+                  所以怎么调都觉得突兀（老板原话："感觉那个图标选的不是很好，你觉得突兀吗"）。
+               三个点不承诺任何具体动作，里面确实是两项，最诚实也最轻；点了弹层里每项都有汉字说明，
+               不用猜图标什么意思（见下面 #purchaseSheet）。 -->
+        <button id="purchaseMoreBtn" class="p-icon" type="button" title="复制清单 / 导出 Excel" aria-label="复制清单或导出 Excel">
+          <svg viewBox="0 6 24 12" fill="none" aria-hidden="true">
+            <circle cx="5.5" cy="12" r="1.7" fill="currentColor" />
+            <circle cx="12" cy="12" r="1.7" fill="currentColor" />
+            <circle cx="18.5" cy="12" r="1.7" fill="currentColor" />
+          </svg>
+        </button>
+      </header>
+      <main class="content">
+        <div class="card">
+          <!-- ⬇️ 2026-10-16 又收过一轮：**顶上那行"日期 + 保存提示"整行删掉**（老板：上面的进货单
+               标题里已经有日期了，再占一行没必要），进来第一眼就是「要补的商品」。
+               整单日期现在只由"从哪天开的单"决定（月历上点哪天就是哪天），不再手改；
+               保存提示也撤了 —— 只有**存失败**才弹一句 toast（改动边改边存，成功不打扰）。
+               汇总压成一行、整单备注在列表底下（它跟着「复制清单」一起发出去）。 -->
+          <div class="p-head">
+            <span class="p-headk">要补的商品</span>
+            <!-- 那颗「＋ 加一行」2026-10-16 晚**挪到屏幕底部的浮动条**去了（见 </main> 后面 .p-addbar）。
+                 原因：挂在这一行里，列表一长它就被滚出屏幕，每次加货都得先滚回顶上。 -->
+          </div>
+          <!-- 单内搜索行（2026-10-16 晚）：**默认收起**（`hidden`），顶栏那颗放大镜点开才露。
+               单子长的时候用来"这个编号到底有没有 / 出现在哪几行"—— 搜出来的行照样能改数量。
+               ⚠️ CSS 里必须写 `.p-search[hidden]{display:none}`：它自己是 display:flex，
+                  浏览器给 [hidden] 的那条盖不住它（分页条当年就栽在这）。 -->
+          <div id="purchaseSearchRow" class="p-search" hidden>
+            <svg class="s-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true">
+              <circle cx="10.5" cy="10.5" r="6.5" />
+              <path d="M15.6 15.6 21 21" />
+            </svg>
+            <input id="purchaseSearch" type="text" placeholder="搜编号或名称（如 A006）" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+            <button id="purchaseSearchClear" class="s-clear" type="button" aria-label="清掉搜索">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+          </div>
+          <!-- 行清单由 purchase.js 画：每行 小图+编号+名称(含差额小字)+需+拿（点行展开全名/备注/删行） -->
+          <div id="purchaseItems"></div>
+          <div id="purchaseSummary" class="p-sumline muted small"></div>
+          <input id="purchaseNote" type="text" placeholder="整单备注（可空，会跟着复制清单发出去）" />
+        </div>
+      </main>
+      <!-- 底部浮动「＋ 加一行」（2026-10-16 晚，老板挑的 A 档「脚悬浮」）：
+           原来挂在上面的 .p-head 里，列表一长就被滚出屏幕 → 每次加货都得先滚回顶上找它。
+           ⚠️ 做法是**当 .screen 里最后一个 flex 孩子（占位）**，不是 absolute 盖上去：
+             ① 永远在拇指位、一次不用滚；② 不盖住列表最后一行 / 汇总行 / 整单备注；
+             ③ 因此**不用给 #screen-purchase-detail 加 position:relative** —— 商品详情页那条
+                浮动底条栽过（见 style.css 那条注释：加了 position 会盖掉宽屏抽屉模式下的 fixed）。
+           高度 = 8 + 44(--tap) + 8 ≈ 60px，差不多正是一行商品（56px）→ 代价就是"一屏少一行"。 -->
+      <div class="p-addbar">
+        <button id="purchaseAddRow" class="primary" type="button" aria-label="加一行">＋ 加一行</button>
+      </div>
+    </section>
+
+    <!-- 「复制清单 / 导出 Excel」弹层（2026-10-16）：顶栏那颗图标点开的。
+         两项都是"把这张单拿出去"，收在一颗图标后面 —— 顶栏只占一格，弹层里带汉字说明，
+         不用猜图标什么意思。样式直接复用全局 .sheetbg / .sheet（跟「改一个值」那个 sheet 同款）。
+         ⚠️ 「生成 HTML」那条出口 2026-10-16 整个删了（老板拍的板）：WPS/微信都不渲染内嵌图，
+            要发给别人看它最脆，而带图表格 Excel 已经全覆盖 —— 理由写在 handlers/purchase.ts 顶部。 -->
+    <div id="purchaseSheet" class="sheetbg">
+      <div class="sheet">
+        <button id="purchaseSheetCopy" class="p-opt" type="button">
+          <span class="p-opt-ic">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="4" y="4" width="11" height="13" rx="2" />
+              <rect x="9" y="8" width="11" height="12" rx="2" />
+            </svg>
+          </span>
+          <span class="p-opt-tx">
+            <span class="p-opt-t">复制清单</span>
+            <span class="p-opt-s">贴到微信发给去档口的人</span>
+          </span>
+        </button>
+        <button id="purchaseSheetXlsx" class="p-opt" type="button">
+          <span class="p-opt-ic on">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M6 3.5h7l5 5v12H6z" />
+              <path d="M13 3.5v5h5" />
+              <path d="M12 12.5v4m-2-2 2 2 2-2" />
+            </svg>
+          </span>
+          <span class="p-opt-tx">
+            <span class="p-opt-t">导出 Excel</span>
+            <span class="p-opt-s">带图的表格，手机上用 WPS 打开</span>
+          </span>
+        </button>
+        <div class="sheetbts">
+          <button id="purchaseSheetCancel" type="button">取消</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 改一个值：从底部弹上来的 sheet。输入框 ≥16px（iOS 聚焦小于 16px 的框会把整页放大） -->
     <div id="fieldSheet" class="sheetbg">
       <div class="sheet">
@@ -441,17 +593,24 @@
       <button id="viewerRetake" class="viewer-retake" style="display: none">🔄 重拍</button>
     </div>
 
-    <!-- 底部 tab 栏：两个大模块（商品 / 设置）+ 右侧一个连接指示灯。
+    <!-- 底部 tab 栏：三个大模块（商品 / 进货 / 设置）+ 右侧一个连接指示灯。
          原先是 #status 那条 30px 高的细条（左「日志」+「🔄 有改动」+ 右灯），2026-10-12 改：
            · 「日志」     → 并进设置页当第三个页签（#tabLog）
            · 「🔄 有改动」 → 变成「设置」格上的小红点（#staleDot）；重读走自动刷新，
                               或「设置 → 系统配置」里那个「重新从数据库读一遍」
            · 连接灯       → 缩成右侧一个小圆点（三档：绿=连着、灰=重连中、红=断了）
+         2026-10-15 加了中间那一格「进货」（B 方案）：早上去发货发现缺货、要记一张补货单去档口拿货。
+         三格之后右侧那盏灯会跟「设置」撞在一起 → 三格的宽度改由 purchase.css 收口（见那边的注释）。
          整条 fixed 铺满整宽，所以 .screen 要给它留出高度（见 style.css 的 --tabbar）；
          宽屏抽屉模式下它只铺到抽屉左边（body.drawer #tabbar）。 -->
     <nav id="tabbar" class="tabbar">
       <button id="tabProducts" class="tb on" type="button">
         <span class="ic">🏪</span>商品
+      </button>
+      <!-- 「进货」这一格是**独立功能**（purchase.js）自己要的：它的 onclick 不在 app.js 里，
+           在 purchase.js 里接（app.js 只提供一个「注册屏幕 → 哪一格亮」的接口）。 -->
+      <button id="tabPurchase" class="tb" type="button">
+        <span class="ic">🧾</span>进货
       </button>
       <button id="tabSettings" class="tb" type="button">
         <span class="ic">⚙</span>设置<i id="staleDot" class="red" style="display: none" title="别人（或电脑版）改过数据了"></i>
@@ -474,5 +633,9 @@
 
     <datalist id="catList"></datalist>
     <script src="/app.js"></script>
+    <!-- 进货单：独立功能文件，主逻辑都在这里（不在 app.js 里）——
+         它通过 app.js 结尾那个 window.Cherysis 接缝取元素 / 发消息 / 收回包 / 切屏。
+         ⚠️ 必须排在 app.js **之后**：那样接缝才已经建好 -->
+    <script src="/purchase.js"></script>
   </body>
 </html>

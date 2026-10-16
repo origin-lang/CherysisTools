@@ -1,0 +1,629 @@
+/* 手机版「进货单」（补货单）的样式 —— **独立功能文件**，2026-10-15。
+   跟着 purchase.js 走：logic 在那边、骨架在 index.html 里那两屏。
+   本文件**故意排在 style.css 之后**（index.html 里引的顺序），要覆盖的只有下面第一节那一条。
+   想整体摘掉这个功能：删本文件 + purchase.js + index.html 里那两屏 / 底部那一格 / 两行引入。 */
+
+/* ---------- 一、底部 tab 栏：从两格变三格 ----------
+   style.css 里 `.tabbar .tb` 是写死 116px、`flex:none`，两格（商品/设置）正好居中。
+   加进「进货」成三格之后 116×3 = 348px，在 360px 屏上会顶到右边那盏连接灯
+   （`position:absolute; right:var(--pad)`）—— 两个字叠在一起、很难看。
+   做法：三格改成**平分剩余宽度**，并在右侧给连接灯**留出固定的一段**
+   （padding-right 一留，flex 的可用宽度就只到那儿了，连接灯再怎么变宽也不会压到「设置」）。 */
+.tabbar {
+  padding-right: 64px; /* 让开右侧那盏连接灯（点 + 「已连接」两个字 + 右边距） */
+}
+.tabbar .tb {
+  flex: 1 1 0;
+  width: auto;
+  max-width: 116px; /* 宽屏（抽屉模式）下别把三格拉得太开，仍集中在拇指区 */
+  min-width: 0;
+}
+
+/* ---------- 二、两个屏里的卡片 ----------
+   卡片内边距那一条在 style.css 里是**逐个屏列出来**的（#screen-detail / #screen-new /
+   #screen-settings / .filterpanel），新屏没被列进去，所以在这儿补上同样的 14px。 */
+#screen-purchase .card,
+#screen-purchase-detail .card {
+  padding: 14px;
+}
+#screen-purchase-detail .card + .card {
+  margin-top: var(--pad);
+}
+
+/* 卡片里那一行小标题（「要补的商品」）。
+   style.css 里没有通用的 .listhead（只有 .setbox 底下那份），所以自带一个。
+   ⚠️ 2026-10-16 晚：旁边那颗「＋」**搬走了**（见下面 .p-addbar）—— 挂在这一行里，
+      列表一长它就被滚出屏幕，每次加货都得先滚回顶上。 */
+.p-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  /* 2026-10-16 晚：上面那行"日期 + 保存提示"删了，这一行成了卡里第一样东西 →
+     原来为了跟它拉开距离的 margin-top:10px 就该收掉（不然白多 10px）。 */
+  margin-top: 0;
+}
+.p-headk {
+  font-weight: 700;
+  font-size: 14px;
+}
+/* 「＋ 加一行」的**新家**：屏幕底部的浮动条（2026-10-16 晚，老板挑的 A 档「脚悬浮」）。
+   ⚠️ 做法是**当 .screen 里最后一个 flex 孩子（真占位）**，不是 absolute 盖上去：
+     ① 永远在拇指位、一次不用滚；② 不会盖住列表最后一行 / 汇总行 / 整单备注；
+     ③ **不用给 #screen-purchase-detail 加 position:relative** —— 商品详情页那条浮动底条栽过
+        （见 style.css 里那段注释：给屏加 position 会盖掉宽屏抽屉模式下的 fixed，
+         详情页在电脑上就落回文档流、渲染不出来）。
+   高度 = 8 + 44(--tap) + 8 ≈ 60px ≈ 一行商品（56px）→ 老板已经知道代价就是"一屏少一行"。 */
+.p-addbar {
+  flex: none;
+  display: flex;
+  padding: 8px var(--pad);
+  background: var(--card);
+  border-top: 1px solid var(--line);
+}
+.p-addbar button {
+  /* 通栏（用 flex 撑开，不写 width:100% —— 免得跟 box-sizing 打架） */
+  flex: 1 1 auto;
+}
+/* ---------- 单内搜索行（2026-10-16 晚，甲档：顶栏放大镜点开才出、默认收起） ----------
+   收起时**一点都不占**内容高度（还是 11 款一屏）；点开了才插在表头上方一行。
+   ⚠️ 必须显式写 [hidden]，因为它自己是 display:flex —— 浏览器给 [hidden] 的那条盖不住 flex
+      （分页条当年就是这么顶出一条空条的）。 */
+.p-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 0 10px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.p-search[hidden] {
+  display: none;
+}
+.p-search .s-ic {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+}
+/* ⚠️ 输入框这三样都得显式盖掉全局的：`input{width:100%; min-height:44px}`（不然这一行撑到 44px 高）。
+   字号**不动** —— 全局那条 16px 就是为 iOS 留的（一聚焦整页放大的坑）。 */
+.p-search input {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.p-search .s-clear {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.p-search .s-clear svg {
+  width: 15px;
+  height: 15px;
+}
+.p-search .s-clear:active {
+  background: var(--soft);
+}
+/* 汇总压成一行，挂在商品列表底下（跟列表屏那句同一口径，calcSummary.line） */
+.p-sumline {
+  border-top: 1px solid var(--line);
+  margin-top: 10px;
+  padding-top: 10px;
+  line-height: 1.6;
+}
+/* 整单备注收成列表底下的一行输入框（会跟着「复制清单」发出去，所以留着但不再占一块卡） */
+#purchaseSummary + #purchaseNote {
+  margin-top: 8px;
+}
+/* ---------- 二之补：顶栏那颗图标 + 弹层两项（2026-10-16） ----------
+   两个出口（复制清单 / 导出 Excel）都收在顶栏一颗图标后面，点开从底下弹。
+   为什么不在内容里平铺：老板嫌"文字按钮 + 图标并排"别扭、"两个图标好丑"；
+   放顶栏还顺带解决了"长单要翻到底"（顶栏在滚动区之外，永远在）。 */
+/* 顶栏左边的返回（2026-10-16 晚改）：**无框 + 品牌绿 + 只有一个箭头**。
+   口径照商品详情页那颗 `.bar button.back`（无框幽灵按钮、品牌绿），但这边只有箭头、没有文字
+   （老板："不用返回两个字"），所以做成 --tap 正方形 —— 跟右边那颗图标按钮一左一右对称。
+   为什么改：原来写「‹ 返回」，是这一行里唯一一颗带字的宽按钮，跟右边的正方形一横一竖，老板说"不统一"。
+   ⚠️ 三条都要显式写死（全局 `button` 给的是白底 `--card` + 1px 灰边 + `min-height: var(--tap)`）：
+      `background: none`（去白底）、`border: 0`（去灰框）、`height/min-height` 定成正方形。
+   ⚠️ 只留箭头后，"点它回哪儿"就没字提示了 —— 靠位置（左上角）和底部「进货」那一格说明；aria-label 给读屏。 */
+.p-back {
+  flex: none;
+  width: var(--tap);
+  height: var(--tap);
+  min-height: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  color: var(--brand);
+}
+/* 箭头大小（2026-10-16 晚调的）：svg 20px + viewBox 裁到图形上 → 画出来约 **16px 高、2.2px 粗**。
+   ⚠️ 别只看这 20px 就往上加 —— 第一版给的是 24px，配同一个裁过的 viewBox（scale = 24/15 = 1.6），
+      `stroke-width 2.2` 被**一起放大成 3.5px 粗、19px 高**，老板当场说"太大、很突兀"。
+   ⭐ **裁 viewBox 会把 stroke 一起缩放**：改图形大小时，stroke 要按「目标视觉宽 ÷ scale」重算
+      （现在 scale = 20/15 ≈ 1.33，index.html 里写 1.65 → 画出来 ≈ 2.2px 粗，跟标题字笔画齐）。 */
+.p-back svg {
+  width: 20px;
+  height: 20px;
+}
+/* 按下去给一层淡绿反馈（无框按钮没有边框可以变，只能靠底色） */
+.p-back:active {
+  background: rgba(35, 168, 132, 0.12);
+}
+
+/* 顶栏那颗图标（复制清单 / 导出 Excel 的总入口，2026-10-16）：
+   ⚠️ 尺寸必须跟左边那颗返回一致 —— 两处都是 var(--tap)（44px），顶栏才左右对称。
+   第一版写成 36px（还顺手把全局 min-height 清了）→ 它比顶栏里所有按钮都小一圈，老板一眼看出"太小"。
+   所以现在**直接取 var(--tap)**（改 --tap 时跟着走），图案 24px（方框的 ~55%，常规比例）。
+   ⚠️ 边框**不染品牌绿**（2026-10-16 晚改）：绿框 + 绿图让它比左边的返回重得多、显得突兀；
+      现在用全局那条浅灰边（跟商品详情页右上那颗 `📷` 一个壳），只有图案是绿的。 */
+.p-icon {
+  flex: none;
+  width: var(--tap);
+  height: var(--tap);
+  /* ⚠️ 全局 button 的 min-height 本来也是 --tap，这里显式写 0 是为了让 height 说了算
+     （别让 min-height 在改 --tap 时反过来把方框顶变形） */
+  min-height: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--brand);
+}
+.p-icon svg {
+  width: 24px;
+  height: 24px;
+}
+/* 生成期间：按钮变淡、图标转圈 —— 图标按钮写不下"生成中…"，用转圈说明还在跑 */
+.p-icon:disabled {
+  opacity: 0.45;
+}
+.p-icon.busy svg {
+  animation: p-spin 0.9s linear infinite;
+}
+@keyframes p-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* 弹层里那两项：左边一个图标，右边标题 + 一句说明（汉字说明是"不用猜图标"的关键） */
+.p-opt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  text-align: left;
+}
+.p-opt-ic {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+.p-opt-ic.on {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+.p-opt-ic svg {
+  width: 20px;
+  height: 20px;
+}
+.p-opt-tx {
+  flex: 1;
+  min-width: 0;
+}
+.p-opt-t {
+  display: block;
+  font-size: 15px;
+}
+.p-opt-s {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---------- 三、首页：月历 + 当日卡（2026-10-16 改版） ----------
+   老板要的：一进来先看日历（哪天补过货一眼扫完），点日子出当日统计，再进去填。
+   全部单击 —— 手机上双击跟缩放手势打架，换个人用也想不到。 */
+.p-calnav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.p-calnav b {
+  flex: 1;
+  text-align: center;
+  font-size: 14px;
+}
+.p-cal {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+.p-wd {
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 2px 0;
+}
+/* 日子是一颗按钮（好点）：38px 高够手指，有单的日子底下带一颗绿点 */
+.p-d {
+  position: relative;
+  min-height: 38px;
+  padding: 4px 0 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  font-size: 13px;
+  line-height: 1.2;
+  color: var(--fg);
+  text-align: center;
+  min-width: 0;
+}
+.p-d:active {
+  background: var(--soft);
+}
+.p-d.on {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+  font-weight: 700;
+}
+.p-dot {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--brand);
+}
+.p-d.on .p-dot {
+  background: #fff;
+}
+.p-todayrow {
+  margin-top: 6px;
+  text-align: center;
+}
+.p-empty {
+  margin-top: var(--pad);
+}
+/* 当日卡：有单 = 一张卡一张单（统计 + 打开填写 + 删除）；没单 = 新建那天的单 */
+#purchaseList .po {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  margin-top: 10px;
+}
+#purchaseList .po:active {
+  box-shadow: inset 0 0 0 999px rgba(0, 0, 0, 0.05);
+}
+.po-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.po-date {
+  font-weight: 700;
+  font-size: 14px;
+}
+/* 状态胶囊：「已完成 / 进行中 2/5 / 未开始 / 空单」——由行自动汇总出来，不让人填 */
+.po-st {
+  flex: none;
+  font-size: 11.5px;
+  line-height: 1.6;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--soft);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.po-st.ok {
+  color: var(--brand);
+  border-color: var(--brand);
+  background: rgba(35, 168, 132, 0.1);
+}
+.po-st.doing {
+  color: #b8860b;
+  border-color: #e6a23c;
+  background: rgba(230, 162, 60, 0.12);
+}
+.po-sub {
+  margin-top: 6px;
+}
+.po-note {
+  margin-top: 2px;
+}
+.po-act {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.po-open {
+  min-width: 0;
+}
+
+/* ---------- 四、填表页：紧凑行（2026-10-16 改版） ----------
+   一格约 40px、一屏 15 款；需/拿还在行上直接输（录入不变慢）；
+   点行展开图/全名/备注/删行（一次只摊一行，state.openRow 记着是哪行）。 */
+.pit {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  margin-top: 8px;
+  overflow: hidden;
+}
+/* 刚"落到位置"的那一行（2026-10-16 晚）：撞车**并进去**的 / 排序后**挪过去**的那一行。
+   老板原话："你先帮我高亮在哪里，难道还要去眼睛找多麻烦呀" ——
+   所以它**不是闪一下**，而是**持续亮着**（`.hit`），一直到他下一次动手（打字/再定稿一个编号/换单）。
+   ⚠️ 原来只有下面 `.fresh` 那 1.3 秒的浅绿：手机上键盘一挡、行还可能滚出屏幕 → 他根本没看见，
+      于是并进去了也得自己一列列去找。`.fresh` 现在只负责"落位那一下"的强调，动画结束停在同一个颜色上。
+   ⚠️ 左边那条用 `inset box-shadow` 画，**别用 border-left** —— border 会把整行往右挤、跟表头错位。 */
+.pit.hit {
+  background-color: rgba(35, 168, 132, 0.12);
+  box-shadow: inset 3px 0 0 var(--brand);
+}
+@keyframes pi-hit {
+  from {
+    background-color: rgba(35, 168, 132, 0.28);
+  }
+  to {
+    background-color: rgba(35, 168, 132, 0.12);
+  }
+}
+/* 只"弹"这一次（CSS 动画，不用 JS 定时器：定时器到了再改 class 会触发一次重画，正好把他正在填的那格焦点冲掉）。
+   ⚠️ 同一个元素上重复加 .fresh 不会重播动画 → JS 那边是"摘掉 class、逼一次重排、再加回来"。 */
+.pit.fresh {
+  animation: pi-hit 1.3s ease-out;
+}
+/* 行与表头同一套 flex + gap，列才对得齐 */
+.pit-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+}
+.pit-head {
+  display: flex;
+  gap: 6px;
+  padding: 0 8px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+/* 行内小图那一列的表头占位：宽度必须跟 .pi-thumb 的 44px 对上，列才齐 */
+.pit-head .himg {
+  width: 44px;
+  flex: none;
+}
+.pit-head .hcode {
+  width: 50px;
+  flex: none;
+}
+.pit-head .hname {
+  flex: 1;
+  min-width: 0;
+}
+.pit-head .hnum {
+  width: 48px;
+  flex: none;
+  text-align: center;
+}
+/* ⚠️ 「已办勾」的样式（.pi-done / .pi-done input）2026-10-16 晚**整块删了** —— 老板要撤掉那个勾
+   （理由：填了"拿"就说明办了，手工再勾一次是多余动作）。撤掉之后行左边少一格（20px + 6px 间距），
+   名称那一栏多出 26px。「拿齐没拿齐」由 JS 的 isReady() 自动算，不再有复选框 —— 别再加回来。 */
+/* ⚠️ 输入框一律 ≥16px 字号（style.css 的全局规则），这里只压高度与内边距 —— iOS 上
+   font-size<16px 的输入框一聚焦就把整页放大，那是修不回来的体验 */
+.pi-code {
+  flex: none;
+  width: 50px;
+  min-height: 34px;
+  margin: 0;
+  padding: 2px 4px;
+  text-align: center;
+}
+.pit-name {
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+.pit-nm {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 行尾差额小字（多拿 `+6` / 缺 `-4`，2026-10-16 晚老板挑的"丙档"）：
+   ⚠️ 它挂在 .pit-name **里面**、贴着右端 —— 不是新开一列。
+   名称栏总宽没变，代价只是**这一行**的名称早一点截断（约 1~2 个字，老板说没关系）；
+   没有差额的行根本不渲染这个节点 → 名称仍是满宽（新开一列的话那 26px 每行都白留）。
+   颜色跟「拿」那格的染色同一套（over=brand 绿 / under=#b8860b 橙），等于把颜色变成数字。
+   数字用等宽（tabular-nums），多行上下扫的时候位数能对齐。 */
+.pi-d {
+  flex: none;
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.pi-d.over {
+  color: var(--brand);
+}
+.pi-d.under {
+  color: #b8860b;
+}
+.pit-name.muted {
+  color: var(--muted);
+}
+.pit-name.warn .pit-nm {
+  color: #e6a23c;
+}
+.pi-need,
+.pi-got {
+  flex: none;
+  width: 48px;
+  min-height: 34px;
+  margin: 0;
+  padding: 2px 4px;
+  text-align: center;
+}
+/* 补齐情况（自动算，不让人标）：多拿=绿（他要的）、缺=橙、正好=绿 */
+.pi-got.over {
+  color: var(--brand);
+  border-color: var(--brand);
+  font-weight: 700;
+}
+.pi-got.under {
+  color: #b8860b;
+  border-color: #e6a23c;
+}
+.pi-got.ok {
+  color: var(--brand);
+}
+/* 补齐情况那个徽标（+3 / 缺4 / 待拿 / 齐）2026-10-16 **撤掉了**（老板："代拿…很没有必要有点多余"）。
+   原来它挤在名称右边，位置给了行内小图：一眼看图比看四个字的徽标直观。
+   ⚠️ 2026-10-16 晚**只补回了"差额数字"这一个**（`.pi-d`，见上）—— 不是把徽标整套搬回来：
+   徽标当年是**每行常驻四颗字**（没拿也有个「待拿」），现在只在需/拿**不相等**时才出一个数字。
+   要再加「待拿 / 齐」那种字，先回去问老板 —— 他明确说过多余。 */
+
+/* 展开块：全名 + 删行 + 备注（一次只有一行摊开）。
+   ⚠️ 缩略图不在这儿了 —— 行上那颗常驻的已经看得见（原来两处都放，白占一块地方）。 */
+.pit-x {
+  border-top: 1px solid var(--line);
+  background: var(--soft);
+  padding: 8px;
+}
+.pit-xrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* 缩略图（行内那颗，2026-10-16 从"只在展开里"改成"行上常驻"）：
+   底下一句「无图 / 编号」当占位，真图取到了就盖住它；取不到（404）由 onerror 抹掉 img，
+   又露出占位 —— 不留破图、也不留一片空。 */
+.pi-thumb {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pi-thumb .noph {
+  font-size: 10px;
+  color: var(--muted);
+}
+.pi-thumb img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.pit-info {
+  flex: 1;
+  min-width: 0;
+}
+.pit-full {
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pit-sub {
+  margin-top: 2px;
+}
+.pit-del {
+  flex: none;
+  min-width: 0;
+  color: var(--danger, #a32d2d);
+}
+.pit-x .pi-note {
+  margin-top: 8px;
+  min-height: 38px;
+  padding: 6px 10px;
+}
+
+/* ---------- 五、复制不了时的兜底浮层 ----------
+   局域网是纯 HTTP，navigator.clipboard 用不了，靠 execCommand；它再失败才出这一层。 */
+.p-copysheet {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(20, 20, 20, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.p-csbox {
+  width: 100%;
+  max-width: 420px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+}
+.p-cshead {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+/* 等宽字体：这份文本是要贴到微信里的，等宽看起来跟真发出去的样子更接近 */
+.p-cstext {
+  width: 100%;
+  height: 34vh;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  white-space: pre;
+}
+.p-csclose {
+  width: 100%;
+  margin-top: 10px;
+}

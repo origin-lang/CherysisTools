@@ -99,6 +99,27 @@ export interface LivePlanRow {
   code: string;
 }
 
+// ===== 进货单（补货单，2026-10-15）=====
+export interface PurchaseItemRow {
+  sort: number;
+  code: string;
+  /** 要补多少（不是"库存补到多少"） */
+  need: number;
+  /** 实际拿到多少 */
+  got: number;
+  /** 这行是否已办（勾） */
+  done: number;
+  note: string;
+}
+export interface PurchaseOrderRow {
+  id: number;
+  date: string;
+  note: string;
+  created_at: string;
+  updated_at: string;
+  items: PurchaseItemRow[];
+}
+
 export interface StockInRow {
   id: number;
   product_id: number;
@@ -167,6 +188,12 @@ export interface ShopDB {
   replaceLiveStars(codes: string[]): void;
   getLivePlan(): LivePlanRow[];
   replaceLivePlan(plan: LivePlanRow[]): void;
+  // ===== 进货单（补货单，2026-10-15）=====
+  /** 全部进货单（新的在前，含行）。单量小，一次读全 */
+  listPurchaseOrders(): PurchaseOrderRow[];
+  /** 整张保存：id 为空则新建；**行整表替换**（跟 replaceLivePlan 一个套路）。返回这张单的 id */
+  savePurchaseOrder(id: number | null, date: string, note: string, items: PurchaseItemRow[]): number;
+  deletePurchaseOrder(id: number): void;
   // ===== 套装（可整体移除）=====
   /** 套装的成员清单（按 sort 排），带子商品**当前**的名称/进价/售价/状态 */
   listSetMembers(setCode: string): SetMemberRow[];
@@ -391,6 +418,28 @@ export function initDB(storageDir: string): boolean {
       PRIMARY KEY (set_code, child_code)
     );
     CREATE INDEX IF NOT EXISTS idx_set_items_child ON set_items(child_code);
+    -- ===== 进货单（补货单，2026-10-15）=====
+    -- 一张单 + 若干行（行按 sort 排）。存**编号**不存 products.id —— 跟 live_plan/set_items 一致，
+    -- 编号才是这套系统的锚点（图片夹名、导入锚点都认它）。名称/图片不落库、显示时现查，
+    -- 所以改了商品，单子里立刻是新名字。
+    CREATE TABLE IF NOT EXISTS purchase_order (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      date       TEXT NOT NULL DEFAULT '',
+      note       TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS purchase_item (
+      order_id INTEGER NOT NULL,
+      sort     INTEGER NOT NULL DEFAULT 0,
+      code     TEXT NOT NULL DEFAULT '',
+      need     REAL NOT NULL DEFAULT 0,
+      got      REAL NOT NULL DEFAULT 0,
+      done     INTEGER NOT NULL DEFAULT 0,
+      note     TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (order_id, sort)
+    );
+    CREATE INDEX IF NOT EXISTS idx_purchase_item_order ON purchase_item(order_id);
   `);
   const settleCols = (db.prepare("PRAGMA table_info(monthly_settle)").all() as any[]).map(
     (r) => r.name,
@@ -633,6 +682,24 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
   const livePlanIns = c.prepare("INSERT OR REPLACE INTO live_plan (group_no, slot_no, code) VALUES (@group_no, @slot_no, @code)");
   const liveStarDelByCode = c.prepare("DELETE FROM live_star WHERE code = ?");
   const livePlanDelByCode = c.prepare("DELETE FROM live_plan WHERE code = ?");
+  // ===== 进货单（补货单，2026-10-15）=====
+  const purchaseOrderList = c.prepare(
+    "SELECT id, date, note, created_at, updated_at FROM purchase_order ORDER BY date DESC, id DESC",
+  );
+  const purchaseItemListAll = c.prepare(
+    "SELECT order_id, sort, code, need, got, done, note FROM purchase_item ORDER BY order_id, sort",
+  );
+  const purchaseOrderIns = c.prepare(
+    "INSERT INTO purchase_order (date, note, created_at, updated_at) VALUES (@date, @note, @created_at, @updated_at)",
+  );
+  const purchaseOrderUpd = c.prepare(
+    "UPDATE purchase_order SET date = @date, note = @note, updated_at = @updated_at WHERE id = @id",
+  );
+  const purchaseOrderDel = c.prepare("DELETE FROM purchase_order WHERE id = ?");
+  const purchaseItemDel = c.prepare("DELETE FROM purchase_item WHERE order_id = ?");
+  const purchaseItemIns = c.prepare(
+    "INSERT OR REPLACE INTO purchase_item (order_id, sort, code, need, got, done, note) VALUES (@order_id, @sort, @code, @need, @got, @done, @note)",
+  );
   // ===== 套装（可整体移除）=====
   // 成员列表用编号 JOIN products 拿「当前」的名称/进价/售价/状态 —— 改了子商品，套装这边立刻是新值，
   // 不用任何同步动作。合计值同理：全靠这里现算，绝不落库（落库就会跟子商品真实值不同步）。
@@ -1043,6 +1110,94 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
             }
             livePlanIns.run({ group_no: g, slot_no: s, code });
           }
+        });
+        tx();
+      });
+    },
+    // ===== 进货单（补货单，2026-10-15）=====
+    listPurchaseOrders(): PurchaseOrderRow[] {
+      const orders = purchaseOrderList.all() as any[];
+      const items = purchaseItemListAll.all() as any[];
+      const byOrder = new Map<number, PurchaseItemRow[]>();
+      for (const it of items) {
+        const oid = Number(it.order_id);
+        let arr = byOrder.get(oid);
+        if (!arr) {
+          arr = [];
+          byOrder.set(oid, arr);
+        }
+        arr.push({
+          sort: Number(it.sort ?? 0),
+          code: String(it.code ?? ""),
+          need: Number(it.need ?? 0),
+          got: Number(it.got ?? 0),
+          done: Number(it.done ?? 0) ? 1 : 0,
+          note: String(it.note ?? ""),
+        });
+      }
+      return orders.map((r) => ({
+        id: Number(r.id),
+        date: String(r.date ?? ""),
+        note: String(r.note ?? ""),
+        created_at: String(r.created_at ?? ""),
+        updated_at: String(r.updated_at ?? ""),
+        items: byOrder.get(Number(r.id)) ?? [],
+      }));
+    },
+    savePurchaseOrder(id, date, note, items): number {
+      // 整张单**一次事务提交**：共享盘上一个批量 = 一次网络提交，而不是一行一次（跟 replaceLivePlan 同理）
+      return withRetry(() => {
+        const now = nowStr();
+        const tx = c.transaction((): number => {
+          const oid = Number(id ?? 0);
+          let realId = 0;
+          if (Number.isInteger(oid) && oid > 0) {
+            purchaseOrderUpd.run({
+              id: oid,
+              date: String(date ?? ""),
+              note: String(note ?? ""),
+              updated_at: now,
+            });
+            realId = oid;
+          } else {
+            const info = purchaseOrderIns.run({
+              date: String(date ?? ""),
+              note: String(note ?? ""),
+              created_at: now,
+              updated_at: now,
+            });
+            realId = Number(info.lastInsertRowid);
+          }
+          purchaseItemDel.run(realId);
+          let s = 0;
+          for (const it of items ?? []) {
+            const code = String(it?.code ?? "").trim();
+            // 空行（还没填编号）直接丢，别在库里留垃圾
+            if (!code) {
+              continue;
+            }
+            purchaseItemIns.run({
+              order_id: realId,
+              sort: s,
+              code,
+              need: Number(it?.need ?? 0) || 0,
+              got: Number(it?.got ?? 0) || 0,
+              done: Number(it?.done ?? 0) ? 1 : 0,
+              note: String(it?.note ?? ""),
+            });
+            s += 1;
+          }
+          return realId;
+        });
+        return tx();
+      });
+    },
+    deletePurchaseOrder(id: number): void {
+      withRetry(() => {
+        const oid = Number(id);
+        const tx = c.transaction(() => {
+          purchaseItemDel.run(oid);
+          purchaseOrderDel.run(oid);
         });
         tx();
       });

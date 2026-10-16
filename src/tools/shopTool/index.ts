@@ -17,6 +17,8 @@ import { liveHandlers } from "./handlers/live.js";
 import { settingsHandlers } from "./handlers/settings.js";
 // ===== 套装（可整体移除）===== 想整体去掉套装：删这行 + 下面 handlers 表里带同标记的那一行 + handlers/sets.ts
 import { setHandlers } from "./handlers/sets.js";
+// ===== 进货单（补货单）===== 想整体去掉：删这行 + 下面 handlers 表带同标记的那一行 + handlers/purchase.ts
+import { purchaseHandlers } from "./handlers/purchase.js";
 
 // 自动备份：每日首次启动自动留档（shop_auto_*），破坏性操作前追加留档（shop_pre_*）；两类各自独立配额剪除，只保留最新 N 份，不无限累积。
 const AUTO_BACKUP_KEEP = 14;
@@ -372,6 +374,9 @@ const WRITE_ACTIONS = new Set([
   // ===== 套装（可整体移除）===== 往套装里加/移出子商品都会写 set_items
   "setAddMember",
   "setRemoveMember",
+  // ===== 进货单（补货单）===== 写 purchase_order / purchase_item
+  "purchaseSaveOrder",
+  "purchaseDeleteOrder",
 ]);
 
 /**
@@ -963,6 +968,8 @@ export const shopTool: ToolDefinition = {
       ...impexpHandlers(h),
       // ===== 套装（可整体移除）===== 套装的消息全在 handlers/sets.ts 里，这一行是唯一注册点
       ...setHandlers(h),
+      // ===== 进货单（补货单）===== 同前，消息全在 handlers/purchase.ts 里
+      ...purchaseHandlers(h),
 
       // ===== 撤销 / 重做 =====
       async undoRequest() {

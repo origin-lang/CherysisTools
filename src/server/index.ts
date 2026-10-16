@@ -112,6 +112,13 @@ async function main(): Promise<void> {
   initDB(cfg.storageDir); // 提前打开，好让「库打不开」在启动时就报出来
   const prefs = new PrefsStore(cfg.prefsFile);
 
+  // 直播样品与进货单导出共用本机偏好 live_out_dir。VS Code 端选过目录，网页端是另一份
+  // 偏好文件、也没有目录选择可弹 → 启动时种上默认值（缓存目录下的 out/），有值就不动。
+  if (!String(prefs.get("live_out_dir", "")).trim()) {
+    fs.mkdirSync(cfg.liveOutDir, { recursive: true });
+    prefs.update("live_out_dir", cfg.liveOutDir);
+  }
+
   // 实时推送中枢（SSE /api/events）：整个进程一个，后台任务也往里投
   const hub = new EventHub();
 

@@ -688,6 +688,19 @@
     if (!m || !m.type) {
       return;
     }
+    // 独立功能文件（如进货单）自己的回包：**先喂给它们**，再走下面这条主链。
+    // 主链碰到不认识的 type 本来就会忽略，所以同一种消息两边都能挂。
+    // 包一层 try：某个功能自己的回包处理炸了，不该把主链（商品这边）一起带崩。
+    var hooks = msgHooks[m.type];
+    if (hooks) {
+      for (var hi = 0; hi < hooks.length; hi++) {
+        try {
+          hooks[hi](m);
+        } catch (e) {
+          pushLog("❌回包处理出错：" + (e && e.message ? e.message : e));
+        }
+      }
+    }
     if (m.type === "toast") {
       // 后端显式发的一行提示（bad=true 走红样式）。成败由后端说了算，
       // 不用前端再去扫日志字符串猜 —— 那种做法改一句文案就失灵。
@@ -3923,6 +3936,21 @@
     return !!(window.matchMedia && window.matchMedia("(min-width: 820px)").matches);
   }
 
+  // ---------- 独立功能文件的接入点 ----------
+  // 手机版是**静态直出、没有模块系统**：每个功能各占一个 .js 文件（如 purchase.js = 进货单），
+  // 靠下面这点极薄的东西跟主页面通话（见文件末尾的 window.Cherysis）。
+  // ⚠️ 功能自己的状态 / 渲染 / 样式都放在它自己的文件里，**不要再往 app.js 里堆** ——
+  //    以后想整体摘掉一个功能，删那个文件（和它的 css / html 骨架）就够了。
+  /** 屏幕 id → 底部哪一格 tab 亮（功能文件用 registerScreen 自己登记，见 show） */
+  var TAB_OF_SCREEN = {
+    "screen-list": "tabProducts",
+    "screen-detail": "tabProducts",
+    "screen-new": "tabProducts",
+    "screen-settings": "tabSettings",
+  };
+  /** 消息类型 → [回调]：功能文件订阅自己的回包（在 handlePost 开头被喂到） */
+  var msgHooks = {};
+
   function show(id) {
     // 宽屏看详情/新建时列表**不关**：面板从右边滑出来，左边那份列表还在
     // （挑下一件、边看边建都不用退出去）
@@ -3931,14 +3959,22 @@
     if (keepList && state.panelOpen) {
       setFilterOpen(false);
     }
-    ["screen-list", "screen-detail", "screen-new", "screen-settings"].forEach(function (s) {
-      $(s).classList.toggle("show", s === id || (s === "screen-list" && keepList));
-    });
+    // 屏幕清单**现查**，不写死成一串字面量：独立功能文件自己往页面里放 .screen，
+    // show() 不用认识它们，天生就能切过去（加一屏不用回这儿改代码）。
+    var screens = document.querySelectorAll(".screen");
+    for (var i = 0; i < screens.length; i++) {
+      var sid = screens[i].id;
+      screens[i].classList.toggle("show", sid === id || (sid === "screen-list" && keepList));
+    }
     document.body.classList.toggle("drawer", keepList);
-    // 底部 tab 栏的高亮：详情 / 新建都算「商品」这一格 —— 它们是从商品页点进去的，
+    // 底部 tab 栏的高亮：哪个屏归哪一格看 TAB_OF_SCREEN。
+    // 详情 / 新建都算「商品」那一格（它们是从商品页点进去的），进货那两屏算「进货」那一格 ——
     // 底下亮着「设置」而人正在看商品详情，那才是真的怪。
-    $("tabProducts").classList.toggle("on", id !== "screen-settings");
-    $("tabSettings").classList.toggle("on", id === "screen-settings");
+    var wantTab = TAB_OF_SCREEN[id] || "tabProducts";
+    var tabs = document.querySelectorAll("#tabbar .tb");
+    for (var j = 0; j < tabs.length; j++) {
+      tabs[j].classList.toggle("on", tabs[j].id === wantTab);
+    }
     if (id === "screen-list") {
       state.detail = null;
     }
@@ -4926,6 +4962,42 @@
     /* 读不到就用默认值 */
   }
   applyZoom(); // 无论有没有存过：按当前视图决定这三个按钮在不在
+
+  // ---------- 独立功能文件的接入缝（进货单等）----------
+  // 只暴露「主页面独有的」：取元素 / 发消息 / 弹提示 / 切屏 / 查商品 / 图片地址 / 注册屏幕 / 订阅回包。
+  // 功能自己的状态与渲染都在它自己的文件里，不进这里 —— 这条缝很窄，是为了以后能整体摘掉一个功能。
+  window.Cherysis = {
+    $: $,
+    esc: esc,
+    num: num,
+    invoke: invoke,
+    toast: toast,
+    log: pushLog,
+    show: show,
+    imgUrl: imgUrl,
+    /** 登记一个新屏幕：screenId 显示时，底部 tabId 那一格点亮 */
+    registerScreen: function (screenId, tabId) {
+      TAB_OF_SCREEN[screenId] = tabId || "tabProducts";
+    },
+    /** 订阅一种回包消息（可挂多个；同类型消息也会照常走主链） */
+    on: function (type, fn) {
+      (msgHooks[type] || (msgHooks[type] = [])).push(fn);
+    },
+    /** 按编号找商品（进货单要拿它显示名称）；找不到回 null */
+    findProductByCode: function (code) {
+      var c = String(code === undefined || code === null ? "" : code).trim().toUpperCase();
+      if (!c) {
+        return null;
+      }
+      for (var i = 0; i < state.products.length; i++) {
+        if (String(state.products[i].code || "").toUpperCase() === c) {
+          return state.products[i];
+        }
+      }
+      return null;
+    },
+  };
+
   bind();
   $("scope").value = state.scope;
   applyScope(); // 搜索行右侧按当前 scope 摆一次（默认「全部」= 文字框）
