@@ -3,6 +3,20 @@ import * as vscode from "vscode";
 /** 工具执行时的日志回调 */
 export type LogCallback = (msg: string) => void;
 
+/**
+ * 回推 / 记日志时的可选去向。
+ *
+ * 目前只有一个开关，但它解决的是一个**只有网页版才有**的问题：网页版一个服务进程对着
+ * 好几台设备（手机 + 电脑浏览器），而「导出 Excel」这类长任务的**一次性结果**只对
+ * 点按钮的那一台有意义。以前是广播 → 手机上点导出，电脑那台也弹一次下载。
+ *
+ * VS Code 宿主只有一个面板，**忽略这个字段**就是对的（传了也没有第二个人）。
+ */
+export type PostOpts = {
+  /** 只回给发起这次请求的那一端（网页版靠它定向；别的宿主忽略） */
+  toRequester?: boolean;
+};
+
 /** 以这些符号开头的日志视为操作结果，会额外弹 Toast */
 const RESULT_MARKERS = new Set([
   "✅", "❌", "✏️", "🗑", "🔻", "🔺", "📐", "📦", "📝", "📥", "🖊", "⭐", "☆",
@@ -23,8 +37,8 @@ export interface ToolContext {
    * 存进库里就是「全组一份、最后改的人覆盖所有人」。这些键一律走这里，永不写共享盘。
    */
   prefs: vscode.Memento;
-  postToWebview(msg: any): void;
-  log(text: string): void;
+  postToWebview(msg: any, opts?: PostOpts): void;
+  log(text: string, opts?: PostOpts): void;
   selectFolder(title?: string): Promise<string | undefined>;
   selectFile(filters?: Record<string, string[]>): Promise<string | undefined>;
   selectFiles(filters?: Record<string, string[]>): Promise<string[]>;

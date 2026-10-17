@@ -1,4 +1,4 @@
-import { ToolContext } from "../../../core/toolContext.js";
+import { ToolContext, PostOpts } from "../../../core/toolContext.js";
 import { ShopDB, ShopDBSnapshot } from "../db.js";
 
 export type Handler = (msg: any, h: HandlerCtx) => Promise<void> | void;
@@ -9,8 +9,13 @@ export interface HandlerCtx {
   /** 当前数据库连接（importDB 恢复后经 setDB 替换） */
   db: ShopDB;
   setDB: (d: ShopDB) => void;
-  log: (s: string) => void;
-  post: (m: any) => void;
+  log: (s: string, opts?: PostOpts) => void;
+  /**
+   * 回推一条给前端。`opts.toRequester` = **只回给点按钮的那一端**（网页版同一进程对着
+   * 好几台设备时才有区别）：长任务的「一次性结果」（导出的 Excel 字节）必须带它，
+   * 否则手机点导出、电脑那台也下载一份。VS Code 只有一个面板，传了也无差别。
+   */
+  post: (m: any, opts?: PostOpts) => void;
   /** 读设置项：个人偏好键自动走本机 globalState，其余读共享库（分流见 index.ts LOCAL_PREF_KEYS） */
   getSetting: (key: string) => string;
   /** 写设置项，与 getSetting 同一套分流。本机键落 globalState、不碰共享盘，故为异步 */

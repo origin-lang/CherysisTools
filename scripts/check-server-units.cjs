@@ -209,6 +209,53 @@ function parseFrames(text) {
   ok(s1.got.includes("<end>") && s2.got.includes("<end>"), "closeAll 应把每个连接 end 掉");
 }
 
+// 12) 定向（target）：**只发给那一个**，别人一条都看不到
+//     —— 这就是「手机上点导出、电脑那台也下载一份」的病根，别退回广播
+{
+  const hub = new Hub();
+  const phone = fakeSink("PHONE");
+  const pc = fakeSink("PC");
+  hub.attach(phone);
+  hub.attach(pc);
+  hub.publish({
+    event: "post",
+    data: { type: "purchaseXlsxDone", b64: "AAA" },
+    origin: "OTHER",
+    target: "PHONE",
+  });
+  ok(phone.frames().length === 1, `定向帧应发给 target，实际 ${phone.frames().length} 条`);
+  ok(
+    pc.frames().length === 0,
+    `定向帧绝不该发给别人，实际 ${pc.frames().length} 条（回去了就是"手机点导出、电脑也下载"）`,
+  );
+}
+
+// 13) 定向帧**不按 origin 跳过**：target 与发信人同一个连接时也必须发
+//     （长任务脱钩后 origin 已经空了，靠它判不出来；况且发信人往往正是唯一该收的人）
+{
+  const hub = new Hub();
+  const s = fakeSink("PHONE");
+  hub.attach(s);
+  hub.publish({ event: "post", data: {}, origin: "PHONE", target: "PHONE" });
+  ok(s.frames().length === 1, "target 与 origin 相同时也要发（定向优先于「跳过自己」）");
+}
+
+// 14) 定向帧**不进环形缓冲**：既不该补发给别人，也怕一两 MB 的帧撑爆内存
+{
+  const hub = new Hub(5);
+  hub.publish({ event: "log", data: "a" }); // id 1
+  hub.publish({ event: "post", data: { b64: "x".repeat(64) }, target: "PHONE" }); // id 2（不该入缓冲）
+  hub.publish({ event: "log", data: "b" }); // id 3
+  const s = fakeSink("PHONE");
+  hub.attach(s);
+  hub.replay(s, 1); // 断在 1
+  const f = s.frames();
+  ok(
+    f.length === 1 && f[0].event === "log" && f[0].id === 3,
+    `定向帧不该进环形缓冲（补发 = 推给另一台设备），实际补发 ${JSON.stringify(f.map((x) => x.event + x.id))}`,
+  );
+}
+
 // ------------------------------------------------ 请求收集器（httpHost.makeRequestSink）
 // 这一段钉的是"实时推送最容易静悄悄出错"的两条规则，改坏了真机上表现为
 // 「别人看得见、点了按钮的人自己看不见」——所以必须有断言守着。
@@ -218,7 +265,7 @@ let reqCases = 0;
   const published = [];
   const sink = makeRequestSink("PHONE-1", (e) => published.push(e));
 
-  // 12) 请求在飞：两个数组照收，实时推送也照发，且标着发起人（中枢会跳过他自己）
+  // 15) 请求在飞：两个数组照收，实时推送也照发，且标着发起人（中枢会跳过他自己）
   reqCases++;
   sinkPost(sink, { type: "productsDelta", products: [{ id: 1 }] });
   sinkLog(sink, "📝已记录 L001 卖5退0");
@@ -230,7 +277,7 @@ let reqCases = 0;
   );
   ok(published[0].event === "post" && published[1].event === "log", "事件名要区分 post / log");
 
-  // 13) detach 之后：数组不再增长（后台任务跑几分钟不能一直往里堆），但实时推送照旧 ——
+  // 16) detach 之后：数组不再增长（后台任务跑几分钟不能一直往里堆），但实时推送照旧 ——
   //     而且 origin 必须清空，否则点了按钮的那台手机永远收不到自己触发的进度
   reqCases++;
   sink.detached = true;
@@ -243,12 +290,45 @@ let reqCases = 0;
     "detach 后 origin 必须清空（发起人自己也要收得到后台进度）",
   );
 
-  // 14) 多行日志原样交给接收方（前端按行拆进日志区），不在这里做裁剪
+  // 17) 多行日志原样交给接收方（前端按行拆进日志区），不在这里做裁剪
   reqCases++;
   const sink2 = makeRequestSink("PHONE-2", (e) => published.push(e));
   sinkLog(sink2, "第一行\n第二行");
   ok(published[4].data === "第一行\n第二行", "多行日志应原样传出");
   ok(sink2.logs[0] === "第一行\n第二行", "数组里也应是原文一行（前端自己拆）");
+
+  // 18) 「只回发起人」+ 请求还在飞 → **一条都不推**：
+  //     结果已经随这个请求的响应回去了，再推一遍就是应用两遍；推给别人更没道理
+  reqCases++;
+  const targeted = [];
+  const sink3 = makeRequestSink("PHONE-3", (e) => targeted.push(e));
+  sinkPost(sink3, { type: "purchaseXlsxDone", b64: "AAA" }, { toRequester: true });
+  sinkLog(sink3, "📊已生成进货单 Excel", { toRequester: true });
+  ok(
+    sink3.posts.length === 1 && sink3.logs.length === 1,
+    "请求在飞时「只回发起人」的 post/log 仍要收进数组（随响应回去）",
+  );
+  ok(targeted.length === 0, `请求在飞时不该再推 SSE，实际 ${targeted.length} 条（会两遍）`);
+
+  // 19) 「只回发起人」+ 已脱钩 → 定向推给发起人（target = clientId）
+  reqCases++;
+  sink3.detached = true;
+  sinkPost(sink3, { type: "purchaseXlsxDone", b64: "AAA" }, { toRequester: true });
+  ok(targeted.length === 1, `脱钩后必须推出去（否则点导出的人收不到文件），实际 ${targeted.length} 条`);
+  ok(targeted[0].target === "PHONE-3", `target 必须是发起人，实际 "${targeted[0].target}"`);
+  ok(targeted[0].origin === "", "定向帧的 origin 应为空（脱钩后本来就没有发起人可标）");
+
+  // 20) 没带 clientId（curl 调试 / 很早以前的缓存页面）→ **退回广播**：
+  //     宁可多发给别人，也不能让点了按钮的那台什么都收不到
+  reqCases++;
+  const fallback = [];
+  const sink4 = makeRequestSink("", (e) => fallback.push(e));
+  sink4.detached = true;
+  sinkPost(sink4, { type: "purchaseXlsxDone" }, { toRequester: true });
+  ok(
+    fallback.length === 1 && !fallback[0].target,
+    "没有 clientId 时要退回广播（target 空串），不能把结果发丢",
+  );
 }
 
 // ------------------------------------------------ 写串行化 / 重活排队（serialQueue.ts）
@@ -457,6 +537,41 @@ let wiringCases = 0;
     /new TaskQueue\(/.test(serverIndex) && /tasks\.onChange\(/.test(serverIndex),
     "服务端要建重活队列，并把状态变化（queue 事件）广播出去",
   );
+
+  // 「只回发起人」这条链路有三段，缺任何一段都静默失效（表现就是老板说的
+  // "我手机上点导出，电脑上也跟着下载"）：handler 带 toRequester → post 透传 opts →
+  // httpHost 变成 target。三段都钉住。
+  const purchaseSrc = fs.readFileSync(
+    path.join(root, "src", "tools", "shopTool", "handlers", "purchase.ts"),
+    "utf8",
+  );
+  wiringCases++;
+  ok(
+    /const postMe = \(m: any\) => post\(m, \{ toRequester: true \}\)/.test(purchaseSrc) &&
+      /const logMe = \(s: string\) => log\(s, \{ toRequester: true \}\)/.test(purchaseSrc),
+    "进货单导出必须走 postMe / logMe（只回发起人），否则手机点导出、电脑那台也下载一份",
+  );
+  wiringCases++;
+  ok(
+    (purchaseSrc.match(/postMe\(\{\s*type: "purchaseXlsxDone"/g) || []).length === 3 &&
+      !/\bpost\(\{\s*type: "purchaseXlsxDone"/.test(purchaseSrc),
+    "purchaseXlsxDone 的三条出口（成功 / 空单 / 出错）都必须走 postMe，不许有裸 post",
+  );
+  wiringCases++;
+  ok(
+    (purchaseSrc.match(/logMe\(/g) || []).length >= 4 && !/\blog\("⏭️已有一个导出任务在跑/.test(purchaseSrc),
+    "导出的日志也要跟着走 logMe（否则别人的日志区会冒出你没点过的导出记录）",
+  );
+  wiringCases++;
+  ok(
+    /post: \(m, opts\) => ctx\.postToWebview\(m, opts\)/.test(shopIndex),
+    "shopTool/index.ts 的 post 必须把 opts 透传给宿主（漏了等于定向从未生效）",
+  );
+  wiringCases++;
+  ok(
+    /sinkPost\(sink, msg, opts\)/.test(fs.readFileSync(path.join(root, "src", "server", "httpHost.ts"), "utf8")),
+    "httpHost 的 postToWebview 必须把 opts 交给 sinkPost（否则 target 永远为空 = 还是广播）",
+  );
 }
 
 // ------------------------------------------------ 「该不该发 changed」（events.shouldAnnounceChange）
@@ -519,9 +634,9 @@ if (fails.length > 0) {
   process.exit(1);
 }
 console.log(
-  `✅ check-server-units：EventHub 11 组 + 请求收集器 ${reqCases} 组 + 串行队列 ${queueCases} 组` +
+  `✅ check-server-units：EventHub 14 组 + 请求收集器 ${reqCases} 组 + 串行队列 ${queueCases} 组` +
     ` + 重活队列 ${taskCases} 组 + changed 判定 ${changeCases} 组 + 长活儿入口 ${seamCases} 组` +
-    ` + 接线断言 ${wiringCases} 组，共 ${11 + reqCases + queueCases + taskCases + changeCases + seamCases + wiringCases} 组用例全通过`,
+    ` + 接线断言 ${wiringCases} 组，共 ${14 + reqCases + queueCases + taskCases + changeCases + seamCases + wiringCases} 组用例全通过`,
 );
 })().catch((err) => {
   // 用例本身崩了（不是断言失败）也要非零退出，否则 CI 会把它当通过

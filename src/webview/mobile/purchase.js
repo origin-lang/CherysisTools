@@ -1305,6 +1305,17 @@
     var name = String((m && m.file) || "").split(/[\\/]/).pop();
     return name || fallback;
   }
+  /**
+   * 字节数 → 「（620KB）」「（1.4MB）」。后端没给 size 就返回空串 ——
+   * 千万别写成「（0KB）」，那比不写更让人怀疑表是不是空的。
+   */
+  function sizeText(n) {
+    var b = num(n);
+    if (!(b > 0)) {
+      return "";
+    }
+    return "（" + (b >= 1048576 ? (b / 1048576).toFixed(1) + "MB" : Math.round(b / 1024) + "KB") + "）";
+  }
   /** 触发浏览器下载（手机上进"下载"目录，电脑上进浏览器的下载目录） */
   function triggerDownload(blob, name) {
     var url = URL.createObjectURL(blob);
@@ -2517,6 +2528,17 @@
     });
     // 导出 Excel 的终态（长任务在电脑那头跑，网页版走 SSE 回来；每条退出路径后端都会发）：
     // base64 字节随回包来 → 解成 Blob 下载（WPS 打开就能看）
+    //
+    // ⚠️⚠️ 文案只说「已生成 … 正在下载」，**绝对不能说「已存好 / 已完成」**
+    //    （2026-10-17 晚老板抓的现行："电脑上我还没选择文件夹 你就弹出已完成 很搞笑吧？"）。
+    //    根因：`a.click()` 只是"请求下载"，之后浏览器弹不弹「另存为」、你选了哪个文件夹、
+    //    有没有点取消 —— **网页一概不知道**，浏览器根本不提供「下载完成」这个事件。
+    //    所以在这里说"完成"就是假话：PC 上保存框还开着、提示已经说存好了。
+    //    「真的完成」也做不到：唯一的办法 `showSaveFilePicker()` 必须在**点击的那一下**
+    //    同步调用（我们的字节要等几秒后走 SSE 才到，早没有用户手势了），而且手机 Chrome 不支持。
+    //    → 完成的确认交给系统：手机是下载通知/直接进 WPS，桌面是保存框+下载气泡。
+    //    这句话的职责只有两件：① 确认"表做出来了"；② 告诉你**叫什么名字、多大**（回头找得到）。
+    //    4500ms 比常规 2.8 秒长：文件名和大小要看清楚（理由见 app.js 里 toast 的注释）。
     API.on("purchaseXlsxDone", function (m) {
       setExportBusy(false);
       if (m.error) {
@@ -2529,7 +2551,11 @@
           fileNameOf(m, "进货单.xlsx"),
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         );
-        API.toast("已开始下载");
+        API.toast(
+          "✅ 已生成 " + fileNameOf(m, "进货单.xlsx") + sizeText(m.size) + " · 正在下载",
+          false,
+          4500,
+        );
       } catch (e) {
         API.toast("下载没触发，换个浏览器试试", true);
       }

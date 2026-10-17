@@ -136,10 +136,16 @@ export function purchaseHandlers(h: HandlerCtx): Record<string, Handler> {
      *       若哪天真遇到卡顿，就把它改回"落盘 + /api/download"（自己加回输出目录那步即可）。
      * 收的是**屏幕上这份** {date,note,items}（可能还有没存完的改动），不是库里那份。
      * ⚠️ **每条退出路径都要发终态**（含 error），前端按钮才复位得回来。
+     *
+     * ⚠️ 出口一律走 `postMe` / `logMe`（= 只回发起人）：网页版一个服务进程对着手机 + 电脑两台，
+     *    broadcast 的话**手机上点导出、电脑那台也弹一次下载**（2026-10-17 老板报的毛病），
+     *    而这份 base64 有一两 MB，白推一遍还占带宽。见 events.ts 的 HubEvent.target。
      */
     purchaseExportXlsx(msg) {
+      const postMe = (m: any) => post(m, { toRequester: true });
+      const logMe = (s: string) => log(s, { toRequester: true });
       if (exportJobActive) {
-        log("⏭️已有一个导出任务在跑，这一次点击已忽略（等它出完再点）");
+        logMe("⏭️已有一个导出任务在跑，这一次点击已忽略（等它出完再点）");
         return;
       }
       exportJobActive = true;
@@ -148,8 +154,8 @@ export function purchaseHandlers(h: HandlerCtx): Record<string, Handler> {
           try {
             const items = normExportItems(msg.items as any[]);
             if (items.length === 0) {
-              log("❌清单里没有可导出的商品行");
-              post({ type: "purchaseXlsxDone", error: "清单里还没有商品" });
+              logMe("❌清单里没有可导出的商品行");
+              postMe({ type: "purchaseXlsxDone", error: "清单里还没有商品" });
               return;
             }
             // 名称/图片照旧不落库、现查：改了商品，导出的就是新名字
@@ -283,16 +289,17 @@ export function purchaseHandlers(h: HandlerCtx): Record<string, Handler> {
 
             const raw = (await wb.xlsx.writeBuffer()) as unknown as Uint8Array;
             if (!imageRoot) {
-              log("‼导出勾了图片，但没配图片目录，图列全空");
+              logMe("‼导出勾了图片，但没配图片目录，图列全空");
             } else if (failed > 0) {
-              log(`⚠${items.length} 行里有 ${failed} 行图片读取失败已留空`);
+              logMe(`⚠${items.length} 行里有 ${failed} 行图片读取失败已留空`);
             }
             const fileName = `进货单_${date}_${localStamp()}.xlsx`;
-            log(
+            logMe(
               `📊已生成进货单 Excel（${items.length} 款 / ${pics} 图，${Math.round(raw.length / 1024)}KB）`,
             );
             // 字节随回包走（base64）：手机端解成 Blob 下载，**电脑上不落文件**
-            post({
+            // （postMe：只有点了按钮的那一台收得到这张表，别人连这条消息都看不见）
+            postMe({
               type: "purchaseXlsxDone",
               file: fileName,
               b64: Buffer.from(raw).toString("base64"),
@@ -301,8 +308,8 @@ export function purchaseHandlers(h: HandlerCtx): Record<string, Handler> {
               size: raw.length,
             });
           } catch (err: any) {
-            log(`❌导出进货单 Excel 出错：${err?.message ?? err}`);
-            post({ type: "purchaseXlsxDone", error: "生成过程出错，已中止" });
+            logMe(`❌导出进货单 Excel 出错：${err?.message ?? err}`);
+            postMe({ type: "purchaseXlsxDone", error: "生成过程出错，已中止" });
           }
         })().finally(() => {
           exportJobActive = false;

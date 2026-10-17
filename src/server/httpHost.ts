@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 // 只导入类型：@types/vscode 提供类型，编译后不产生 require（服务端进程里没有 vscode 模块）
 import type * as vscode from "vscode";
-import type { ToolContext } from "../core/toolContext.js";
+import type { ToolContext, PostOpts } from "../core/toolContext.js";
 import type { ServerConfig } from "./config.js";
 import type { TaskQueue } from "./taskQueue.js";
 
@@ -29,8 +29,8 @@ import type { TaskQueue } from "./taskQueue.js";
 export type HostSink = {
   posts: any[];
   logs: string[];
-  /** 每条回推/日志顺手投进实时推送中枢；不接就不推 */
-  emit?: (kind: "post" | "log", data: any) => void;
+  /** 每条回推/日志顺手投进实时推送中枢；不接就不推。`opts.toRequester` = 只给发起人 */
+  emit?: (kind: "post" | "log", data: any, opts?: PostOpts) => void;
   /**
    * 请求已经回完了。之后的回推/日志**只走 emit**，不再往上面两个数组里塞：
    * 「生成共享缩略图」那种跑几分钟的后台任务还在往里塞就是内存只增不减
@@ -40,16 +40,16 @@ export type HostSink = {
 };
 
 /** 回推一条：实时推送照发；两个数组只在请求还没回完时收 */
-export function sinkPost(sink: HostSink, msg: any): void {
-  sink.emit?.("post", msg);
+export function sinkPost(sink: HostSink, msg: any, opts?: PostOpts): void {
+  sink.emit?.("post", msg, opts);
   if (!sink.detached) {
     sink.posts.push(msg);
   }
 }
 
 /** 记一条日志：同上。多行文本原样交给接收方自己拆（前端就是这么拆的） */
-export function sinkLog(sink: HostSink, text: string): void {
-  sink.emit?.("log", text);
+export function sinkLog(sink: HostSink, text: string, opts?: PostOpts): void {
+  sink.emit?.("log", text, opts);
   if (!sink.detached) {
     sink.logs.push(text);
   }
@@ -65,15 +65,34 @@ export function sinkLog(sink: HostSink, text: string): void {
  * - 请求已经回完（`detached = true`）：清空 origin —— 后台任务（生成共享缩略图的进度）
  *   **没有"随响应回去"这条路了**，再标着发起人就等于：点了按钮的那台手机
  *   永远看不到自己触发的进度，别人反倒看得见。这是本层唯一一个能静悄悄出错的地方。
+ *
+ * 另有一条**定向**通道（`opts.toRequester`，解决"手机点导出、电脑也下载一份"）：
+ * - 请求还在飞 → **一条都不推**：结果已经在这个请求的 posts 里，再从 SSE 推给发起人就是
+ *   应用两遍；推给别人更没道理（那正是要治的毛病）。
+ * - 请求已经回完 → 只推给发起人（`target`）。中枢见到 target 就**不按 origin 跳过**
+ *   （那时 origin 已经空了，靠它根本判不出来）。
+ * - 没带 clientId（curl 调试、很早以前的缓存页面）→ 退回广播。宁可多发给别人，
+ *   也不能让点了按钮的那台什么都收不到。
+ *
+ * ⚠️ 定向的代价：clientId 是**每个页面现算的**（见 app.js 的 clientId 注释），
+ *    所以导出跑到一半刷新页面/换台设备，那份结果就没人接了 —— 再点一次即可。
+ *    这也是定向帧不进环形缓冲的另一半理由（补发也补不到新页面上）。
  */
 export function makeRequestSink(
   clientId: string,
-  publish: (e: { event: string; data: any; origin: string }) => void,
+  publish: (e: { event: string; data: any; origin: string; target?: string }) => void,
 ): HostSink {
   const sink: HostSink = {
     posts: [],
     logs: [],
-    emit: (kind, data) => {
+    emit: (kind, data, opts) => {
+      if (opts?.toRequester) {
+        if (!sink.detached) {
+          return; // 随 /api/invoke 的响应回去，推了就是两遍
+        }
+        publish({ event: kind, data, origin: "", target: clientId });
+        return;
+      }
       publish({ event: kind, data, origin: sink.detached ? "" : clientId });
     },
   };
@@ -153,11 +172,11 @@ export function createHttpHost(
       },
     },
 
-    postToWebview(msg: any) {
-      sinkPost(sink, msg);
+    postToWebview(msg: any, opts?: PostOpts) {
+      sinkPost(sink, msg, opts);
     },
-    log(text: string) {
-      sinkLog(sink, text);
+    log(text: string, opts?: PostOpts) {
+      sinkLog(sink, text, opts);
     },
 
     async selectFolder(): Promise<string | undefined> {

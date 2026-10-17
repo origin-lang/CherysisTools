@@ -910,7 +910,8 @@ export const shopTool: ToolDefinition = {
         state.current = d;
       },
       log,
-      post: (m) => ctx.postToWebview(m),
+      // opts 原样透传：网页版靠它把「只给点按钮的那台」落实下去（VS Code 忽略）
+      post: (m, opts) => ctx.postToWebview(m, opts),
       getSetting,
       setSetting,
       readOnly,

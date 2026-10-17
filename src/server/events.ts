@@ -27,6 +27,15 @@ export type HubEvent = {
   data: unknown;
   /** 谁引起的；空串（或省略）= 服务端自己（定时巡检、后台任务） */
   origin?: string;
+  /**
+   * **只发给这一个连接**（浏览器 clientId）。空串（或省略）= 广播。
+   *
+   * 为什么要有它：长任务的「一次性结果」（导出的 Excel 字节、生成的九宫格文件名）
+   * 只对点按钮的那台设备有意义。以前走广播 → 手机上点导出，**电脑那台也跟着下载一份**，
+   * 而且那张表转成 base64 有一两 MB，等于白推给每台设备。
+   * 加了 target 之后：只有点的那个人收，其他人一条都看不到。
+   */
+  target?: string;
 };
 
 /** 已经编好号、编好文本的事件（环形缓冲里存的就是它） */
@@ -35,6 +44,8 @@ export type SseFrame = {
   event: string;
   data: string;
   origin: string;
+  /** 空串 = 广播；非空 = 只该发给这个 clientId（见 HubEvent.target） */
+  target: string;
 };
 
 /** 环形缓冲默认留多少条：手机锁屏几分钟再回来还能补上，代价也就几十 KB */
@@ -81,30 +92,45 @@ export class EventHub {
   }
 
   /**
-   * 广播一条。
+   * 广播一条（或：只发给 target 那一个）。
    *
    * **先留档、再扇出**：留档是为了断线续传；扇出失败（那个客户端已经走了）只影响它自己，
    * 绝不能让 publish 抛出去——调用方是正在写日志的后台任务，这里抛一嗓子等于把整个
    * 生成任务弄挂。
    *
-   * 与发信人同源的连接会跳过：他自己那次 `/api/invoke` 的响应里已经带回同样一份，
-   * 再推一遍就是「同一件事应用两遍」。
+   * 两种去向，规则不同：
+   * - **广播**（没有 target）：跳过与发信人同源的连接 —— 他自己那次 `/api/invoke` 的响应里
+   *   已经带回同样一份，再推一遍就是「同一件事应用两遍」。
+   * - **定向**（有 target）：**只发给 target 那一个，而且不跳过 origin** —— 因为发起者本人
+   *   正是唯一该收到的人（长任务脱钩后 origin 已经清空了，靠 origin 判断根本判不出来）。
+   *
+   * ⚠️ 定向帧**不进环形缓冲**：它只对一个人有意义，补发给别人是噪音；更要紧的是导出那种
+   *    帧里带着整张表（base64 一两 MB），缓冲留 200 条能直接把内存顶爆。
+   *    代价：定向结果断线后补不回来 —— 那种结果本来就是"再点一次"最省事。
    */
   publish(e: HubEvent): SseFrame {
     const origin = e.origin || "";
+    const target = e.target || "";
     const frame: SseFrame = {
       id: this.nextId++,
       event: e.event,
       data: typeof e.data === "string" ? e.data : JSON.stringify(e.data ?? null),
       origin,
+      target,
     };
-    this.buffer.push(frame);
-    if (this.buffer.length > this.keep) {
-      this.buffer.splice(0, this.buffer.length - this.keep);
+    if (!target) {
+      this.buffer.push(frame);
+      if (this.buffer.length > this.keep) {
+        this.buffer.splice(0, this.buffer.length - this.keep);
+      }
     }
     const text = formatFrame(frame);
     for (const c of [...this.clients]) {
-      if (origin && c.origin === origin) {
+      if (target) {
+        if (c.origin !== target) {
+          continue;
+        }
+      } else if (origin && c.origin === origin) {
         continue;
       }
       this.send(c, text);
@@ -133,10 +159,15 @@ export class EventHub {
     }
     const oldest = this.buffer.length > 0 ? this.buffer[0].id : this.nextId;
     if (lastId < oldest - 1) {
-      this.send(sink, formatFrame({ id: 0, event: "reset", data: "{}", origin: "" }));
+      this.send(sink, formatFrame({ id: 0, event: "reset", data: "{}", origin: "", target: "" }));
       return;
     }
     for (const f of this.buffer) {
+      // 缓冲里只可能是广播（定向帧压根不入缓冲，见 publish 的注释）；
+      // 这条判断是防"以后有人改了"的兜底：别人的定向结果永远不该补发给我。
+      if (f.target && f.target !== sink.origin) {
+        continue;
+      }
       if (f.id > lastId) {
         this.send(sink, formatFrame(f));
       }
