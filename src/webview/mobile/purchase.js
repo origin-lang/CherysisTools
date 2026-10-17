@@ -199,6 +199,11 @@
     var d = got - need;
     return { txt: (d > 0 ? "+" : "") + fmtNum(d), over: d > 0 };
   }
+  /** 展开块第二行的进价/售价（2026-10-17，老板：那句「商品库里有这个编号」没信息量，换成真有用的）。
+   *  ⚠️ 跟 app.js 的 `money()` **同一格式**（¥ + 千分位、两位小数以内）—— 界面上同一种数不能两种写法。 */
+  function fmtMoney(v) {
+    return "¥" + (Math.round(num(v) * 100) / 100).toLocaleString("zh-CN");
+  }
 
   // ---------- 整单汇总（自动算，不让人填）----------
   /**
@@ -432,7 +437,9 @@
       : '<span class="pi-thumb"><span class="noph">编号</span></span>';
     var open = state.openRow === i;
     var h =
-      '<div class="pit" data-i="' + i + '">' +
+      // ⭐ 展开与否只体现在这一个 class 上（2026-10-17）：**每行的展开块都画出来**、CSS 默认收着，
+      //    点行只是切 .open —— 不再整块重画。整块重画 = 所有 <img> 重新请求+解码 = 整列闪一下。
+      '<div class="pit' + (open ? " open" : "") + '" data-i="' + i + '">' +
       '<div class="pit-row">' +
       thumb +
       '<input class="pi-code" type="text" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="编号" value="' +
@@ -446,19 +453,35 @@
       '<input class="pi-got' + (gc ? " " + gc : "") + '" type="number" inputmode="decimal" min="0" step="1" placeholder="0" value="' +
       esc(numStr(it.got)) + '" />' +
       "</div>";
-    if (open) {
-      h +=
-        '<div class="pit-x">' +
-        '<div class="pit-xrow">' +
-        '<div class="pit-info">' +
-        '<div class="pit-full">' + (hasCode ? esc(it.code) + " " + esc(p ? p.name || "(这个商品没写名称)" : "") : "先输编号，名称和图片自动带出来") + "</div>" +
-        (hasCode ? '<div class="pit-sub muted small">' + (p ? "商品库里有这个编号" : "商品库里没有这个编号（照样记进单子）") + "</div>" : "") +
-        "</div>" +
-        '<button class="pit-del mini" type="button">删这行</button>' +
-        "</div>" +
-        '<input class="pi-note" type="text" placeholder="备注（如：档口只剩 6 条）" value="' + esc(it.note) + '" />' +
-        "</div>";
-    }
+    // 展开块**每行都有**（CSS 默认 display:none，行带 .open 才露）——
+    // 点行展开从此只切 class、不重画列表（原来 `if (open)` 条件渲染是"整列图片闪一下"的根源）。
+    h +=
+      '<div class="pit-x">' +
+      '<div class="pit-xrow">' +
+      '<div class="pit-info">' +
+      '<div class="pit-full">' + (hasCode ? esc(it.code) + " " + esc(p ? p.name || "(这个商品没写名称)" : "") : "先输编号，名称和图片自动带出来") + "</div>" +
+      // 第二行（2026-10-17，老板定的）：库里有 → **进价 / 售价**（档口现场对照着算账，比一句
+      // 「商品库里有这个编号」有用得多）；库里没有 → 那句提示**靠右 + 更淡**，别占正位。
+      (hasCode
+        ? '<div class="pit-sub muted small' + (p ? "" : " pit-sub-r") + '">' +
+          (p ? "进价 " + fmtMoney(p.cost_price) + " · 售价 " + fmtMoney(p.sale_price) : "商品库里没有这个编号（照样记进单子）") +
+          "</div>"
+        : "") +
+      "</div>" +
+      // 删行＝**垃圾桶图标**（2026-10-17，老板嫌「删这行」太口语化）：
+      // 跟顶栏那套同款单色线性 SVG（viewBox 24 + stroke 1.9），CSS 里染危险红。
+      // ⚠️ 热区在 CSS 给 44×44（图标本身只画 20px）—— 手指够得着，别为了小图标牺牲可点面积。
+      '<button class="pit-del" type="button" aria-label="删除这一行" title="删除这一行">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M3 6h18" />' +
+      '<path d="M19 6v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />' +
+      '<path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />' +
+      '<path d="M10 11v6" />' +
+      '<path d="M14 11v6" />' +
+      "</svg></button>" +
+      "</div>" +
+      '<input class="pi-note" type="text" placeholder="备注（如：档口只剩 6 条）" value="' + esc(it.note) + '" />' +
+      "</div>";
     return h + "</div>";
   }
   /** 搜索词（空 = 不筛，整单都显示） */
@@ -1053,6 +1076,33 @@
     }
     return true;
   }
+  /** 点行 = 摊开 / 收起这一行：**只切 `.open` 这一个 class，绝不重画列表**。
+   *  原来这里是整块 `renderItems()` —— 列表里所有 `<img>` 都重建、重新请求 + 解码，
+   *  表现就是"点一个商品，其他商品跟着闪一下"（2026-10-17 老板撞上的），列表越长越明显。
+   *  展开块现在**每行都画**（CSS 默认收着，行带 `.open` 才露），所以切 class 就够了。
+   *  ⚠️ `state.openRow` 仍要维护：`mergeSameCode` / `sortDraftItems` / 删行都靠它知道"摊开的是哪一行"。 */
+  function toggleOpenRow(i, box) {
+    var prev = state.openRow;
+    var next = prev === i ? -1 : i;
+    state.openRow = next;
+    if (!box || !box.querySelector) {
+      return next;
+    }
+    // 互斥：同时只摊一行 —— 旧的摘掉、新的挂上（节点找不到就跳过，别抛）
+    if (prev >= 0) {
+      var p = box.querySelector('.pit[data-i="' + prev + '"]');
+      if (p && p.classList) {
+        p.classList.remove("open");
+      }
+    }
+    if (next >= 0) {
+      var n = box.querySelector('.pit[data-i="' + next + '"]');
+      if (n && n.classList) {
+        n.classList.add("open");
+      }
+    }
+    return next;
+  }
   /** 让某一行闪一下浅绿（CSS 动画 `.pit.fresh`）。
    *  ⚠️ 动画同一个元素上只播一次 —— 所以先摘掉 class、逼一次重排、再加回去，才会重播。 */
   /** 把"刚落位那一行"的持续高亮撤掉（他一动手 / 换单就撤） */
@@ -1198,7 +1248,18 @@
     }
     var sub = row.querySelector(".pit-sub");
     if (sub) {
-      sub.textContent = hasCode ? (p ? "商品库里有这个编号" : "商品库里没有这个编号（照样记进单子）") : "";
+      // 跟 itemHtml 同一套口径（2026-10-17）：有商品 → 进价/售价；没有 → 提示靠右。
+      // ⚠️ class 也要跟着切（右不右对齐由它管），光改 textContent 会留上一次的对齐。
+      if (!hasCode) {
+        sub.textContent = "";
+        sub.classList.remove("pit-sub-r");
+      } else if (p) {
+        sub.textContent = "进价 " + fmtMoney(p.cost_price) + " · 售价 " + fmtMoney(p.sale_price);
+        sub.classList.remove("pit-sub-r");
+      } else {
+        sub.textContent = "商品库里没有这个编号（照样记进单子）";
+        sub.classList.add("pit-sub-r");
+      }
     }
   }
   /** 索引 = 行在 DOM 里的位置（data-i）。渲染顺序和 state.draft.items 一定一致 */
@@ -1522,9 +1583,8 @@
       if (i < 0) {
         return;
       }
-      state.openRow = state.openRow === i ? -1 : i;
-      // 整块重画：此刻用户没在输入框里（点的是行），焦点没有可丢的
-      renderItems();
+      // ⭐ 摊开 / 收起 = 只切 class（toggleOpenRow），**不重画** —— 重画整列的 <img> 会闪
+      toggleOpenRow(i, items);
     });
 
     // 离开详情屏的几条路都要**先结算**，别让最后那几笔停在 debounce 里

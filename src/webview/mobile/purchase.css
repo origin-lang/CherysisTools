@@ -530,9 +530,16 @@
 /* 展开块：全名 + 删行 + 备注（一次只有一行摊开）。
    ⚠️ 缩略图不在这儿了 —— 行上那颗常驻的已经看得见（原来两处都放，白占一块地方）。 */
 .pit-x {
+  /* ⭐ 默认收着：**每行都画了展开块**，行带 `.open` 才露 —— 点行只切 class、**不重画列表**。
+     重画 = 列表里所有 <img> 重新请求 + 解码 = "点一个商品，其他商品跟着闪一下"
+     （2026-10-17 老板撞上的；跟筛选面板 toggleGroup 当年"只切 class 不重画"是同一课）。 */
+  display: none;
   border-top: 1px solid var(--line);
   background: var(--soft);
   padding: 8px;
+}
+.pit.open .pit-x {
+  display: block;
 }
 .pit-xrow {
   display: flex;
@@ -580,10 +587,36 @@
 .pit-sub {
   margin-top: 2px;
 }
+/* 库里没这个编号的提示：**靠右 + 淡一档**（2026-10-17 老板：第二行正位要留给进价/售价，
+   这种"没找到"的提示别占正位 —— 他给的两个选项里挑了"靠右"，不另占地方）。 */
+.pit-sub-r {
+  text-align: right;
+  opacity: 0.75;
+}
+/* 删行＝**垃圾桶图标**（2026-10-17，老板嫌「删这行」太口语化 → 改成跟顶栏同款单色线性 SVG，染危险红）。
+   ⚠️ 全局 button 有边框/底色/内边距/圆角 → 全部显式清掉（裸图标，别做成一个醒目的实心按钮 —— 那样反而诱导误触）。
+   ⚠️ 图标本身只画 20px，**热区必须自己给到 44×44**（项目触控下限 --tap），不然手指点不准。 */
 .pit-del {
   flex: none;
-  min-width: 0;
+  width: 44px;
+  height: 44px;
+  min-height: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 0;
+  border-radius: 8px;
   color: var(--danger, #a32d2d);
+}
+.pit-del:active {
+  background: rgba(163, 45, 45, 0.1);
+}
+.pit-del svg {
+  width: 20px;
+  height: 20px;
+  display: block;
 }
 .pit-x .pi-note {
   margin-top: 8px;
