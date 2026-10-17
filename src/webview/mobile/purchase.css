@@ -680,6 +680,27 @@
   width: 24px;
   height: 24px;
 }
+/* 第二颗图标（放大镜）多一个"开关态"：**关着＝灰，开着＝实心绿 + 白图形**。
+   （2026-10-17 晚，老板原话「如果我打开了就是绿色框框，取消筛选变成灰色」；在 A/B/C 三档里挑的 A）
+   为什么要这个：搜索行是点开才滑出来的，收着的时候页面上一点痕迹都没有 ——
+   按钮两态长得一样，他划着划着就忘了自己还在筛选里，看到列表少了几行会以为单子坏了。
+   ⚠️ 灰边没用 `--line`（#e3e6ea 在白底上等于没边，这条坑踩过两次），用 #d2d6dc 深一档：
+      既是"没启用"的灰，又还看得出是个方框。深色模式下反过来了（#d2d6dc 会亮得像"开着"），
+      所以下面单给一条媒体查询把它换回 `--line`。 */
+.p-icon.p-searchicon {
+  border-color: #d2d6dc;
+  color: var(--muted);
+}
+@media (prefers-color-scheme: dark) {
+  .p-icon.p-searchicon {
+    border-color: var(--line);
+  }
+}
+.p-icon.p-searchicon.on {
+  border-color: var(--brand);
+  background: var(--brand);
+  color: #fff;
+}
 /* 生成期间：按钮变淡、图标转圈 —— 图标按钮写不下"生成中…"，用转圈说明还在跑 */
 .p-icon:disabled {
   opacity: 0.45;

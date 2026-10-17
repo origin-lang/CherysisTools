@@ -752,6 +752,15 @@
     if (row) {
       row.hidden = !state.searchOpen;
     }
+    // 顶栏那颗放大镜跟着染色（2026-10-17 晚，老板挑的 A 档）：
+    // **关着＝灰边灰图形，开着＝实心绿 + 白图形** —— 不然两态长得一模一样，看不出搜索开没开。
+    // ⚠️ 放这儿是因为 applySearchRow 是"开/关"的唯一出口；别挪进 renderItems（那颗按钮在顶栏、
+    //    不随列表重画，挪进去反而每次筛字都要摸一遍 DOM）。
+    var btn = $("purchaseSearchBtn");
+    if (btn) {
+      btn.classList.toggle("on", !!state.searchOpen);
+      btn.setAttribute("aria-pressed", state.searchOpen ? "true" : "false");
+    }
     var inp = $("purchaseSearch");
     if (inp && inp.value !== state.searchQ) {
       inp.value = state.searchQ;
@@ -1622,6 +1631,15 @@
       return;
     }
     var n = qcQty();
+    // 库里没有这个编号 → 不记，只提示（2026-10-17 晚老板的口径，跟行内编号格同一条规则）。
+    // 输入框**不清**：他多半是敲错了（361 敲成 316），留着好让他接着改。
+    if (!findProduct(code)) {
+      API.toast("没有 " + code + " 这个编号", true);
+      if (codeEl && codeEl.focus) {
+        codeEl.focus();
+      }
+      return;
+    }
     var r = qcApply(state.draft.items, code, n);
     qcLast = r.item;
     qcLog.push({ item: r.item, n: r.n, created: r.created });
@@ -2386,6 +2404,16 @@
         var cc = canonicalCode(v) || v; // 归一不了就保留原文照样记（老板拍的口径）
         if (t.value !== cc) {
           t.value = cc; // 所见即所存：输 006 当场显示 A006，名称和图立刻出来
+        }
+        // 库里没有这个编号 → **不记**，只提示（2026-10-17 晚老板：「输入了错误编号不需要添加进去，
+        // 提示一下就好」）。原来是把错编号也记成一行、名称栏写「无此编号」—— 那种行不算缺、也不算款数，
+        // 攒在单子里只会让他导出时才发现多了几条垃圾。
+        // ⚠️ 只管「要补的」那页：现场新货行的编号本来就允许是库里没有的（那是这功能的意义）。
+        // ⚠️ 还原成 it.code（没改过就是空）而不是清空：这一格可能本来就写着一个对号，别把他的好数据抹了。
+        if (!isLiveTab() && cc && !findProduct(cc)) {
+          API.toast("没有 " + cc + " 这个编号", true);
+          t.value = it.code || "";
+          return;
         }
         if (cc === it.code) {
           return; // 编号其实没变（比如他把 A006 改成 006）→ 不用排序也不用存
