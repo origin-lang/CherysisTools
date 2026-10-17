@@ -2280,6 +2280,150 @@
       .join("");
   }
 
+  /**
+   * 「服务」卡片里那两行访问地址（老板要的：设置页能直接复制发人）。
+   *
+   * 内网 = 家里/店里 Wi-Fi 用的，外网 = 手机 4G 或别人家用的，外网那个打开要输密码。
+   * 地址可能很长（外网那串是三词域名），别用 nowrap —— `.kv .v` 已经有 break-all 兜住了。
+   */
+  function urlRows(j) {
+    var out = "";
+    var lan = j && j.lanUrls && j.lanUrls.length ? j.lanUrls[0] : "";
+    if (lan) {
+      out += urlRow("内网", lan);
+    }
+    var t = j && j.tunnel;
+    if (t && t.state === "up" && t.url) {
+      out += urlRow("外网", t.url);
+    } else if (t && t.state === "starting") {
+      // 开机那几秒会停在这里（隧道要连 Cloudflare）。写一句比什么都不显示好 ——
+      // 不然他刚开机打开设置页会以为"外网这一行没了"。
+      out += '<div class="kvr"><span class="k">外网</span><span class="v muted">正在连接…</span></div>';
+    } else if (t && t.state === "error") {
+      out +=
+        '<div class="kvr"><span class="k">外网</span><span class="v muted">没开起来：' +
+        esc(t.error || "原因不明") +
+        "</span></div>";
+    }
+    return out;
+  }
+
+  function urlRow(label, url) {
+    return (
+      '<div class="kvr urlrow"><span class="k">' +
+      esc(label) +
+      '</span><span class="v">' +
+      esc(url) +
+      '</span><button type="button" class="urlcopy" data-copy="' +
+      esc(url) +
+      '">复制</button></div>'
+    );
+  }
+
+  /**
+   * 复制一段文字。按钮上给个"已复制"的回执（1.2 秒）——不然点完没反应，会以为没成。
+   *
+   * ⚠️ 局域网是 http，`navigator.clipboard` 在非 https 下**不存在**（安全上下文要求），
+   * 所以必须留 textarea + execCommand 这条降级路，否则他在家用 Wi-Fi 打开就复制不了。
+   */
+  function copyText(text, btn) {
+    var flash = function (ok) {
+      if (!btn) {
+        return;
+      }
+      var old = btn.textContent;
+      btn.textContent = ok ? "已复制" : "复制失败";
+      setTimeout(function () {
+        btn.textContent = old;
+      }, 1200);
+    };
+    var fallback = function () {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try {
+        ok = document.execCommand("copy");
+      } catch (e) {
+        ok = false;
+      }
+      document.body.removeChild(ta);
+      flash(ok);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        flash(true);
+      }, fallback);
+    } else {
+      fallback();
+    }
+  }
+
+  /**
+   * 被封的 IP（错满 10 次密码 → 关 24 小时，2026-10-17 晚）。
+   *
+   * ⚠️ 这一块**只有局域网打开才看得见**：外网来的 `/api/ping` 里 `gateLocks` 恒为空数组，
+   * 点「解除」也只会收到 403。要放人进来必须在店里/家里（他们说「必须后台操作」就是这个意思）。
+   */
+  function lockRows(j) {
+    var list = (j && j.gateLocks) || [];
+    if (!list.length) {
+      return "";
+    }
+    var out = "";
+    list.forEach(function (l) {
+      out +=
+        '<div class="kvr urlrow"><span class="k">封禁</span><span class="v">' +
+        esc(l.ip) +
+        '<br><span class="muted small">还剩 ' +
+        esc(leftText(l.leftMs)) +
+        "</span></span>" +
+        '<button type="button" class="urlcopy" data-unlock="' +
+        esc(l.ip) +
+        '">解除</button></div>';
+    });
+    if (list.length > 1) {
+      out +=
+        '<div class="kvr urlrow"><span class="k">全部</span><span class="v muted">一共 ' +
+        esc(String(list.length)) +
+        ' 个</span><button type="button" class="urlcopy" data-unlock="">全解</button></div>';
+    }
+    return out;
+  }
+
+  /** 「还剩 23 小时」/「还剩 4 分钟」 */
+  function leftText(ms) {
+    var min = Math.max(1, Math.ceil((ms || 0) / 60000));
+    return min >= 60 ? Math.ceil(min / 60) + " 小时" : min + " 分钟";
+  }
+
+  /** 解除封禁：空着 ip = 全部解除 */
+  function unlockOne(ip) {
+    fetch("/api/gate/unlock" + (token ? "?token=" + encodeURIComponent(token) : ""), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(ip ? { ip: ip } : {}),
+    })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (j) {
+        if (j && j.ok) {
+          toast(j.unlocked ? "已解除，他能进来了" : "名单里没有这个人");
+          renderSettings();
+        } else {
+          toast((j && j.error) || "解除失败", true);
+        }
+      })
+      .catch(function () {
+        toast("解除失败：连不上服务", true);
+      });
+  }
+
   function renderSettings() {
     var rows = state.rules
       .map(function (r) {
@@ -2297,12 +2441,29 @@
         return r.json();
       })
       .then(function (j) {
-        $("serverTable").innerHTML = kvRows([
-          ["数据目录", j.storageDir || "—"],
-          ["图片目录", j.imageDir || "—"],
-          ["图片目录可用", j.imageDirReady ? "是" : "否"],
-          ["需要口令", j.tokenRequired ? "是" : "否（局域网内不校验）"],
-        ]);
+        $("serverTable").innerHTML =
+          kvRows([
+            ["数据目录", j.storageDir || "—"],
+            ["图片目录", j.imageDir || "—"],
+            ["图片目录可用", j.imageDirReady ? "是" : "否"],
+            ["需要口令", j.tokenRequired ? "是" : "否（局域网内不校验）"],
+          ]) + urlRows(j) + lockRows(j);
+        // 这块每逢切页签/刷新就被重画一次，所以每次重画完都要重新挂 onclick。
+        // 地址从 data-copy 取，不塞闭包 —— 重画以后旧闭包就丢了。
+        $("serverTable")
+          .querySelectorAll("[data-copy]")
+          .forEach(function (b) {
+            b.onclick = function () {
+              copyText(b.getAttribute("data-copy"), b);
+            };
+          });
+        $("serverTable")
+          .querySelectorAll("[data-unlock]")
+          .forEach(function (b) {
+            b.onclick = function () {
+              unlockOne(b.getAttribute("data-unlock") || "");
+            };
+          });
       })
       .catch(function () {
         $("serverTable").innerHTML = '<div class="muted small">（读不到服务信息）</div>';

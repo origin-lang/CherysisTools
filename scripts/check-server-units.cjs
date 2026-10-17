@@ -648,6 +648,30 @@ let wiringCases = 0;
     /tunnel: tunnel \? tunnel\.status\(\) : null/.test(serverIndexSrc),
     "/api/ping 必须带 tunnel 状态：面板和手机都靠它拿地址",
   );
+  wiringCases++;
+  // 手机设置页那两行地址（2026-10-17）。外网地址必须现取，绝不能写死 —— 隧道重起就换了。
+  const mobileAppSrc = fs.readFileSync(path.join(root, "src", "webview", "mobile", "app.js"), "utf8");
+  const mobileAppNoC = noComments(mobileAppSrc);
+  ok(
+    /lanUrls: lanUrls\(cfg\.port\)/.test(serverIndexSrc),
+    "/api/ping 必须带内网地址：手机从外面用 4G 打开设置页时，也要能看出「在家该用哪个」",
+  );
+  wiringCases++;
+  ok(
+    /function urlRows\(j\)/.test(mobileAppNoC) && /\) \+ urlRows\(j\)/.test(mobileAppNoC),
+    "手机设置页「服务」卡片要把内网/外网地址拼进去（老板要能直接复制发人）",
+  );
+  wiringCases++;
+  ok(
+    /data-copy="' \+\s*esc\(url\)/.test(mobileAppNoC) && /getAttribute\("data-copy"\)/.test(mobileAppNoC),
+    "复制按钮的地址必须走 data-copy 属性：这块每次切页签都重画，塞闭包一重画就丢",
+  );
+  wiringCases++;
+  ok(
+    /execCommand\("copy"\)/.test(mobileAppNoC) && /navigator\.clipboard/.test(mobileAppNoC),
+    "复制必须留 textarea+execCommand 降级路：局域网是 http，navigator.clipboard 在非 https 下不存在",
+  );
+  wiringCases++;
   // 脱钩之后这条**反过来了**：退出时停隧道 = 下次新地址 = 已经发出去的链接全废。
   // 要关外网访问只能靠 tunnel: false（那条路会把遗留隧道杀掉）。
   wiringCases++;
@@ -789,6 +813,15 @@ let gateCases = 0;
     noteFail,
     noteOk,
     ticketCookie,
+    lockLeftMs,
+    lockText,
+    listLocks,
+    unlockIp,
+    unlockAll,
+    loadLocks,
+    MAX_FAILS,
+    FAIL_WINDOW_MS,
+    LOCK_MS,
     GATE_COOKIE,
   } = require(path.join(root, "out", "server", "gate.js"));
 
@@ -856,6 +889,133 @@ let gateCases = 0;
   noteOk(ip);
   ok(tooManyFails(ip) === false, "登录成功必须把失败计数清零（否则成功一次也还是被挡着）");
 
+  // ---- 「5 分钟内错 10 次就关 5 分钟小黑屋」（2026-10-17 晚，他提的防爆破）
+  // ⚠️ 这几个函数都吃 now 参数，别用真实时间 —— 用真实时间就只能测"立刻"，测不出窗口边界。
+  gateCases++;
+  ok(
+    MAX_FAILS === 10 && FAIL_WINDOW_MS === 5 * 60_000 && LOCK_MS === 24 * 60 * 60_000,
+    "口径必须是「5 分钟里错 10 次 → 关 24 小时」（他说自己人不可能错 10 次，错满就是有人在外面试）",
+  );
+
+  gateCases++;
+  {
+    // 慢慢试：每 61 秒错一次，凑 10 次要 9 分钟 —— 每个窗口里最多只有 5 次，不该被锁
+    const slow = "slow-" + Date.now();
+    const t0 = 1_700_000_000_000;
+    for (let i = 0; i < 10; i++) noteFail(slow, t0 + i * 61_000);
+    ok(
+      tooManyFails(slow, t0 + 9 * 61_000) === false,
+      "「5 分钟内的 10 次」才算：隔一分钟错一次的人不该被锁（不然正常手抖也会被关）",
+    );
+  }
+
+  gateCases++;
+  {
+    // 快快试：20 秒一次，3 分钟凑够 10 次 → 锁；锁从**最后一次**算，不是从第一次
+    const fast = "fast-" + Date.now();
+    const base = 1_700_000_000_000;
+    for (let i = 0; i < 10; i++) noteFail(fast, base + i * 20_000);
+    const lastAt = base + 9 * 20_000;
+    ok(
+      tooManyFails(fast, lastAt + 4 * 60_000) === true,
+      "第 10 次之后 4 分钟还得关着（锁的是 LOCK_MS 那么久，不是「够窗口时间就自动放」）",
+    );
+  }
+
+  gateCases++;
+  {
+    const fast = "fast2-" + Date.now();
+    const base = 1_700_000_000_000;
+    for (let i = 0; i < 10; i++) noteFail(fast, base + i * 20_000);
+    const lastAt = base + 9 * 20_000;
+    ok(
+      lockLeftMs(fast, lastAt) === LOCK_MS &&
+        tooManyFails(fast, lastAt + LOCK_MS + 1000) === false,
+      "锁的时长必须从最后一次试错起算：从他第一次错算起的话，慢慢试的人等于没锁",
+    );
+  }
+
+  gateCases++;
+  {
+    const fx = "mixed-" + Date.now();
+    const base = 1_700_000_000_000;
+    // 先错 9 次，隔了 6 分钟（窗口早过了）再错 1 次 → 窗口重置，不该锁
+    for (let i = 0; i < 9; i++) noteFail(fx, base + i * 1000);
+    noteFail(fx, base + 6 * 60_000);
+    ok(
+      tooManyFails(fx, base + 6 * 60_000) === false,
+      "跨出 5 分钟窗口后计数要重置（不然攒够 10 次就永久锁，正常用户会被自己坑死）",
+    );
+  }
+
+  gateCases++;
+  ok(
+    /24 小时后再来/.test(lockText(24 * 60 * 60_000)) && /5 分钟后再来/.test(lockText(5 * 60_000)) &&
+      /1 分钟后再来/.test(lockText(1)),
+    "给用户的话要能看懂（24 小时别写成「1440 分钟」，最少说 1 分钟）",
+  );
+
+  // ---- 24 小时锁必须活过重启 + 后台能解（2026-10-17 晚第二拨）
+  gateCases++;
+  {
+    const os = require("os");
+    const tmp = path.join(os.tmpdir(), "cherysis-locks-" + process.pid + "-" + Date.now() + ".json");
+    const ipP = "persist-" + Date.now();
+    const now = Date.now();
+
+    ok(loadLocks(tmp) === 0, "没有落盘文件时应当当没封过人（别让缺文件把服务卡死）");
+
+    for (let i = 0; i < 10; i++) {
+      noteFail(ipP, now + i);
+    }
+    // 文件可能根本没被写出来（变异不落盘时）→ 先看存在性，别让断言变成 ENOENT 崩溃
+    const raw = fs.existsSync(tmp) ? fs.readFileSync(tmp, "utf8") : "";
+    const disk = raw ? JSON.parse(raw) : {};
+    ok(
+      !!disk[ipP] && disk[ipP].n === 10,
+      "撞线必须落盘：24 小时的锁要是能被「重启一下服务」洗掉，这道锁等于没设",
+    );
+  }
+
+  gateCases++;
+  {
+    const list = listLocks();
+    const one = list.find((l) => l.ip.indexOf("persist-") === 0);
+    ok(
+      !!one && one.leftMs > 23 * 60 * 60_000 && one.fails === 10,
+      "被封的人要能在后台列表里看到（ip + 还剩多久 + 错了几次），否则「必须后台操作才能放行」落不了地",
+    );
+  }
+
+  gateCases++;
+  {
+    const ipP = listLocks().find((l) => l.ip.indexOf("persist-") === 0).ip;
+    const had = unlockIp(ipP);
+    ok(
+      had === true && !listLocks().some((l) => l.ip === ipP),
+      "「解除」要真的把人从名单里拿掉（点了还锁着 = 他永远进不来）",
+    );
+  }
+
+  gateCases++;
+  {
+    const os = require("os");
+    const tmp2 = path.join(os.tmpdir(), "cherysis-locks2-" + process.pid + "-" + Date.now() + ".json");
+    const ipR = "restore-" + Date.now();
+    fs.writeFileSync(tmp2, JSON.stringify({ [ipR]: { n: 10, first: Date.now(), last: Date.now() } }));
+    loadLocks(tmp2);
+    ok(
+      listLocks().some((l) => l.ip === ipR),
+      "重启后要能从磁盘把封禁读回来（读不回来的话，重启一次就白封了）",
+    );
+  }
+
+  gateCases++;
+  {
+    const n = unlockAll();
+    ok(n >= 1 && listLocks().length === 0, "「全部解除」要能一次清干净（换密码/自己把自己锁了时用）");
+  }
+
   gateCases++;
   ok(
     /HttpOnly/.test(ticketCookie(PW)) && /SameSite=Lax/.test(ticketCookie(PW)),
@@ -863,6 +1023,8 @@ let gateCases = 0;
   );
 
   const gateIndexSrc = fs.readFileSync(path.join(root, "src", "server", "index.ts"), "utf8");
+  // 剥注释再断言：注释里写着「不能等下一次」这种话，本身就会被正则命中 → 假绿
+  const gateNoC = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
   gateCases++;
   ok(
     /if \(cfg\.password && isFromTunnel\(req\)\)/.test(gateIndexSrc),
@@ -878,6 +1040,85 @@ let gateCases = 0;
     /res\.setHeader\("Set-Cookie", ticketCookie\(cfg\.password\)\)/.test(gateIndexSrc),
     "登录成功必须下发 cookie（不发的话每次刷新都要重输）",
   );
+  gateCases++;
+  {
+    // 接线：429 + Retry-After，而且**撞线的那一次**就要回 429（不能等下一次）
+    const noC = gateNoC(gateIndexSrc);
+    ok(
+      /sendJson\(res, 429/.test(noC) && /Retry-After/.test(noC) && /lockText\(/.test(noC),
+      "被关小黑屋要回 429 + Retry-After + 一句人话（401 是「密码错」，429 才是「你被锁了」）",
+    );
+  }
+  gateCases++;
+  {
+    // 锁着的时候连"密码对了"也不许过：lockLeftMs 的判断必须在比对密码之前
+    const noC = gateNoC(gateIndexSrc);
+    const atLock = noC.indexOf("const left = lockLeftMs(ip)");
+    const atCmp = noC.indexOf("=== cfg.password");
+    ok(
+      atLock > 0 && atCmp > atLock,
+      "小黑屋的判断必须在比对密码之前（放后面 = 爆破的人照样能试，等于没锁）",
+    );
+  }
+  gateCases++;
+  {
+    // 刚撞线那一次就把话说明白：noteFail 之后还要再看一次 lockLeftMs
+    const noC = gateNoC(gateIndexSrc);
+    const atFail = noC.indexOf("noteFail(ip)");
+    ok(
+      atFail > 0 && noC.indexOf("const justLocked = lockLeftMs(ip)") > atFail,
+      "第 10 次错的那一下就要回 429 说清楚（不然他还要再点一次才知道被锁了）",
+    );
+  }
+  gateCases++;
+  ok(
+    /loginHtml\(url\.searchParams\.get\("next"\) \|\| "\/", left > 0 \? lockText\(left\) : ""\)/.test(
+      gateNoC(gateIndexSrc),
+    ),
+    "被锁着的人打开登录页要直接看到「还要等几分钟」（否则只会在那儿一直点按钮）",
+  );
+
+  // ---- 落盘 + 后台放行（2026-10-17 晚第二拨）
+  gateCases++;
+  ok(
+    /loadLocks\(path\.join\(cfg\.cacheDir, "gate-locks\.json"\)\)/.test(gateNoC(gateIndexSrc)),
+    "启动时必须把封禁名单从磁盘读回来（读不回来 = 重启一次就把 24 小时的锁洗掉了）",
+  );
+  gateCases++;
+  ok(
+    /gateLocks: isFromTunnel\(req\) \? \[\] : listLocks\(\)/.test(gateNoC(gateIndexSrc)),
+    "被封名单只给局域网看：外网来的人不该知道自己有没有在名单上，更不该能点解除",
+  );
+  gateCases++;
+  {
+    const noC = gateNoC(gateIndexSrc);
+    const atEp = noC.indexOf('p === "/api/gate/unlock"');
+    const near = atEp > 0 ? noC.slice(atEp, atEp + 420) : "";
+    ok(
+      atEp > 0 && /isFromTunnel\(req\)/.test(near) && /sendJson\(res, 403/.test(near),
+      "解除封禁必须拒绝外网请求（被封的人自己点一下就解了，这道锁就等于没锁）",
+    );
+  }
+  gateCases++;
+  ok(
+    /unlockIp\(ip\) \? 1 : 0/.test(gateNoC(gateIndexSrc)) && /unlockAll\(\)/.test(gateNoC(gateIndexSrc)),
+    "解除要能按 IP 解，也要能全部解（换密码、或者自己把自己锁了的时候）",
+  );
+  gateCases++;
+  {
+    // 后台那个「解除」得在手机版设置页里点得到，不然"必须后台操作"落不了地
+    const mob = gateNoC(
+      fs.readFileSync(path.join(root, "src", "webview", "mobile", "app.js"), "utf8"),
+    );
+    ok(
+      /function lockRows\(j\)/.test(mob) &&
+        /\) \+ urlRows\(j\) \+ lockRows\(j\)/.test(mob) &&
+        /data-unlock="/.test(mob) &&
+        /getAttribute\("data-unlock"\)/.test(mob) &&
+        /\/api\/gate\/unlock/.test(mob),
+      "设置页「服务」卡片里要能看到被封的 IP 并点「解除」（手机/电脑在局域网打开就行）",
+    );
+  }
 }
 
 // ---------------------------------------------------------------- 汇总

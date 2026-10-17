@@ -1213,6 +1213,30 @@ input.inline.wide {
   word-break: break-all;
 }
 
+/* 服务卡片里的「内网 / 外网」地址行（2026-10-17）
+   标签只有两个字，别占 .k 的 42%，把宽度让给地址；地址本身长，允许换行断在任意处。
+   复制按钮照「有边＝能点」那套：白底 + 品牌绿细边 + 绿字，不要 --line（那色阶等于没边）。
+   ⚠️ 全局 button 有 min-height:var(--tap)，这里必须显式写回 0，否则一颗小按钮把行高撑成 36px。 */
+.kv .urlrow .k {
+  width: auto;
+  flex: none;
+}
+.kv .urlcopy {
+  flex: none;
+  align-self: center;
+  min-height: 0;
+  padding: 5px 10px;
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--brand);
+  background: var(--card);
+  border: 1px solid var(--brand);
+  border-radius: 6px;
+}
+.kv .urlcopy:active {
+  background: var(--soft);
+}
+
 /* 编号列 = 进详情的入口，给个颜色暗示它可点 */
 .tbl td.open {
   color: var(--brand);

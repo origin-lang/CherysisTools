@@ -1,4 +1,6 @@
 import * as crypto from "crypto";
+import * as fs from "fs";
+import * as path from "path";
 import type { IncomingMessage } from "http";
 
 /**
@@ -18,15 +20,22 @@ import type { IncomingMessage } from "http";
  *    `sha256("cherysis-gw|" + password)`。好处是改密码以后，所有老 cookie 立刻失效，
  *    不用维护 session 表；服务重启也不会把大家踢下线。
  *
- * 3. **失败限速**（同一 IP 每分钟 10 次）。密码是日期+1997 这种东西，不挡爆破等于没设。
+ * 3. **失败限速**（同一 IP 5 分钟里错 10 次，就关 24 小时小黑屋）。密码是日期+1997 这种东西，
+ *    不挡爆破等于没设。锁计时**从最后一次试错起算**，不是从第一次 —— 不然慢慢试的人
+ *    （4 分钟才凑够 10 次）只需要再等 1 分钟就放出来了，等于没锁。
+ *    锁记录**落盘**（`<cacheDir>/gate-locks.json`）：24 小时的锁被"重启一下服务"破解就没意义了。
+ *    要放人进来只有一条路：在**局域网**里点「解除」（外网来的请求一律不许解，否则等于没锁）。
  */
 
 export const GATE_COOKIE = "cherysis_gw";
 /** 记多久（天）：他这行当，一个月不用重输就够 */
 export const GATE_DAYS = 30;
-/** 同一 IP 一分钟里最多试错几次 */
-const MAX_FAILS = 10;
-const FAIL_WINDOW_MS = 60_000;
+/** 同一 IP 在窗口里最多试错几次 */
+export const MAX_FAILS = 10;
+/** 计数窗口：5 分钟内的错才算"连着错" */
+export const FAIL_WINDOW_MS = 5 * 60_000;
+/** 撞线以后关多久（从最后一次试错起算）。他说自己人不可能错 10 次，所以关满一天 */
+export const LOCK_MS = 24 * 60 * 60_000;
 
 /** 这次请求是不是从 Cloudflare 隧道进来的（= 外网） */
 export function isFromTunnel(req: IncomingMessage): boolean {
@@ -89,31 +98,146 @@ export function ticketCookie(password: string, now = Date.now()): string {
 }
 
 // ---------------------------------------------------------------- 失败限速
-const fails = new Map<string, { n: number; at: number }>();
+// 记录形状：{ n 窗口里错了几次, first 窗口起点, last 最后一次错的时刻 }
+// 窗口过期（first 太老）→ 重开一个窗口；撞线以后按 last 起算关 LOCK_MS。
+interface FailRec {
+  n: number;
+  first: number;
+  last: number;
+}
+const fails = new Map<string, FailRec>();
 
-export function tooManyFails(ip: string, now = Date.now()): boolean {
+/** 落盘路径（`<cacheDir>/gate-locks.json`）；空 = 不落盘（单元测试里就这样） */
+let storePath = "";
+
+/**
+ * 从磁盘恢复封禁记录 —— 服务重启**不清零**。
+ * 24 小时的锁如果能靠"把服务重启一次"破解，那这道锁就是摆设。
+ * 文件坏了/没有 → 当没封过人，别让一个坏文件把服务卡死。
+ */
+export function loadLocks(file: string): number {
+  storePath = file;
+  let raw: Record<string, FailRec> = {};
+  try {
+    raw = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, FailRec>;
+  } catch {
+    return 0;
+  }
+  const now = Date.now();
+  for (const [ip, v] of Object.entries(raw || {})) {
+    if (!v || !Number.isFinite(v.n) || !Number.isFinite(v.first) || !Number.isFinite(v.last)) {
+      continue;
+    }
+    const dead = v.n >= MAX_FAILS ? now - v.last >= LOCK_MS : now - v.first > FAIL_WINDOW_MS;
+    if (!dead) {
+      fails.set(ip, { n: v.n, first: v.first, last: v.last });
+    }
+  }
+  return fails.size;
+}
+
+function persist(): void {
+  if (!storePath) {
+    return;
+  }
+  try {
+    fs.mkdirSync(path.dirname(storePath), { recursive: true });
+    fs.writeFileSync(storePath, JSON.stringify(Object.fromEntries(fails)), "utf8");
+  } catch {
+    /* 写不进去就算了：内存里那份还是准的，重启顶多多给几次机会 */
+  }
+}
+
+/** 还要关多少毫秒；0 = 没关着。登录页/接口都靠它算"还有几分钟" */
+export function lockLeftMs(ip: string, now = Date.now()): number {
   const f = fails.get(ip);
   if (!f) {
-    return false;
+    return 0;
   }
-  if (now - f.at > FAIL_WINDOW_MS) {
+  if (f.n >= MAX_FAILS) {
+    const left = f.last + LOCK_MS - now;
+    if (left > 0) {
+      return left;
+    }
+    // 关满了：清掉，给他重新试的机会
     fails.delete(ip);
-    return false;
+    return 0;
   }
-  return f.n >= MAX_FAILS;
+  if (now - f.first > FAIL_WINDOW_MS) {
+    fails.delete(ip);
+  }
+  return 0;
+}
+
+export interface LockInfo {
+  ip: string;
+  leftMs: number;
+  fails: number;
+  at: number;
+}
+
+/** 当前被封的 IP（后台/局域网里那个「解除」列表就靠它） */
+export function listLocks(now = Date.now()): LockInfo[] {
+  const out: LockInfo[] = [];
+  for (const [ip, f] of fails) {
+    const left = lockLeftMs(ip, now);
+    if (left > 0) {
+      out.push({ ip, leftMs: left, fails: f.n, at: f.last });
+    }
+  }
+  return out.sort((a, b) => b.leftMs - a.leftMs);
+}
+
+/** 放一个人进来（只能从后台/局域网触发）；没这个人就返回 false */
+export function unlockIp(ip: string): boolean {
+  const had = fails.delete(ip);
+  if (had) {
+    persist();
+  }
+  return had;
+}
+
+/** 全放（换密码、或者自己把自己锁了的时候用）；返回放了几个 */
+export function unlockAll(): number {
+  const n = fails.size;
+  fails.clear();
+  if (n) {
+    persist();
+  }
+  return n;
+}
+
+export function tooManyFails(ip: string, now = Date.now()): boolean {
+  return lockLeftMs(ip, now) > 0;
+}
+
+/** 给用户看的一句话（别把毫秒数糊到他脸上）；够一小时就说小时 */
+export function lockText(ms: number): string {
+  const min = Math.max(1, Math.ceil(ms / 60_000));
+  if (min >= 60) {
+    return `试太多次了，${Math.ceil(min / 60)} 小时后再来`;
+  }
+  return `试太多次了，${min} 分钟后再来`;
 }
 
 export function noteFail(ip: string, now = Date.now()): void {
   const f = fails.get(ip);
-  if (!f || now - f.at > FAIL_WINDOW_MS) {
-    fails.set(ip, { n: 1, at: now });
-    return;
+  const stale = !f || now - f.first > FAIL_WINDOW_MS || (f.n >= MAX_FAILS && now - f.last >= LOCK_MS);
+  if (stale) {
+    fails.set(ip, { n: 1, first: now, last: now });
+  } else {
+    f.n += 1;
+    f.last = now;
   }
-  f.n += 1;
+  // 只在"刚撞线"那一刻落盘：前面几次错了就算重启丢了也无所谓（顶多多试几次），
+  // 但**锁一旦成立就必须活过重启**，否则重启一次就白锁了。
+  if (fails.get(ip)!.n === MAX_FAILS) {
+    persist();
+  }
   // 顺手清一下过期条目，别让这个 Map 长成内存泄漏
   if (fails.size > 500) {
     for (const [k, v] of fails) {
-      if (now - v.at > FAIL_WINDOW_MS) {
+      if (now - v.last > FAIL_WINDOW_MS + LOCK_MS) {
         fails.delete(k);
       }
     }
@@ -140,8 +264,13 @@ export function safeNext(v: unknown): string {
  * 还得单独列一条白名单；内联进去就只有一个 `/login` 入口，少一处漏配的机会。
  * 手机优先：输入框 16px（iOS 小了会整页放大）、大按钮、错误红字。
  */
-export function loginHtml(next: string): string {
+export function loginHtml(next: string, notice = ""): string {
   const n = safeNext(next).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  // 已经被关小黑屋的，进来就先告诉他还要等几分钟（省得他在那儿一直点）
+  const msg = String(notice || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/"/g, "&quot;");
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -185,7 +314,7 @@ export function loginHtml(next: string): string {
              autocomplete="current-password" placeholder="密码" required autofocus />
       <button type="submit">进入</button>
     </form>
-    <div id="err"></div>
+    <div id="err">${msg}</div>
   </div>
 <script>
 (function () {

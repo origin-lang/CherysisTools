@@ -11,12 +11,17 @@ import {
   GATE_COOKIE,
   checkTicket,
   isFromTunnel,
+  listLocks,
+  loadLocks,
+  lockLeftMs,
+  lockText,
   loginHtml,
   noteFail,
   noteOk,
   readCookie,
   ticketCookie,
-  tooManyFails,
+  unlockAll,
+  unlockIp,
 } from "./gate.js";
 import { shopTool, isWriteAction } from "../tools/shopTool/index.js";
 import { initDB, closeDB, getDB, getDBPath } from "../tools/shopTool/db.js";
@@ -123,6 +128,12 @@ async function main(): Promise<void> {
 
   initDB(cfg.storageDir); // 提前打开，好让「库打不开」在启动时就报出来
   const prefs = new PrefsStore(cfg.prefsFile);
+
+  // 封禁记录落盘：重启服务不许把 24 小时的锁洗掉（洗掉了这道锁就形同虚设）
+  const lockedCount = loadLocks(path.join(cfg.cacheDir, "gate-locks.json"));
+  if (lockedCount > 0) {
+    console.log(`🔒 有 ${lockedCount} 个 IP 还在封禁中（错满 10 次密码）。要放人进来：局域网打开网页版 → ⚙ 设置 → 系统配置 →「服务」里点解除`);
+  }
 
   // 直播样品与进货单导出共用本机偏好 live_out_dir。VS Code 端选过目录，网页端是另一份
   // 偏好文件、也没有目录选择可弹 → 启动时种上默认值（缓存目录下的 out/），有值就不动。
@@ -459,12 +470,15 @@ async function main(): Promise<void> {
       // 顺序刻意放在 token 之前：没密码连页面都看不到，也就轮不到 token 那层。
       // 判据不能看 remoteAddress —— 请求是 cloudflared 在本机转发的，源地址永远是 127.0.0.1。
       if (cfg.password && isFromTunnel(req)) {
+        const ip = String(req.headers["cf-connecting-ip"] || "unknown");
+        // 关小黑屋里的人：连"密码对了"都不给过 —— 不然爆破的人照样能试
+        const left = lockLeftMs(ip);
         if (p === "/login") {
           res.writeHead(200, {
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-store",
           });
-          res.end(loginHtml(url.searchParams.get("next") || "/"));
+          res.end(loginHtml(url.searchParams.get("next") || "/", left > 0 ? lockText(left) : ""));
           return;
         }
         if (p === "/api/login") {
@@ -472,9 +486,9 @@ async function main(): Promise<void> {
             sendJson(res, 405, { ok: false, error: "只收 POST" });
             return;
           }
-          const ip = String(req.headers["cf-connecting-ip"] || "unknown");
-          if (tooManyFails(ip)) {
-            sendJson(res, 429, { ok: false, error: "试太多次了，过一分钟再来" });
+          if (left > 0) {
+            res.setHeader("Retry-After", String(Math.ceil(left / 1000)));
+            sendJson(res, 429, { ok: false, error: lockText(left) });
             return;
           }
           let body: any = null;
@@ -490,6 +504,13 @@ async function main(): Promise<void> {
             return;
           }
           noteFail(ip);
+          // 刚好撞线的那一次就把话说清楚（429 + 还要几分钟），别等他再点一次才看到
+          const justLocked = lockLeftMs(ip);
+          if (justLocked > 0) {
+            res.setHeader("Retry-After", String(Math.ceil(justLocked / 1000)));
+            sendJson(res, 429, { ok: false, error: lockText(justLocked) });
+            return;
+          }
           sendJson(res, 401, { ok: false, error: "密码不对" });
           return;
         }
@@ -515,6 +536,30 @@ async function main(): Promise<void> {
         }
       }
 
+      // 解除封禁：**只认局域网/本机**。外网来的请求一律拒 —— 被封的人要能自己解，
+      // 这道锁就等于没锁（他说"必须后台操作才能让他进"就是这个意思）。
+      if (p === "/api/gate/unlock") {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { ok: false, error: "只收 POST" });
+          return;
+        }
+        if (isFromTunnel(req)) {
+          sendJson(res, 403, { ok: false, error: "解除封禁只能在店里/家里（局域网）操作" });
+          return;
+        }
+        let body: any = null;
+        try {
+          body = JSON.parse(await readBody(req));
+        } catch {
+          /* 空 body 当「全部解除」 */
+        }
+        const ip = String(body?.ip ?? "").trim();
+        const n = ip ? (unlockIp(ip) ? 1 : 0) : unlockAll();
+        console.log(n > 0 ? `🔓 已解除封禁（${ip || "全部"}）：放了 ${n} 个` : "🔓 解除请求：名单里没有可解的");
+        sendJson(res, 200, { ok: true, unlocked: n, ip });
+        return;
+      }
+
       if (p === "/api/ping") {
         sendJson(res, 200, {
           ok: true,
@@ -534,6 +579,10 @@ async function main(): Promise<void> {
           tasks: tasks.status(),
           // 外网访问：面板/手机照这个显示地址，不用再问人今天该发哪个链接
           tunnel: tunnel ? tunnel.status() : null,
+          // 内网地址也一起给：手机从外面（4G）打开设置页时，也要能看到"在家该用哪个地址"
+          lanUrls: lanUrls(cfg.port),
+          // 被封的 IP 只给局域网看：外网来的人不该知道自己有没有在名单上，更不该能点解除
+          gateLocks: isFromTunnel(req) ? [] : listLocks(),
         });
         return;
       }
