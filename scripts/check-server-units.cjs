@@ -572,6 +572,133 @@ let wiringCases = 0;
     /sinkPost\(sink, msg, opts\)/.test(fs.readFileSync(path.join(root, "src", "server", "httpHost.ts"), "utf8")),
     "httpHost 的 postToWebview 必须把 opts 交给 sinkPost（否则 target 永远为空 = 还是广播）",
   );
+
+  // ------------------------------------------------ 外网访问（cloudflared 快速隧道）
+  //
+  // 这一组的由来：地址是 Cloudflare **每次现分配**的，所以"谁去抓、谁去显示"必须钉死，
+  // 一旦有人想省事在面板里拼一个 / 或者把上次的地址记住，表现就是"面板显示的和真的不是一个"，
+  // 而这种事在真机上极难查（看起来就是"链接打不开"）。
+  /**
+   * 断言「不许出现某参数」之前必须先剥注释 —— 注释里写着"别加 --protocol"，
+   * 不剥的话正则命中的正是那句劝告（这坑在手机版那边也踩过两次）。
+   * `(^|[^:])` 是为了不把 `http://` 当成行注释。
+   */
+  const noComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+  const tunnelSrc = fs.readFileSync(path.join(root, "src", "server", "tunnel.ts"), "utf8");
+  const serverIndexSrc = fs.readFileSync(path.join(root, "src", "server", "index.ts"), "utf8");
+  const wsIndexSrc = fs.readFileSync(
+    path.join(root, "src", "tools", "webServerTool", "index.ts"),
+    "utf8",
+  );
+  const wsServiceSrc = fs.readFileSync(
+    path.join(root, "src", "tools", "webServerTool", "service.ts"),
+    "utf8",
+  );
+  const wsClientSrc = fs.readFileSync(path.join(root, "src", "tools", "webServerTool", "client.js"), "utf8");
+
+  wiringCases++;
+  ok(
+    /path\.join\(cacheDir, "bin", name\)/.test(tunnelSrc) &&
+      /"cloudflared\.exe"/.test(tunnelSrc),
+    "cloudflared 必须放 <cacheDir>/bin 下：放 .workbuddy 里跑会因加载 iphlpapi.dll 被拒直接 panic",
+  );
+  wiringCases++;
+  ok(
+    /\["tunnel", "--url", `http:\/\/127\.0\.0\.1:\$\{opts\.port\}`, "--no-autoupdate", "--logfile", logPath\]/.test(
+      tunnelSrc,
+    ),
+    "启动参数必须是 tunnel --url http://127.0.0.1:<port> --no-autoupdate --logfile <文件>（少 --no-autoupdate 会自己升级把进程换掉）",
+  );
+  wiringCases++;
+  ok(
+    !/--protocol/.test(noComments(tunnelSrc)),
+    "别给 cloudflared 加 --protocol http2：实测 2.0s，QUIC 只要 1.1~1.5s",
+  );
+  wiringCases++;
+  ok(
+    tunnelSrc.includes("trycloudflare") &&
+      /function urlFromLog/.test(tunnelSrc) &&
+      /st\.url = url;/.test(tunnelSrc),
+    "外网地址必须从 cloudflared 写出的日志里抓（域名是它现分配的），不许自己拼",
+  );
+  wiringCases++;
+  ok(
+    /delay = Math\.min\(WATCH_MS \* st\.restarts, SLOW_RETRY_MS\)/.test(tunnelSrc) &&
+      /setTimeout\(tick, delay\)/.test(tunnelSrc),
+    "看门人要退避重试（30s 起、最长 5 分钟）；别退回到固定间隔狂起进程",
+  );
+  wiringCases++;
+  ok(
+    !/POLL_MAX/.test(noComments(tunnelSrc)),
+    "拿地址不许「等 N 次就放弃」：开机自启时网络常常还没就绪，早早放弃 = 开机后外网一直打不开",
+  );
+  wiringCases++;
+  ok(
+    /🔒 密码：\$\{cfg\.password\}/.test(serverIndexSrc),
+    "启动横幅要把密码直接打出来（窗口是本机的，他自己人要能一眼看到；藏起来只会让他回头翻配置文件）",
+  );
+  wiringCases++;
+  ok(
+    /if \(pid && isAlive\(pid\)\) \{[\s\S]{0,140}?st\.restarts = 0/.test(tunnelSrc),
+    "隧道活着时看门人只该重置计数，不许重起（重起 = 换地址）",
+  );
+  wiringCases++;
+  ok(
+    /tunnel: tunnel \? tunnel\.status\(\) : null/.test(serverIndexSrc),
+    "/api/ping 必须带 tunnel 状态：面板和手机都靠它拿地址",
+  );
+  // 脱钩之后这条**反过来了**：退出时停隧道 = 下次新地址 = 已经发出去的链接全废。
+  // 要关外网访问只能靠 tunnel: false（那条路会把遗留隧道杀掉）。
+  wiringCases++;
+  ok(
+    !/\btunnel\?\.stop\(\)|\btunnel\.stop\(\)/.test(noComments(serverIndexSrc)),
+    "服务退出时不许停隧道（停了地址就换，脱钩白做）；关外网只能走 tunnel: false",
+  );
+  wiringCases++;
+  ok(
+    /tunnel: s\.tunnel \|\| null/.test(wsIndexSrc) &&
+      /s\.tunnel = s\.running \? await pingTunnel\(s\.port/.test(wsServiceSrc),
+    "面板的 wsStatus 必须把 tunnel 带上，否则面板永远显示不出外网地址",
+  );
+  wiringCases++;
+  ok(
+    /export function tunnelUrlOf/.test(wsIndexSrc) &&
+      /case "copyTunnel":/.test(wsIndexSrc) &&
+      /case "openTunnel":/.test(wsIndexSrc),
+    "复制/打开外网地址必须在后端校验形状（消息来自 webview，谁都能发）",
+  );
+  wiringCases++;
+  ok(
+    /renderTunnel\(s\.tunnel\)/.test(wsClientSrc) &&
+      /t\.state === "up" && t\.url/.test(wsClientSrc) &&
+      !/tunnelUrl\s*=\s*localStorage/.test(wsClientSrc),
+    "面板只显示服务刚给的地址，不许缓存到本地（缓存的那个下次一定是死的）",
+  );
+
+  // ---- 脱钩（B 方案）：让地址在"服务重启"时不变 ----
+  wiringCases++;
+  ok(
+    /detached: true/.test(tunnelSrc) && /\.unref\(\)/.test(tunnelSrc),
+    "隧道必须脱钩（detached + unref），否则服务一退出它就跟着死 = 又换一个地址",
+  );
+  wiringCases++;
+  ok(
+    /"--logfile", logPath/.test(tunnelSrc) && /stdio: "ignore"/.test(tunnelSrc),
+    "必须让 cloudflared 自己写 --logfile 并断开 stdout 管道：脱钩后管道一断它就会挂",
+  );
+  wiringCases++;
+  ok(
+    /meta\.port === opts\.port && isAlive\(meta\.pid\)/.test(tunnelSrc),
+    "启动时必须先试着接管旧隧道（pid 活着 + 端口对得上）；不接管就等于每次启动都换地址",
+  );
+  wiringCases++;
+  ok(/WATCH_MS/.test(tunnelSrc) && /const startWatch/.test(tunnelSrc), "看门人必须存在（否则隧道崩了就再没人管）");
+  wiringCases++;
+  ok(
+    /if \(opts\.enabled === false\) \{[\s\S]{0,160}?killAll\(\)/.test(tunnelSrc),
+    "tunnel: false 启动时必须把遗留隧道杀掉，否则「关不掉外网访问」",
+  );
 }
 
 // ------------------------------------------------ 「该不该发 changed」（events.shouldAnnounceChange）
@@ -625,6 +752,134 @@ let seamCases = 0;
   ok(finished === true, "await 之后必须真的跑完了 —— VS Code 版与测试都靠这条");
 }
 
+// ------------------------------------------------ 二进制落点（cloudflaredPath）
+// 只测这个纯函数，但它是那次 panic 的直接教训：**同一份 exe 换个目录就能跑**，
+// 所以"落点必须算得出来、必须落在 <cacheDir>/bin"这件事得钉住 ——
+// 有人为了"方便"把它挪回项目目录/临时目录，下次就是又一轮 `iphlpapi.dll` 的坑。
+let tunnelCases = 0;
+{
+  const { cloudflaredPath } = require(path.join(root, "out", "server", "tunnel.js"));
+  const base = path.join(root, "tmp", "cache");
+  tunnelCases++;
+  ok(
+    path.dirname(cloudflaredPath(base)) === path.join(base, "bin"),
+    "cloudflared 必须落在 <cacheDir>/bin 里（放 .workbuddy 目录下会被安全策略拦到 panic）",
+  );
+  tunnelCases++;
+  ok(
+    path.basename(cloudflaredPath(base)) === (process.platform === "win32" ? "cloudflared.exe" : "cloudflared"),
+    "文件名要带平台后缀（Windows 上少了 .exe 直接起不来）",
+  );
+}
+
+// ------------------------------------------------ 外网密码门（gate.ts）
+//
+// 这一组守的是"外网要密码、局域网不要"这条口径，以及票本身的强度。
+// 一旦有人图省事把 cookie 换成明文密码、或者把"只拦隧道"改成"拦所有"，
+// 表现分别是"谁都能进"和"在家打开也要输密码"——两种都很难在真机上一眼看出。
+let gateCases = 0;
+{
+  const {
+    makeTicket,
+    checkTicket,
+    readCookie,
+    isFromTunnel,
+    safeNext,
+    tooManyFails,
+    noteFail,
+    noteOk,
+    ticketCookie,
+    GATE_COOKIE,
+  } = require(path.join(root, "out", "server", "gate.js"));
+
+  const PW = "202610171997";
+  const future = Date.now() + 86400000;
+
+  gateCases++;
+  ok(checkTicket(PW, makeTicket(PW, future)) === true, "自己签的票必须验得过（否则登录成功也进不去）");
+
+  gateCases++;
+  ok(
+    checkTicket(PW, makeTicket(PW, Date.now() - 1000)) === false,
+    "过期的票必须验不过（不然一次登录永久有效）",
+  );
+
+  gateCases++;
+  ok(
+    checkTicket(PW, makeTicket(PW, future).replace(/.$/, "x")) === false,
+    "签名被改一个字符就必须验不过（这条是防伪造的底线）",
+  );
+
+  gateCases++;
+  ok(
+    checkTicket("别的密码", makeTicket(PW, future)) === false,
+    "改密码以后老票必须立刻失效（密钥由密码派生，否则改密码等于没改）",
+  );
+
+  gateCases++;
+  ok(checkTicket(PW, "") === false && checkTicket(PW, "abc") === false, "空票、乱码一律不许放行");
+
+  gateCases++;
+  ok(
+    isFromTunnel({ headers: { "cf-ray": "8a1b" } }) === true &&
+      isFromTunnel({ headers: { "cf-connecting-ip": "1.2.3.4" } }) === true &&
+      isFromTunnel({ headers: {} }) === false,
+    "只有带 Cloudflare 头的才算外网；局域网与本机不能拦（否则在家打开也要弹密码）",
+  );
+
+  gateCases++;
+  ok(
+    readCookie({ headers: { cookie: "a=1; " + GATE_COOKIE + "=xyz; b=2" } }, GATE_COOKIE) === "xyz" &&
+      readCookie({ headers: {} }, GATE_COOKIE) === "",
+    "cookie 要能从一串里正确挑出来（挑错 = 要么谁都能过，要么谁都过不了）",
+  );
+
+  gateCases++;
+  ok(
+    safeNext("/a/b?c=1") === "/a/b?c=1" &&
+      safeNext("//evil.com") === "/" &&
+      safeNext("https://evil.com") === "/",
+    "登录后跳转只认站内路径（不然 ?next=//evil.com 就是个开放重定向）",
+  );
+
+  gateCases++;
+  const ip = "unit-" + Date.now();
+  for (let i = 0; i < 10; i++) {
+    noteFail(ip);
+  }
+  ok(
+    tooManyFails(ip) === true,
+    "同一 IP 连错 10 次必须被挡住（密码是日期+1997 这种，不防爆破等于没设）",
+  );
+
+  gateCases++;
+  noteOk(ip);
+  ok(tooManyFails(ip) === false, "登录成功必须把失败计数清零（否则成功一次也还是被挡着）");
+
+  gateCases++;
+  ok(
+    /HttpOnly/.test(ticketCookie(PW)) && /SameSite=Lax/.test(ticketCookie(PW)),
+    "cookie 必须 HttpOnly + SameSite（别让页面脚本读走、别被跨站顺手带上）",
+  );
+
+  const gateIndexSrc = fs.readFileSync(path.join(root, "src", "server", "index.ts"), "utf8");
+  gateCases++;
+  ok(
+    /if \(cfg\.password && isFromTunnel\(req\)\)/.test(gateIndexSrc),
+    "门禁必须只在「配了密码 + 来自隧道」时生效（两条件缺一都会出事）",
+  );
+  gateCases++;
+  ok(
+    /p === "\/login"/.test(gateIndexSrc) && /p === "\/api\/login"/.test(gateIndexSrc),
+    "登录页和登录接口必须放行，否则重定向到自己 = 死循环",
+  );
+  gateCases++;
+  ok(
+    /res\.setHeader\("Set-Cookie", ticketCookie\(cfg\.password\)\)/.test(gateIndexSrc),
+    "登录成功必须下发 cookie（不发的话每次刷新都要重输）",
+  );
+}
+
 // ---------------------------------------------------------------- 汇总
 if (fails.length > 0) {
   console.error(`❌ check-server-units：${fails.length} 项不通过`);
@@ -636,7 +891,8 @@ if (fails.length > 0) {
 console.log(
   `✅ check-server-units：EventHub 14 组 + 请求收集器 ${reqCases} 组 + 串行队列 ${queueCases} 组` +
     ` + 重活队列 ${taskCases} 组 + changed 判定 ${changeCases} 组 + 长活儿入口 ${seamCases} 组` +
-    ` + 接线断言 ${wiringCases} 组，共 ${14 + reqCases + queueCases + taskCases + changeCases + seamCases + wiringCases} 组用例全通过`,
+    ` + 外网隧道落点 ${tunnelCases} 组 + 外网密码门 ${gateCases} 组 + 接线断言 ${wiringCases} 组，` +
+    `共 ${14 + reqCases + queueCases + taskCases + changeCases + seamCases + tunnelCases + gateCases + wiringCases} 组用例全通过`,
 );
 })().catch((err) => {
   // 用例本身崩了（不是断言失败）也要非零退出，否则 CI 会把它当通过

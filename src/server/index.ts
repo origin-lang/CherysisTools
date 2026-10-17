@@ -6,6 +6,18 @@ import { createHttpHost, makeRequestSink, PrefsStore } from "./httpHost.js";
 import { EventHub, shouldAnnounceChange, type SseSink } from "./events.js";
 import { SerialQueue } from "./serialQueue.js";
 import { TaskQueue } from "./taskQueue.js";
+import { startTunnel, type TunnelHandle } from "./tunnel.js";
+import {
+  GATE_COOKIE,
+  checkTicket,
+  isFromTunnel,
+  loginHtml,
+  noteFail,
+  noteOk,
+  readCookie,
+  ticketCookie,
+  tooManyFails,
+} from "./gate.js";
 import { shopTool, isWriteAction } from "../tools/shopTool/index.js";
 import { initDB, closeDB, getDB, getDBPath } from "../tools/shopTool/db.js";
 import { effectiveImageDir, initImageDirConfig, resolveImageDir } from "../tools/shopTool/imageDir.js";
@@ -434,10 +446,64 @@ async function main(): Promise<void> {
     pipeFile(fp, res);
   }
 
+  // 外网访问的把手。真正启动在 listen 之后（端口已经在听了才有意义），
+  // 但 /api/ping 的闭包要用到它，所以先占个位。
+  let tunnel: TunnelHandle | null = null;
+
   const server = http.createServer((req, res) => {
     void (async () => {
       const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
       const p = url.pathname;
+
+      // 密码门：**只拦从隧道进来的请求**（有 Cloudflare 的头），局域网与本机照旧放行。
+      // 顺序刻意放在 token 之前：没密码连页面都看不到，也就轮不到 token 那层。
+      // 判据不能看 remoteAddress —— 请求是 cloudflared 在本机转发的，源地址永远是 127.0.0.1。
+      if (cfg.password && isFromTunnel(req)) {
+        if (p === "/login") {
+          res.writeHead(200, {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+          });
+          res.end(loginHtml(url.searchParams.get("next") || "/"));
+          return;
+        }
+        if (p === "/api/login") {
+          if (req.method !== "POST") {
+            sendJson(res, 405, { ok: false, error: "只收 POST" });
+            return;
+          }
+          const ip = String(req.headers["cf-connecting-ip"] || "unknown");
+          if (tooManyFails(ip)) {
+            sendJson(res, 429, { ok: false, error: "试太多次了，过一分钟再来" });
+            return;
+          }
+          let body: any = null;
+          try {
+            body = JSON.parse(await readBody(req));
+          } catch {
+            /* 不是 JSON 就当没填 */
+          }
+          if (String(body?.password ?? "") === cfg.password) {
+            noteOk(ip);
+            res.setHeader("Set-Cookie", ticketCookie(cfg.password));
+            sendJson(res, 200, { ok: true });
+            return;
+          }
+          noteFail(ip);
+          sendJson(res, 401, { ok: false, error: "密码不对" });
+          return;
+        }
+        // favicon 不用密码：不然浏览器标签上一直是破图标，看着像网站坏了
+        if (p !== "/favicon.ico" && !checkTicket(cfg.password, readCookie(req, GATE_COOKIE))) {
+          if (p.startsWith("/api/")) {
+            sendJson(res, 401, { ok: false, error: "需要密码：先在外网打开页面登录" });
+            return;
+          }
+          res.writeHead(302, { Location: "/login?next=" + encodeURIComponent(req.url || "/") });
+          res.end();
+          return;
+        }
+      }
 
       // 鉴权：配了 token 就要求带上（局域网内可以先不配，见设计稿 §4.4）
       if (cfg.token) {
@@ -466,6 +532,8 @@ async function main(): Promise<void> {
           dataVersion: lastDv,
           // 重活队列：正在跑哪个、还有谁在排队（「点了没反应」多半是这里在排队）
           tasks: tasks.status(),
+          // 外网访问：面板/手机照这个显示地址，不用再问人今天该发哪个链接
+          tunnel: tunnel ? tunnel.status() : null,
         });
         return;
       }
@@ -537,9 +605,41 @@ async function main(): Promise<void> {
     if (!cfg.imageDir) {
       console.log("⚠️没配图片根目录：加 --image-dir=D:\\商品图片，或在 cherysis-server.config.json 里写 imageDir");
     }
+
+    // 外网访问：地址是 Cloudflare 临时分配的、**每次重启都变**，
+    // 所以只能由这里打印（别人手上那个链接用不了就该重新发这一个）。
+    tunnel = startTunnel({
+      port: cfg.port,
+      cacheDir: cfg.cacheDir,
+      enabled: cfg.tunnel,
+      onChange: (s) => {
+        if (s.state === "up") {
+          const full = cfg.token ? `${s.url}/?token=${cfg.token}` : s.url;
+          console.log("");
+          console.log("☁️  外网访问（外面的人直接开这个，手机电脑都不用装东西）：");
+          console.log(`    ${full}`);
+          console.log(
+            cfg.password
+              ? `    🔒 密码：${cfg.password}（外面的人输一次，记 30 天；别把这个窗口截图发出去）`
+              : "    ⚠️ 没设密码：谁拿到这个链接谁就能改库（配置里加 password 即可上锁）",
+          );
+          console.log("    ⚠️地址只在重启电脑或隧道崩了时才换；平常重启服务不变");
+          console.log("");
+        } else if (s.state === "error") {
+          console.log(`☁️  外网访问没开起来：${s.error}`);
+        }
+      },
+    });
+    if (tunnel.status().state === "starting") {
+      console.log("   外网访问：正在连 Cloudflare…（连上会把地址打在这里）");
+    }
   });
 
   const bye = (): void => {
+    // ⚠️ 这里**故意不停隧道**（`tunnel.stop()` 绝对不要加回来）：
+    // 隧道是脱钩的常驻进程，停了下次就是新地址，已经发出去的链接全部作废。
+    // 代价：服务关掉后外面打开会得到 502（隧道还在，只是没东西可回源）；
+    // 想真关外网访问，配置里写 tunnel: false 再启动一次，那时启动流程会把遗留隧道杀掉。
     clearInterval(dvTimer); // 巡检定时器先停，别在关库之后再碰库
     hub.closeAll(); // 再把 SSE 连接收干净：不然手机要一直等到超时才发现服务停了
     try {

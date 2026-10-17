@@ -28,6 +28,19 @@ export type ServerConfig = {
   token: string;
   /** 网页静态文件目录（默认 src/webview/mobile，与扩展读 fragment 同一套约定：运行时从 src 读） */
   publicDir: string;
+  /**
+   * 外网访问的密码。**只拦从隧道进来的请求**，局域网与本机不受影响。
+   * 空串 = 不设门禁（谁拿到链接谁能改库，只在完全信任的环境里这样用）。
+   * 改了密码，所有人之前的 cookie 立刻失效（签名密钥是从密码派生的）。
+   */
+  password: string;
+  /**
+   * 要不要开「外网访问」（cloudflared 快速隧道）。
+   * 默认开：外面的人拿一个 https 地址就能开，不用装东西。
+   * 想关：配置里写 `tunnel: false`，或 `--tunnel=0`，或环境变量 `CHERYSIS_TUNNEL=0`。
+   * ⚠️ 开了等于把库暴露到公网（现在没有门禁），只在需要时开。
+   */
+  tunnel: boolean;
 };
 
 type RawArgs = Record<string, string>;
@@ -108,6 +121,10 @@ export function loadConfig(argv: string[]): ServerConfig {
     throw new Error(`端口不合法：${portRaw}`);
   }
 
+  // 外网访问默认开（他要的是"不用每次找人问地址"）；三种关法都认
+  const tunnelRaw = pick(args["tunnel"], env("CHERYSIS_TUNNEL"), file["tunnel"], "1").toLowerCase();
+  const tunnelOn = !["0", "false", "off", "no"].includes(tunnelRaw);
+
   return {
     storageDir,
     imageDir,
@@ -117,6 +134,8 @@ export function loadConfig(argv: string[]): ServerConfig {
     host: pick(args["host"], env("CHERYSIS_HOST"), file["host"], "0.0.0.0"),
     port,
     token: pick(args["token"], env("CHERYSIS_TOKEN"), file["token"]),
+    password: pick(args["password"], env("CHERYSIS_PASSWORD"), file["password"]),
+    tunnel: tunnelOn,
     publicDir: path.join(__dirname, "..", "..", "src", "webview", "mobile"),
   };
 }
@@ -128,6 +147,14 @@ export function lanUrls(port: number): string[] {
   for (const list of Object.values(ifs)) {
     for (const ni of list || []) {
       if (ni.family === "IPv4" && !ni.internal) {
+        // 169.254.x.x = APIPA：网卡**没拿到 DHCP 地址**时的自分配地址，只有本机自己能用，
+        // 手机/别的电脑都连不上。典型来源：没插网线的有线网卡、装了却没连上的虚拟网卡
+        // （各种 VPN / 虚拟机工具都会建一块）—— 打出来只会让人拿着一个连不通的地址去试
+        // （2026-10-17 老板："那个169感觉没啥用，是不是可以删了"）。
+        // 网卡真连上之后这里会变成它真正的地址，那时照常打印。
+        if (ni.address.startsWith("169.254.")) {
+          continue;
+        }
         out.push(`http://${ni.address}:${port}`);
       }
     }

@@ -163,6 +163,19 @@ export function ensureServerConfigAt(
 }
 
 /** 面板要的那一屏状态；overrideFields 用来覆盖某个字段（比如刚选完目录还没落盘） */
+/**
+ * 外网地址只放行 Cloudflare 快速隧道那一种形状。
+ *
+ * 「复制/打开外网地址」这两条消息是从 webview 发上来的，谁都能发；
+ * 不在后端校验就等于让页面决定"要打开哪个网址"。顺带把尾斜杠统一掉，
+ * 免得复制出去多一个 `/` 让人以为打不开。
+ */
+export function tunnelUrlOf(v: unknown): string {
+  const s = String(v ?? "").trim();
+  const m = /^https:\/\/([a-z0-9-]+)\.trycloudflare\.com\/?$/.exec(s);
+  return m ? `https://${m[1]}.trycloudflare.com` : "";
+}
+
 async function pushStatus(
   ctx: ToolContext,
   overrideFields?: Record<string, unknown>,
@@ -191,6 +204,9 @@ async function pushStatus(
     cacheDefault: defaultCacheDir(),
     // 扩展目录里的四个 cmd（不装 VS Code 也能用）；列出来是因为它们各自干的事容易记混
     cmdNames: CMD_FILES,
+    // 外网地址：由服务进程从 cloudflared 的输出里抓，面板只管显示（地址每次重启都变，
+    // 所以不能由面板自己拼、也不能缓存到文件里给下次用）
+    tunnel: s.tunnel || null,
   });
 }
 
@@ -367,6 +383,27 @@ export const webServerTool: ToolDefinition = {
           await vscode.env.openExternal(vscode.Uri.parse(url));
         } catch (err: any) {
           ctx.log(`❌ 打不开：${err?.message ?? err}`);
+        }
+        break;
+      }
+      // 外网地址由前端原样送上来（只有服务自己知道当前是哪一个），但**必须校验形状**：
+      // 这条消息能被 webview 里的任意脚本触发，不校验就等于让页面决定"打开哪个网址"。
+      case "copyTunnel":
+      case "openTunnel": {
+        const url = tunnelUrlOf(msg?.value);
+        if (!url) {
+          ctx.log("❌ 这个地址不像外网地址（只认 https://xxx.trycloudflare.com），没动");
+          break;
+        }
+        try {
+          if (msg.type === "copyTunnel") {
+            await vscode.env.clipboard.writeText(url);
+            ctx.log(`✅ 已复制外网地址：${url}`);
+          } else {
+            await vscode.env.openExternal(vscode.Uri.parse(url));
+          }
+        } catch (err: any) {
+          ctx.log(`❌ ${msg.type === "copyTunnel" ? "复制" : "打开"}失败：${err?.message ?? err}`);
         }
         break;
       }

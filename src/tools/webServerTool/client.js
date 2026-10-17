@@ -13,7 +13,39 @@
     vscode.postMessage(Object.assign({ toolName: TOOL }, msg));
   }
 
-  var state = { running: false, autostart: false, url: "" };
+  var state = { running: false, autostart: false, url: "", tunnelUrl: "" };
+
+  /**
+   * 外网地址那一行。
+   *
+   * ⚠️ 这个地址是 Cloudflare 每次现分配的，**服务一重启就换**，所以：
+   * - 只显示服务刚给的那一个（`/api/ping` 里的 tunnel.url），不许自己拼、不许存文件下次用 ——
+   *   存下来的那个下次一定是死的，比不显示更坑；
+   * - 没拿到地址时不显示空行，直接写清"正在连接"或"没开起来 + 原因"。
+   */
+  function renderTunnel(t) {
+    var row = $("wsTunnelRow");
+    var copy = $("wsTunnelCopyBtn");
+    var open = $("wsTunnelOpenBtn");
+    if (!t || t.state === "off") {
+      row.style.display = "none";
+      state.tunnelUrl = "";
+      return;
+    }
+    row.style.display = "";
+    if (t.state === "up" && t.url) {
+      state.tunnelUrl = t.url;
+      $("wsTunnelUrl").textContent = t.url;
+      copy.style.display = "";
+      open.style.display = "";
+      return;
+    }
+    state.tunnelUrl = "";
+    $("wsTunnelUrl").textContent =
+      t.state === "starting" ? "正在连接…（一般 5~10 秒）" : "没开起来：" + (t.error || "原因不明");
+    copy.style.display = "none";
+    open.style.display = "none";
+  }
 
   function renderStatus(s) {
     state.running = !!s.running;
@@ -28,6 +60,7 @@
     btn.title = state.running ? "停掉监听这个端口的服务进程" : "在 VS Code 里开一个终端跑服务";
     $("wsUrlRow").style.display = state.running ? "" : "none";
     $("wsUrl").textContent = state.url;
+    renderTunnel(s.tunnel);
     $("wsAutoState").textContent = state.autostart ? "已设置（登录时自动起）" : "未设置";
     $("wsAutoBtn").textContent = state.autostart ? "取消开机自启" : "设为开机自启";
     $("wsCfgPath").textContent = s.configPath ? "配置文件：" + s.configPath : "";
@@ -179,6 +212,16 @@
       // 点地址本身也能直接跳浏览器（要复制地址才点「复制」）
       $("wsUrl").onclick = function () {
         if (state.url) {post({ type: "openUrl" });}
+      };
+      // 外网地址：把当前这一串原样发给后端（它只认 trycloudflare 的形状），不在前端拼
+      $("wsTunnelCopyBtn").onclick = function () {
+        if (state.tunnelUrl) {post({ type: "copyTunnel", value: state.tunnelUrl });}
+      };
+      $("wsTunnelOpenBtn").onclick = function () {
+        if (state.tunnelUrl) {post({ type: "openTunnel", value: state.tunnelUrl });}
+      };
+      $("wsTunnelUrl").onclick = function () {
+        if (state.tunnelUrl) {post({ type: "openTunnel", value: state.tunnelUrl });}
       };
       $("wsStopCmdBtn").onclick = function () {
         post({ type: "stopCmd" });

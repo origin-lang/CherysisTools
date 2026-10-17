@@ -9,6 +9,7 @@
  * 面板里的按钮沿用同一条规则，别另立一个默认路径 —— 两份配置各有各的数据，指错就是对着空库录数据。
  */
 import * as fs from "fs";
+import * as http from "http";
 import * as net from "net";
 import * as os from "os";
 import * as path from "path";
@@ -226,6 +227,69 @@ export interface ServerStatus {
   configError?: string;
   cfg: ServerConfig | null;
   ip: string;
+  /** 外网访问的状态（服务没跑 / 没开隧道时为 null） */
+  tunnel?: TunnelBrief | null;
+}
+
+/** 外网地址那点信息：面板只需要"能不能给地址、给的哪个、为什么没有" */
+export interface TunnelBrief {
+  state: "off" | "starting" | "up" | "error";
+  url: string;
+  error: string;
+}
+
+/**
+ * 去问正在跑的服务：外网地址拿到没有。
+ *
+ * 为什么不直接读文件/自己起隧道：地址由**服务进程**从 cloudflared 的输出里抓，
+ * 只有它知道当前这一个是哪个；面板再去猜就会出现"面板显示的和真的不一样"。
+ * 服务没跑 / 没开隧道时返回 null，面板就那行不显示。
+ */
+export function pingTunnel(port: number, token: string): Promise<TunnelBrief | null> {
+  return new Promise((resolve) => {
+    if (!port) {
+      resolve(null);
+      return;
+    }
+    const req = http.get(
+      {
+        host: "127.0.0.1",
+        port,
+        path: "/api/ping",
+        timeout: 1500,
+        headers: token ? { "x-cherysis-token": token } : {},
+      },
+      (res) => {
+        let buf = "";
+        res.setEncoding("utf8");
+        res.on("data", (c: string) => {
+          buf += c;
+        });
+        res.on("end", () => {
+          try {
+            const j = JSON.parse(buf);
+            const t = j && j.tunnel;
+            if (!t) {
+              resolve(null);
+              return;
+            }
+            resolve({
+              state: t.state === "up" || t.state === "starting" || t.state === "error" ? t.state : "off",
+              url: typeof t.url === "string" ? t.url : "",
+              error: typeof t.error === "string" ? t.error : "",
+            });
+          } catch {
+            resolve(null); // 回的不是 JSON（多半是别的程序占着端口）
+          }
+        });
+      },
+    );
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(null);
+    });
+  });
 }
 
 export function serverStatus(extDir: string): ServerStatus {
@@ -249,6 +313,8 @@ export function serverStatus(extDir: string): ServerStatus {
 export async function serverStatusAsync(extDir: string): Promise<ServerStatus & { running: boolean }> {
   const s = serverStatus(extDir);
   s.running = await portInUse(s.port);
+  // 只有服务真在跑才问隧道：没跑时这一问必然超时，白等 1.5 秒
+  s.tunnel = s.running ? await pingTunnel(s.port, s.cfg?.token || "") : null;
   return s;
 }
 
