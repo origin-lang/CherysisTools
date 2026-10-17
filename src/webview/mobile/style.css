@@ -1499,6 +1499,9 @@ input.bad {
   align-items: flex-end; /* 贴着底边 */
   /* --kb 由 JS 按键盘高度填（iOS 不会自动把 fixed 元素顶起来，不垫就被键盘压住） */
   padding-bottom: var(--kb, 0px);
+  /* 面板开着时别把滚动"甩"到后面那一屏去（触屏惯性会在遮罩上继续滚，后面的列表跟着动，
+     看着像面板和列表一起飘）。2026-10-17 晚跟着「快速记数」改模态时加的。 */
+  overscroll-behavior: contain;
 }
 .sheetbg.show {
   display: flex;

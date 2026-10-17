@@ -110,6 +110,14 @@ export interface PurchaseItemRow {
   /** 这行是否已办（勾） */
   done: number;
   note: string;
+  /** 手写名称：**只给现场新货行用**（kind=1）。补货行的名字永远现查商品库，不落库 */
+  name: string;
+  /** 进价（现场报价，只给新货行；补货行现查商品库的 cost_price） */
+  price: number;
+  /** 临时图片号：新货行拍的"认货照"存在 imageDir/<这个号>/ 下（kind=0 时为空） */
+  img: string;
+  /** 0=补货行（有编号，名字从库里查） 1=现场新货行（手写名字，可能没编号） */
+  kind: number;
 }
 export interface PurchaseOrderRow {
   id: number;
@@ -437,6 +445,10 @@ export function initDB(storageDir: string): boolean {
       got      REAL NOT NULL DEFAULT 0,
       done     INTEGER NOT NULL DEFAULT 0,
       note     TEXT NOT NULL DEFAULT '',
+      name     TEXT NOT NULL DEFAULT '',
+      price    REAL NOT NULL DEFAULT 0,
+      img      TEXT NOT NULL DEFAULT '',
+      kind     INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (order_id, sort)
     );
     CREATE INDEX IF NOT EXISTS idx_purchase_item_order ON purchase_item(order_id);
@@ -448,6 +460,23 @@ export function initDB(storageDir: string): boolean {
     if (!settleCols.includes(col)) {
       db.exec(`ALTER TABLE monthly_settle ADD COLUMN ${col} REAL NOT NULL DEFAULT 0`);
     }
+  }
+  // 进货单「现场新货行」（2026-10-17）：手写名称/进价/认货照/行的种类。
+  // 老库补列，老数据读出来 kind 默认 0 = 补货行，行为与以前完全一样。
+  const purItemCols = (db.prepare("PRAGMA table_info(purchase_item)").all() as any[]).map(
+    (r) => r.name,
+  );
+  if (!purItemCols.includes("name")) {
+    db.exec("ALTER TABLE purchase_item ADD COLUMN name TEXT NOT NULL DEFAULT ''");
+  }
+  if (!purItemCols.includes("price")) {
+    db.exec("ALTER TABLE purchase_item ADD COLUMN price REAL NOT NULL DEFAULT 0");
+  }
+  if (!purItemCols.includes("img")) {
+    db.exec("ALTER TABLE purchase_item ADD COLUMN img TEXT NOT NULL DEFAULT ''");
+  }
+  if (!purItemCols.includes("kind")) {
+    db.exec("ALTER TABLE purchase_item ADD COLUMN kind INTEGER NOT NULL DEFAULT 0");
   }
   const prodCols = (db.prepare("PRAGMA table_info(products)").all() as any[]).map(
     (r) => r.name,
@@ -687,7 +716,7 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
     "SELECT id, date, note, created_at, updated_at FROM purchase_order ORDER BY date DESC, id DESC",
   );
   const purchaseItemListAll = c.prepare(
-    "SELECT order_id, sort, code, need, got, done, note FROM purchase_item ORDER BY order_id, sort",
+    "SELECT order_id, sort, code, need, got, done, note, name, price, img, kind FROM purchase_item ORDER BY order_id, sort",
   );
   const purchaseOrderIns = c.prepare(
     "INSERT INTO purchase_order (date, note, created_at, updated_at) VALUES (@date, @note, @created_at, @updated_at)",
@@ -698,7 +727,7 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
   const purchaseOrderDel = c.prepare("DELETE FROM purchase_order WHERE id = ?");
   const purchaseItemDel = c.prepare("DELETE FROM purchase_item WHERE order_id = ?");
   const purchaseItemIns = c.prepare(
-    "INSERT OR REPLACE INTO purchase_item (order_id, sort, code, need, got, done, note) VALUES (@order_id, @sort, @code, @need, @got, @done, @note)",
+    "INSERT OR REPLACE INTO purchase_item (order_id, sort, code, need, got, done, note, name, price, img, kind) VALUES (@order_id, @sort, @code, @need, @got, @done, @note, @name, @price, @img, @kind)",
   );
   // ===== 套装（可整体移除）=====
   // 成员列表用编号 JOIN products 拿「当前」的名称/进价/售价/状态 —— 改了子商品，套装这边立刻是新值，
@@ -1133,6 +1162,10 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
           got: Number(it.got ?? 0),
           done: Number(it.done ?? 0) ? 1 : 0,
           note: String(it.note ?? ""),
+          name: String(it.name ?? ""),
+          price: Number(it.price ?? 0) || 0,
+          img: String(it.img ?? ""),
+          kind: Number(it.kind ?? 0) ? 1 : 0,
         });
       }
       return orders.map((r) => ({
@@ -1172,8 +1205,11 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
           let s = 0;
           for (const it of items ?? []) {
             const code = String(it?.code ?? "").trim();
-            // 空行（还没填编号）直接丢，别在库里留垃圾
-            if (!code) {
+            const name = String(it?.name ?? "").trim();
+            const kind = Number(it?.kind ?? 0) ? 1 : 0;
+            // 空行直接丢，别在库里留垃圾。
+            // 2026-10-17：现场新货行**可以没有编号**（名字就是它的身份），所以判空改成"编号和名字都空"。
+            if (!code && !name) {
               continue;
             }
             purchaseItemIns.run({
@@ -1184,6 +1220,10 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
               got: Number(it?.got ?? 0) || 0,
               done: Number(it?.done ?? 0) ? 1 : 0,
               note: String(it?.note ?? ""),
+              name,
+              price: Number(it?.price ?? 0) || 0,
+              img: String(it?.img ?? ""),
+              kind,
             });
             s += 1;
           }

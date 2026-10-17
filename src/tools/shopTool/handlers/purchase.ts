@@ -30,6 +30,7 @@ let exportJobActive = false;
 /**
  * 导出的输入归一：编号走 canonicalCode、剔除空行。
  * 与 purchaseSaveOrder 同一套口径 —— 屏幕上没填完的行不进导出。
+ * 2026-10-17：现场新货行没有编号也能进导出（名字就是它的身份）；进价/认货照跟着走。
  */
 function normExportItems(rawItems: any[]): Array<{
   code: string;
@@ -37,6 +38,10 @@ function normExportItems(rawItems: any[]): Array<{
   got: number;
   done: number;
   note: string;
+  name: string;
+  price: number;
+  img: string;
+  kind: number;
 }> {
   return (Array.isArray(rawItems) ? rawItems : [])
     .map((it) => ({
@@ -45,8 +50,12 @@ function normExportItems(rawItems: any[]): Array<{
       got: Number(it?.got ?? 0) || 0,
       done: Number(it?.done ?? 0) ? 1 : 0,
       note: String(it?.note ?? ""),
+      name: String(it?.name ?? "").trim(),
+      price: Number(it?.price ?? 0) || 0,
+      img: String(it?.img ?? ""),
+      kind: Number(it?.kind ?? 0) ? 1 : 0,
     }))
-    .filter((it) => it.code);
+    .filter((it) => it.code || it.name);
 }
 
 export function purchaseHandlers(h: HandlerCtx): Record<string, Handler> {
@@ -79,8 +88,13 @@ export function purchaseHandlers(h: HandlerCtx): Record<string, Handler> {
           got: Number(it?.got ?? 0) || 0,
           done: Number(it?.done ?? 0) ? 1 : 0,
           note: String(it?.note ?? ""),
+          // 现场新货行（2026-10-17）：手写名称 / 进价 / 认货照的临时号 / 行的种类
+          name: String(it?.name ?? "").trim(),
+          price: Number(it?.price ?? 0) || 0,
+          img: String(it?.img ?? ""),
+          kind: Number(it?.kind ?? 0) ? 1 : 0,
         }))
-        .filter((it) => it.code);
+        .filter((it) => it.code || it.name);
       const idRaw = Number(msg.id ?? 0);
       const id = Number.isInteger(idRaw) && idRaw > 0 ? idRaw : null;
       const date = String(msg.date ?? "").trim() || todayStr();
@@ -161,28 +175,46 @@ export function purchaseHandlers(h: HandlerCtx): Record<string, Handler> {
             });
             ws.getRow(1).height = 22;
 
+            // 老板 10-17 定的顺序：**先把补货的读完，再列现场进的新货**（没有新货就只有补货那段）。
+            // Array.sort 是稳定排序 → 同类之间保持屏幕上看到的顺序。
+            const ordered = [...items.filter((it) => !it.kind), ...items.filter((it) => it.kind)];
             let pics = 0;
             let failed = 0;
-            for (let i = 0; i < items.length; i++) {
-              const it = items[i];
+            for (let i = 0; i < ordered.length; i++) {
+              const it = ordered[i];
               const r = i + 2;
-              ws.getCell(r, 2).value = it.code; // 不带勾选态
-              ws.getCell(r, 3).value = byCode.get(it.code) || "";
-              ws.getCell(r, 4).value = it.need;
+              const isNew = !!it.kind;
+              ws.getCell(r, 2).value = it.code; // 不带勾选态；新货行常常没有编号
+              // 名称：库里有就用库里的（改了商品这里立刻新值），没有就用行上手写的那个
+              ws.getCell(r, 3).value = byCode.get(it.code) || it.name || "";
+              // 新货行没有"需"这回事 → 那格留空，差也留空（不能按 拿-0 算成"多拿了"）
+              ws.getCell(r, 4).value = isNew ? "" : it.need;
               ws.getCell(r, 5).value = it.got;
               const diff = it.got - it.need;
               const dc = ws.getCell(r, 6);
-              // 公式 + result：别人改了需/拿 差会跟着算；不重算的预览器也能直接看到数
-              dc.value = { formula: `E${r}-D${r}`, result: diff };
-              if (diff > 0) {
-                // 拿>需 标绿加粗 —— 跟手机版那格染绿、导出的 html 是同一个口径
-                dc.font = { color: { argb: "FF0A7D55" }, bold: true };
+              if (isNew) {
+                dc.value = "";
+              } else {
+                // 公式 + result：别人改了需/拿 差会跟着算；不重算的预览器也能直接看到数
+                dc.value = { formula: `E${r}-D${r}`, result: diff };
+                if (diff > 0) {
+                  // 拿>需 标绿加粗 —— 跟手机版那格染绿、导出的 html 是同一个口径
+                  dc.font = { color: { argb: "FF0A7D55" }, bold: true };
+                }
               }
-              ws.getCell(r, 7).value = it.note;
+              // 备注：新货行把进价/合计写在最前面（老板："合计你就顺带的事情"）
+              const amount = Math.round(it.price * it.got * 100) / 100;
+              const priceTxt =
+                isNew && it.price > 0
+                  ? `进价 ¥${Math.round(it.price * 100) / 100} × ${it.got} = ¥${amount}`
+                  : "";
+              ws.getCell(r, 7).value = [priceTxt, it.note].filter(Boolean).join(" ｜ ");
               for (let c = 2; c <= 7; c++) {
                 ws.getCell(r, c).alignment = { vertical: "middle" };
               }
-              const fp = imageRoot ? firstImageFile(imageRoot, it.code) : null;
+              // 认货照：新货行存在临时号底下的夹子里（it.img），补货行照旧按编号取
+              const imgKey = it.img || it.code;
+              const fp = imageRoot && imgKey ? firstImageFile(imageRoot, imgKey) : null;
               if (!fp) {
                 ws.getRow(r).height = 22;
                 continue;
@@ -226,11 +258,14 @@ export function purchaseHandlers(h: HandlerCtx): Record<string, Handler> {
             }
 
             // 汇总行：款数写文字，需/拿/差 三格写成公式（范围给足到 500 行，别人加行也带得进去）
-            const totalNeed = items.reduce((n, it) => n + it.need, 0);
-            const totalGot = items.reduce((n, it) => n + it.got, 0);
-            const sr = items.length + 2;
+            const totalNeed = ordered.reduce((n, it) => n + (it.kind ? 0 : it.need), 0);
+            const totalGot = ordered.reduce((n, it) => n + it.got, 0);
+            const newCnt = ordered.filter((it) => it.kind).length;
+            const sr = ordered.length + 2;
             const sc = ws.getCell(sr, 2);
-            sc.value = `共 ${items.length} 款 · 需 · 拿 · 差`;
+            sc.value = newCnt
+              ? `共 ${ordered.length} 款（补货 ${ordered.length - newCnt} · 新货 ${newCnt}）· 需 · 拿 · 差`
+              : `共 ${ordered.length} 款 · 需 · 拿 · 差`;
             sc.font = { bold: true };
             const needC = ws.getCell(sr, 4);
             needC.value = { formula: "SUM(D2:D500)", result: totalNeed };

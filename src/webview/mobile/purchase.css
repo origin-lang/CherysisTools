@@ -44,8 +44,273 @@
      原来为了跟它拉开距离的 margin-top:10px 就该收掉（不然白多 10px）。 */
   margin-top: 0;
 }
-.p-headk {
+/* ---------- 两段开关（2026-10-17，老板挑的「乙′」） ----------
+   外观是两页，底层是同一张单按 kind 筛 —— 所以它**不是**底部那种主导航 tab，
+   只是个段控件：一条浅底轨道，选中那段亮成卡片色。
+   ⚠️ 原来顶上那句「要补的商品」（.p-headk）撤了：开关自己就说清了是哪一页，两行字挤一起更乱。 */
+.p-seg {
+  flex: 1;
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--soft);
+  border-radius: 10px;
+}
+.p-segbtn {
+  flex: 1;
+  min-height: 0;
+  height: 34px;
+  padding: 0 6px;
+  border: 0;
+  background: none;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.p-segbtn.on {
+  background: var(--card);
+  color: var(--ink);
   font-weight: 700;
+}
+.p-segbtn span {
+  margin-left: 2px;
+  font-size: 12px;
+  opacity: 0.65;
+}
+/* 「缺货」开关（2026-10-17 晚，老板："把紧急缺货的自动筛选出来…只需要看还缺的"）：
+   挂在两段开关**右端**，只在「要补的」那页露（现场新货行没有"需"，永远不算缺）。
+   ⚠️ 配色走 **红**、不走主题绿：它筛的就是"红的东西"，跟缺的数字（`.pi-d.under` /
+      `.pi-got.under`）同一套颜色。绿在这页已经表示"拿多了 / 拿齐了"，再当缺的开关会读反。
+   ⚠️ 高度跟两段开关一样 34px（并排两颗不能一高一矮）；胶囊形跟顶部搜索那排的 tag 一个语言。 */
+/* 【2026-10-17 晚】框/字改品牌绿，跟顶栏那两颗图标按钮同一套读法（老板：字和框都改绿）：
+   绿＝这页的主操作能点；灰留给"页签"那种次一级的东西。
+   ⚠️ `.on` 那条在后面，点开仍然整体转红（它筛的就是"缺的东西"）—— 绿只在没点开时出现，
+      同一颗绿↔红两种状态是刻意的：绿＝"这个功能"，红＝"正在筛缺的"。
+   ⚠️ 别用 `--line`（跟搜索框同色阶，白底上看不出边）。 */
+.p-shortbtn {
+  flex: none;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--brand);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--brand);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+/* ⚠️ 这条不能省：`.p-head` 是 flex，button 自己有 display，靠 UA 那条 [hidden] 盖不住 */
+.p-shortbtn[hidden] {
+  display: none;
+}
+.p-shortbtn span {
+  margin-left: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.p-shortbtn.on {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: rgba(214, 69, 69, 0.1);
+  font-weight: 700;
+}
+/* 现场新货行（2026-10-17 晚定稿，老板挑的 B 档）：**两行、一个框都不画**。
+   第一行  [照 44][名称][进价][件]      第二行  [备注][¥114][🗑]
+   ⚠️ **没有展开块**（`.pit-x` 只有补货行有）：这四个格子已经把所有字段占满了，
+      再塞个抽屉只会剩"一行删除按钮 + 左边一大片空白"（老板原话）。点不开、留白两个问题
+      都是抽屉带来的，去掉抽屉就一起没了。
+   ⚠️ 名称/进价/件/备注 **失焦时没有边框**（边框一直在，只是染成透明 → 聚焦时不会 1px 跳动）：
+      四个方框并排是"挤"和"丑"的主要来源；去掉之后名称还多出约 12px（能多看一个字半）。 */
+.pit-live .pit-row,
+.pit-live .pit-row2 {
+  gap: 6px;
+  padding: 6px 8px;
+}
+.pit-live .pit-row {
+  display: flex;
+  align-items: center;
+}
+/* 第二行：备注（可空）在左、合计靠右、垃圾桶收尾。
+   ⚠️ 上下只留 2px：垃圾桶的热区是 44×44（项目触控下限，没为这一行缩水），
+      再按 6px 撑就白多出 8px 高。 */
+.pit-live .pit-row2 {
+  display: flex;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  padding: 2px 8px;
+}
+/* 行内输入格**一律不画框**（2026-10-17 晚，老板："要补的那个 tab 里也可以类似的这样做（透明边框）"）。
+   ⚠️ 用**透明边框**而不是 `border: 0`：后者会让盒子窄 2px，聚焦那一刻整行往两边抖一下。
+   ⚠️ **不要**把 `.pi-note` 也收进这里：要补的页那张备注在抽屉里，是个整宽输入框，
+      没框会变成"一大片看不出能写字的地方"；现场页的备注在第二行、旁边就是合计，另有一套（见下）。 */
+.pit .pi-code,
+.pit .pi-need,
+.pit .pi-got,
+.pit .pi-name,
+.pit .pi-price {
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
+  margin: 0;
+}
+.pit .pi-code:focus,
+.pit .pi-need:focus,
+.pit .pi-got:focus,
+.pit .pi-name:focus,
+.pit .pi-price:focus,
+.pit-live .pi-note:focus {
+  border-color: var(--brand);
+  background: var(--bg);
+}
+/* 补货行：需/拿 两格还是给一层极淡底 —— 一行里三个可填的格，全靠看不出哪儿能填就太难找了 */
+.pit .pi-need,
+.pit .pi-got {
+  background: var(--soft);
+  border-radius: 5px;
+}
+/* 现场页那四格：再压一层（行高更紧），备注也走无框 */
+.pit-live .pi-name,
+.pit-live .pi-price,
+.pit-live .pi-got,
+.pit-live .pi-note {
+  border: 1px solid transparent;
+  box-shadow: none;
+  margin: 0;
+  min-height: 30px;
+  padding: 2px 4px;
+}
+.pit-live .pi-name,
+.pit-live .pi-note {
+  background: transparent;
+}
+.pit-live .pi-price,
+.pit-live .pi-got {
+  /* 数字格给一层极淡底：告诉自己"这里能填"，又不至于变成四个方框 */
+  background: var(--soft);
+  border-radius: 5px;
+  min-height: 28px;
+}
+/* 多拿/缺 只染字色，**不画框**（一画框就破了"整行一个框都不画"）—— 两页同一口径 */
+.pit .pi-got.over,
+.pit .pi-got.under {
+  border-color: transparent;
+}
+/* 合计：第二行右端一个小数字，固定宽好让各行对齐；没填进价时整格收掉（见 .pit-amt:empty） */
+.pit-amt {
+  flex: none;
+  width: 58px;
+  text-align: right;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--brand);
+}
+.pi-shot {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  min-height: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+  color: var(--muted);
+}
+.pi-shot svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+.pi-shot.has {
+  border-style: solid;
+}
+.pi-shot.has img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.pi-name {
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+  margin: 0;
+  padding: 2px 8px;
+  text-align: left;
+}
+/* 进价：**行上就一个窄格**（不点开也能填）—— 老板 2026-10-17："进价多少钱我需要记下"
+   2026-10-17 晚从 62 收到 58、件从 48 收到 44：省下的 8px 全给了名称（B 档量出来的）。 */
+.pi-price {
+  flex: none;
+  width: 58px;
+  min-height: 34px;
+  margin: 0;
+  padding: 2px 4px;
+  text-align: center;
+}
+.pit-head-live .hprice {
+  width: 58px;
+  flex: none;
+  text-align: center;
+}
+.pit-live .pi-got {
+  width: 44px;
+}
+/* 现场页表头「件」也要跟着收到 44，不然表头跟行错一格 */
+.pit-head-live .hnum {
+  width: 44px;
+}
+/* 备注占掉第二行剩下的地方（合计 58 + 垃圾桶 30 + 两个 6px 间距） */
+.pit-live .pi-note {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+/* 现场行「件」多拿/缺 只染字色，**不画框** —— 一画框就破了"整行一个框都不画"。
+   ⚠️ 补货行同一口径，写在上面 `.pit .pi-got.over/.under` 那一条里了，别再写第二份。 */
+/* 没填进价时合计那句是空的 → 别留一条空行（高度会多出一截） */
+.pit-amt:empty {
+  display: none;
+}
+/* 认货照的「看大图」浮层：黑底、图居中、底下两颗按钮（换一张 / 关掉）。
+   不用 .sheetbg 那套 —— 那个带白卡片和标题，看照片要的是"整屏都是图"。 */
+.p-shotview {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.82);
+  padding: 16px;
+}
+.p-svbox {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  max-width: 100%;
+  max-height: 100%;
+}
+.p-svbox img {
+  max-width: 100%;
+  max-height: 72vh;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #fff;
+}
+.p-svbar {
+  display: flex;
+  gap: 12px;
+}
+.p-svbtn {
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
   font-size: 14px;
 }
 /* 「＋ 加一行」的**新家**：屏幕底部的浮动条（2026-10-16 晚，老板挑的 A 档「脚悬浮」）。
@@ -58,6 +323,7 @@
 .p-addbar {
   flex: none;
   display: flex;
+  gap: 8px;
   padding: 8px var(--pad);
   background: var(--card);
   border-top: 1px solid var(--line);
@@ -65,6 +331,218 @@
 .p-addbar button {
   /* 通栏（用 flex 撑开，不写 width:100% —— 免得跟 box-sizing 打架） */
   flex: 1 1 auto;
+}
+/* 底栏那颗「快速记」（2026-10-17，老板"我 33 号的时候就想加一加一…一个个数出来看订单"）：
+   2026-10-17 晚老板又说「加一行不需要了 只需要快速记（纯绿色）」→ 它现在是**「要补的」那页唯一的一颗**，
+   所以：① 占满整条（不再定宽 92px）；② **实心品牌绿 + 白字**（纯绿，跟「完成」同一档读法）。
+   ⚠️ 「＋ 加一行」那颗**没删**（现场那页还得靠它加新货行），只是按页露（renderPTabs 里置 hidden）——
+      所以 `.p-addbar button` 那条 `flex: 1 1 auto` 还在，这里必须显式写清楚"我也吃满"。
+   ⚠️ 白字而不是 --fg：`--brand` 在深色模式下不换色，白字两边都够对比。 */
+.p-addbar .qc-open {
+  flex: 1 1 auto;
+  width: auto;
+  height: var(--tap);
+  min-height: 0;
+  border-color: var(--brand);
+  background: var(--brand);
+  color: #fff;
+}
+/* ⚠️ 显式写 [hidden]：`.p-addbar` 是 flex，浏览器给 [hidden] 的那条盖不住按钮
+   （两颗都要写：快速记在现场页收、加一行在要补页收） */
+.p-addbar .qc-open[hidden],
+.p-addbar #purchaseAddRow[hidden] {
+  display: none;
+}
+
+/* ---------- 快速记数面板（2026-10-17 晚） ----------
+   老板原话："输入 33 然后边上按钮 + 然后我填多少个" —— 一行三格：编号 / 件数 / 加上。
+   用途是"档口现场一件一件数、数一件记一件"（他："很多缺少是一个个的数出来看订单"），
+   所以这一屏的全部追求只有一个：**同一个姿势连着敲、别让手离开软键盘**。
+   → 件数空着＝1、回车从编号跳到件数、件数再回车＝加上并回到编号（见 purchase.js qcCommit）。 */
+.qc-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+/* ⚠️ 这两颗输入框都得显式盖掉全局那条 `input{width:100%; min-height:44px}`，
+   否则编号框会把整行撑满、把件数框和按钮挤出去。 */
+.qc-code,
+.qc-num {
+  width: auto;
+  margin: 0;
+  min-height: 48px;
+  height: 48px;
+  padding: 0 8px;
+  text-align: center;
+  border-radius: 10px;
+  /* ⚠️ 字号**不许小于 16px**：iOS 上聚焦一个小于 16px 的输入框会整页放大（放大后就不再缩回去，
+     这一屏就废了）。编号格给到 19px 加粗 —— 他一个数字一个数字对着念，要一眼看清自己敲了什么。 */
+  font-size: 16px;
+}
+.qc-code {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.qc-code::placeholder {
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.qc-num {
+  flex: none;
+  width: 68px;
+  font-size: 19px;
+  font-weight: 700;
+}
+/* 去掉 number 输入框右边那对上下小箭头：手指按不准，反而挡字（件数是敲的，不是点的） */
+.qc-num::-webkit-outer-spin-button,
+.qc-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.qc-add {
+  flex: none;
+  width: 64px;
+  height: 48px;
+  min-height: 0;
+  font-size: 15px;
+}
+/* 三列小字：宽度跟上面三格一一对齐（flex:1 / 68 / 64 + 同一个 gap）——
+   对不齐的话，他念着"件数那格"往上瞟会瞟到"编号"上。 */
+.qc-lbl {
+  display: flex;
+  gap: 7px;
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--muted);
+  text-align: center;
+}
+.qc-lbl span:nth-child(1) {
+  flex: 1 1 auto;
+}
+.qc-lbl span:nth-child(2) {
+  flex: none;
+  width: 68px;
+}
+.qc-lbl span:nth-child(3) {
+  flex: none;
+  width: 64px;
+}
+/* 提示（"A033 长款羽绒服 · 已有 需 3 → 加上记 8"）：输编号时实时更，敲之前就知道会记到哪一行。
+   ⚠️ 空着时整格收掉（`:empty`）：刚打开面板时底下不该有一条空灰条。 */
+.qc-hint {
+  margin-top: 10px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: var(--soft);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qc-hint:empty {
+  display: none;
+}
+.qc-hint b {
+  color: var(--fg);
+  font-weight: 700;
+}
+/* 底下"这次记了些什么"：一笔一个胶囊，点 × 撤掉（记错了不用去列表里翻那一行） */
+.qc-foot {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.qc-stat {
+  font-size: 12px;
+  color: var(--muted);
+}
+.qc-stat:empty {
+  display: none;
+}
+.qc-log {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  /* 胶囊 34px + gap 8 → 两行 84px、三行 126px；给到 132 就是"看得见三行、再多了里面滚"。
+     （原来 96 是配 28px 的，不放大的话三行就滚，他攒十几笔时会来回滚。） */
+  max-height: 132px;
+  overflow-y: auto;
+}
+.qc-log:empty {
+  display: none;
+}
+.qc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  /* 2026-10-17 晚放大（老板："点加上那个出现的消息框太小了…不好叉掉"）：28 → 34px。
+     28px 的时候那颗 × 只有 22px，一手拿货一手点，十次里有几次点到胶囊本体上（什么都不发生）。 */
+  height: 34px;
+  padding: 0 3px 0 11px;
+  border-radius: 999px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--fg);
+  white-space: nowrap;
+}
+.qc-chip b {
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+/* ⚠️ 这颗 × 现在 30px（原来 22px）**带边带底**：一眼就看得出"这里能点"，
+   而且跟上面两颗按钮同一个读法（有边＝能点）。
+   30 而不是 44（--tap）：一串胶囊里塞 44px 会把 34px 的胶囊顶成一排大方块；
+   误触的代价也只是"再点一次加上"（攒的那笔还在列表里，撤错了还能在行上改回来）。 */
+.qc-chip .qc-x {
+  width: 30px;
+  height: 30px;
+  min-height: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1;
+}
+/* 右上角「完成」—— **实心品牌绿**（2026-10-17 晚 16:2x：加 1px 边他说"边界太不清晰"，四档里挑的 D：
+   完成实心绿 / 取消描边灰，主次分开 —— "实心的那个才是留下来的"，误点"取消"的概率最低）。
+   ⚠️ 白字而不是 --fg：`--brand` 在深色模式下不换色（还是 #23a884），白字两边都够对比。 */
+.qc-done {
+  flex: none;
+  height: 32px;
+  min-height: 0;
+  padding: 0 14px;
+  border: 1px solid var(--brand);
+  background: var(--brand);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+}
+/* 左上角「取消」（2026-10-17 晚，老板：「缺少取消按钮 只有完成按钮」→ 他选了「撤掉本次再关」）：
+   位置在左（标准弹窗的读法：左边放弃、右边留着）。**描边版**：品牌绿细边 + 绿字（四档里 C 的那套）——
+   跟右边「完成」的实心绿是一对（一个空心一个实心），也跟这一页的品牌色一致。
+   ⚠️ 边**不用 `--line`**：那是 #e3e6ea，跟搜索框、输入格的边同一个色阶 —— 他说「边界太不清晰」嫌的就是那个。
+   ⚠️ 不染红：红在这一页已经表示"缺货"，而且会让人以为"把整张单删掉"。 */
+.qc-cancel {
+  flex: none;
+  height: 32px;
+  min-height: 0;
+  padding: 0 14px;
+  border: 1px solid var(--brand);
+  background: var(--card);
+  color: var(--brand);
+  font-size: 14px;
 }
 /* ---------- 单内搜索行（2026-10-16 晚，甲档：顶栏放大镜点开才出、默认收起） ----------
    收起时**一点都不占**内容高度（还是 11 款一屏）；点开了才插在表头上方一行。
@@ -177,8 +655,12 @@
    ⚠️ 尺寸必须跟左边那颗返回一致 —— 两处都是 var(--tap)（44px），顶栏才左右对称。
    第一版写成 36px（还顺手把全局 min-height 清了）→ 它比顶栏里所有按钮都小一圈，老板一眼看出"太小"。
    所以现在**直接取 var(--tap)**（改 --tap 时跟着走），图案 24px（方框的 ~55%，常规比例）。
-   ⚠️ 边框**不染品牌绿**（2026-10-16 晚改）：绿框 + 绿图让它比左边的返回重得多、显得突兀；
-      现在用全局那条浅灰边（跟商品详情页右上那颗 `📷` 一个壳），只有图案是绿的。 */
+   ⚠️ 边框走过一圈：2026-10-16 晚嫌"绿框 + 绿图比左边返回重、突兀"改回灰的 →
+      2026-10-17 晚老板又说「按钮外层需要框框也可以是绿色」（顶栏这颗 + 缺货那颗），改回绿。
+      这次的绿跟当时不是一回事：那会儿页面上只有这一颗绿，孤零零；现在返回箭头、取消/完成、
+      「快速记」都是绿的，绿在这页已经是"能点的主操作"的统一语言，灰框反而是唯一不一致的那个。
+      真嫌重就退回 `--line`（会立刻说不出"这是个按钮"）。
+   ⚠️ 别用 `--line`：那是 #e3e6ea，跟搜索框、输入格同一个色阶 —— 白底上几乎看不出边。 */
 .p-icon {
   flex: none;
   width: var(--tap);
@@ -190,6 +672,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  border: 1px solid var(--brand);
+  background: var(--card);
   color: var(--brand);
 }
 .p-icon svg {
@@ -479,7 +963,7 @@
    ⚠️ 它挂在 .pit-name **里面**、贴着右端 —— 不是新开一列。
    名称栏总宽没变，代价只是**这一行**的名称早一点截断（约 1~2 个字，老板说没关系）；
    没有差额的行根本不渲染这个节点 → 名称仍是满宽（新开一列的话那 26px 每行都白留）。
-   颜色跟「拿」那格的染色同一套（over=brand 绿 / under=#b8860b 橙），等于把颜色变成数字。
+   颜色跟「拿」那格的染色同一套（over=brand 绿 / under=var(--danger) 红），等于把颜色变成数字。
    数字用等宽（tabular-nums），多行上下扫的时候位数能对齐。 */
 .pi-d {
   flex: none;
@@ -491,7 +975,7 @@
   color: var(--brand);
 }
 .pi-d.under {
-  color: #b8860b;
+  color: var(--danger);
 }
 .pit-name.muted {
   color: var(--muted);
@@ -508,15 +992,15 @@
   padding: 2px 4px;
   text-align: center;
 }
-/* 补齐情况（自动算，不让人标）：多拿=绿（他要的）、缺=橙、正好=绿 */
+/* 补齐情况（自动算，不让人标）：多拿=绿（他要的）、缺=红、正好=绿。
+   ⚠️ 2026-10-17 老板："缺少的不要用橙色吧 要不就用红色吧" —— 缺一律 var(--danger)（原来是 #b8860b 橙）。 */
 .pi-got.over {
   color: var(--brand);
   border-color: var(--brand);
   font-weight: 700;
 }
 .pi-got.under {
-  color: #b8860b;
-  border-color: #e6a23c;
+  color: var(--danger);
 }
 .pi-got.ok {
   color: var(--brand);

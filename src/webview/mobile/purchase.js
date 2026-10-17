@@ -56,6 +56,15 @@
     // 填表页（2026-10-16 改版）：行收成紧凑的一格，点行展开图/备注/删除 —— 这是展开中的行号，
     // -1 = 全收着。（一次只摊开一行，摊两行屏幕就又不够用了）
     openRow: -1,
+    // 两段开关（2026-10-17，老板挑的「乙′」）：现在停在**哪一页**。
+    // "plan"=要补的（有编号的行） "live"=现场进的（手写名字的新货行）。
+    // ⚠️ 这只是**筛**，底层始终是同一批 items（同一张单）→ 汇总/导出不用合并两套数据。
+    pTab: "plan",
+    // 「缺货」筛选（2026-10-17 晚，老板："我后面拿到这个进货单的人 肯定要看下缺货的是有哪些"）。
+    // ⚠️ 它只是**渲染时多筛一层**：不改 items 顺序（老板："不需要按多的排序"）、不动 data-i ——
+    //    行序仍是编号顺序，改数量/删行仍走真实下标。
+    // ⚠️ 只管「要补的」那页（新货行没有"需"，永远不算缺）。
+    onlyShort: false,
     // 导出（2026-10-16）：电脑那头在压图/建表时置 true —— 顶栏那颗图标变淡 + 转圈、同时禁用，
     // 防连点（后端也有一个同样的闸）
     exportBusy: false,
@@ -101,13 +110,13 @@
    * 编号归一：**纯数字 → 默认前缀 A + 补零到 3 位**。
    *   `6` / `06` / `006` / `a6` / `A6` → `A006`；`T5` → `T005`；`A1044` → `A1044`；
    *   `000`（0 号不存在）/ `XD`（两段都不成形）/ 空 → `null`。
-   * ⚠️ 归一不了**不是错**：调用方保留原文照样记，界面上只是提示"没这个编号"
+   * ⚠️ 归一不了**不是错**：调用方保留原文照样记，界面上只是提示"无此编号"
    *   （老板 10-16 拍的口径："归一不了的就记，只不过说没有这个编号罢了"）。
    *
    * ⚠️⚠️ **口径出处 ＝ `src/tools/shopTool/pricing.ts` 的 `canonicalCode()`**，别自己发明规则：
    *   后端 `handlers/purchase.ts` 保存时、桌面端直播排品输编号时、**手机版商品筛选的区间语法**
    *   （`1~33` 当 A1~A33，`app.js parseCodeTok`）用的都是它 —— 也就是说"纯数字算 A 段"
-   *   本来就是这系统里既有的口径，进货单这一格当初漏了（界面说"没这个编号"、后端却存成 A006）。
+   *   本来就是这系统里既有的口径，进货单这一格当初漏了（界面说"无此编号"、后端却存成 A006）。
    * 这里抄一份是为了守「独立功能文件」约定（功能自己的逻辑不许进 app.js）。
    * ⚠️ 改这里**必须同步**上面那几处；`check-purchase.cjs` 里有一条拿**后端编译产物**逐例比对的
    *   断言钉着（防两边悄悄漂开）。
@@ -180,24 +189,63 @@
   }
 
   /**
-   * 行尾那个差额小字（2026-10-16 晚，老板挑的"丙档"）：多拿 `+6`（绿）、缺 `-4`（橙）。
+   * 行尾那个差额小字（2026-10-16 晚，老板挑的"丙档"）：多拿 `+6`（绿）、缺 `-6`（红）。
    * 老板原话："填完了拿之后，就比如说加 6 什么显示一下，这样的话我也不用自己去算了。"
    *
    * ⚠️ **放法**：它挂在名称栏**里面**、贴着右端（CSS 的 `.pi-d`），**不是**新开一列 ——
    *   所以名称栏总宽没变，只是这一行的名称文字自己少显示一两个字（老板："名称栏短一点没关系"）。
    *   副作用是好的：**没差额的行 `.pi-d` 根本不渲染**，名称仍是满宽（新开一列的话那 26px 是白留的）。
-   * ⚠️ **没拿（got=0）不显示**：那是"还没去拿"，不是"缺" —— 每行挂个橙色的 `-10` 就是当年那个
-   *   「待拿」徽标，老板说过多余。正好（差 0）也不显示，那时"拿"格本来就是绿的。
+   * ⚠️ **拿 0 也要显示 `-6`**（2026-10-17 晚改回来，老板："如果我需要6 但是 拿填了0 怎么不显示-那个数
+   *   虽然也在缺货里面 但是不明显"）。原来 got=0 不出，理由是"还没去拿，每行挂个 -10 像当年的待拿徽标"；
+   *   但那样跟"缺货"筛选**自相矛盾** —— 列表把它筛出来，行上却一个数都没有
+   *   （等于"我告诉你它缺，但不告诉你缺几件"）。
+   *   ⭐ **现在的规矩：能进"缺货"列表的行，行上就必须看得见差多少。** `isShort()` 与这里口径一致。
+   *   （只有差 0 不显示 —— 那时"拿"格本来就是绿的。）
    * 口径跟复制清单、汇总那行的"差"**必须一致**：fmtNum + 正数补 `+`。
    */
   function itemDiff(it) {
     var need = num(it.need);
     var got = num(it.got);
-    if (!need || !got || got === need) {
+    // ⚠️ `!need` 仍然要拦：空行（需还没填）谈不上差额，否则会凭空冒出个 +5
+    if (!need || got === need) {
       return null;
     }
     var d = got - need;
     return { txt: (d > 0 ? "+" : "") + fmtNum(d), over: d > 0 };
+  }
+  /**
+   * ⭐ 「还缺」的唯一口径（2026-10-17 晚，老板："把紧急缺货的自动筛选出来…只需要看还缺的"）。
+   *   需 > 0 且 拿 < 需 → 缺。
+   *
+   * ⚠️ **拿 0 也算缺**：刚开的单全都没拿，那**整整一单都是缺的** —— 这时候筛出 0 款才是最没用的结果。
+   *   2026-10-17 晚老板又提了行上那个 `-6` 也该出（"虽然也在缺货里面 但是不明显"）→
+   *   `itemDiff()` 现在也把 got=0 算进去，**两处口径统一**（能进"缺货"列表的行，行上就看得到差多少）。
+   * ⚠️ 现场新货行（kind=1）永远不算缺：它没有"需"（老板现场看见了才记，不是计划量）。
+   */
+  function isShort(it) {
+    if (!it || isNewRow(it)) {
+      return false;
+    }
+    var need = num(it.need);
+    return need > 0 && num(it.got) < need;
+  }
+  /** 「还缺」的款数 + 缺口件数（缺口 = Σ(需 − 拿)，正数）—— 开关上的数字和底部汇总都用它 */
+  function shortTotals(items) {
+    var n = 0;
+    var qty = 0;
+    for (var i = 0; i < items.length; i++) {
+      if (isShort(items[i])) {
+        n++;
+        qty += num(items[i].need) - num(items[i].got);
+      }
+    }
+    return { n: n, qty: qty };
+  }
+  /** 「缺货」现在是不是**真在筛**：开关开着 + 停在「要补的」那页。
+   *  ⚠️ 「现场进的」那页不算 —— 新货行没有"需"，开关在那页根本不露，
+   *    要是开着还把列表筛空，他会以为"现场记的东西全丢了"。 */
+  function shortOnly() {
+    return !!state.onlyShort && !isLiveTab();
   }
   /** 展开块第二行的进价/售价（2026-10-17，老板：那句「商品库里有这个编号」没信息量，换成真有用的）。
    *  ⚠️ 跟 app.js 的 `money()` **同一格式**（¥ + 千分位、两位小数以内）—— 界面上同一种数不能两种写法。 */
@@ -230,7 +278,16 @@
     //    （见 mergeSameCode()），源头堵住了。真去重反而会算出"共 2 款 · 需 36"这种自相矛盾的数
     //    （款数去重了、数量还是两行相加）。
     var n = 0;
+    // 现场新货行（2026-10-17）：单独记两款数和花掉多少钱 ——
+    // ⚠️ **不进"需/拿/差"那三个数**：现场新货没有"需"，混进去会把"差"算成凭空多拿。
+    var newCnt = 0;
+    var newAmt = 0;
     for (var i = 0; i < items.length; i++) {
+      if (isNewRow(items[i])) {
+        newCnt++;
+        newAmt += num(items[i].price) * num(items[i].got);
+        continue;
+      }
       if (String(items[i].code || "").trim()) {
         n++;
       }
@@ -247,8 +304,9 @@
     var statusText;
     var cls;
     if (!n) {
-      statusText = "空单";
-      cls = "";
+      // 只有现场新货、还没有补货行时别说"空单"（那明明记了东西）
+      statusText = newCnt ? "现场记了 " + newCnt + " 款" : "空单";
+      cls = newCnt ? "doing" : "";
     } else if (ready === n) {
       statusText = "已完成";
       cls = "ok";
@@ -261,9 +319,13 @@
       statusText = "已齐 " + ready + "/" + n;
       cls = "doing";
     }
-    var line = "共 " + n + " 款 · 需 " + fmtNum(need) + " · 拿 " + fmtNum(got);
+    var line = "共 " + (n + newCnt) + " 款" + (newCnt ? "（补货 " + n + " · 新货 " + newCnt + "）" : "") +
+      " · 需 " + fmtNum(need) + " · 拿 " + fmtNum(got);
     if (n) {
       line += " · 差 " + (diff > 0 ? "+" : "") + fmtNum(diff);
+    }
+    if (newAmt > 0) {
+      line += " · 新货 " + fmtMoney(newAmt);
     }
     return {
       need: need,
@@ -271,6 +333,8 @@
       diff: diff,
       ready: ready,
       total: n,
+      newCnt: newCnt,
+      newAmt: newAmt,
       statusText: statusText,
       cls: cls,
       line: line,
@@ -391,6 +455,14 @@
     if (!box || !state.draft) {
       return;
     }
+    // 「缺货」开着 → 这一行换口径，**只报筛出来的那批**（2026-10-17）。
+    // ⚠️ 不换的话，列表 3 行、底下写着"共 12 款 · 需 80"，他只会以为"列表少画了 9 行"。
+    if (shortOnly()) {
+      var t = shortTotals(state.draft.items);
+      box.textContent =
+        "缺货 · " + t.n + " 款" + (t.n ? " · 缺口 " + fmtNum(t.qty) + " 件" : "（全拿齐了）");
+      return;
+    }
     var s = calcSummary(state.draft.items);
     // 2026-10-16 压成**一行**（原来是四行 kv 的卡，太占地方 —— 他要看的是商品）：
     // 共 N 款 · 需 x · 拿 y · 差 d · 进行中 1/3。挂在商品列表底下，不顶在最上面。
@@ -409,7 +481,36 @@
    * ⚠️ 2026-10-16 晚又加回**差额小字**（`itemDiff()`，老板要的"不用自己算"）：
    *    它挂在名称栏**里面**贴着右端、只在真有差额时才渲染 → 名称栏总宽没变、没差额的行还是满宽。
    */
+  /** 这一行是不是「现场新货行」（2026-10-17 老板挑的「乙′」里的第二种行）：
+   *  kind=1 → **没有"需"、没有编号**，名字是手写的（`it.name`），进价/认货照是这行自己的。
+   *  老数据没有 kind 这一列 → 一律当补货行，行为跟以前一模一样。 */
+  function isNewRow(it) {
+    return !!(it && Number(it.kind));
+  }
+  /** 新货行的合计（老板 2026-10-17 晚定稿的 B 档）：**第二行右端**就一个 `¥114`。
+   *  ⚠️ 别再把「合计」两个字和这串数挂到名称下面 —— 那会让名称格被小字顶满、看着挤
+   *     （老板原话："合计写在名称下面 感觉可能一行显得很挤…看着很不美观"）。
+   *  没填进价就**什么都不写**（`.pit-amt:empty` 会把那一格收掉，不留一条空白）。 */
+  function amtTxt(it) {
+    if (!nzNum(it.price)) {
+      return "";
+    }
+    return fmtMoney(num(it.price) * num(it.got));
+  }
+  /** 数字是不是大于 0（空串/0/NaN 都算"没填"） */
+  function nzNum(v) {
+    return num(v) > 0;
+  }
+  /** 认货照的临时号：新货行还没有编号，图先存在 imageDir/<这个号>/ 下。
+   *  ⚠️ 只用字母数字和横线（它就是个文件夹名）；一行一个号，重复拍照进同一个夹子。 */
+  function tempImgCode() {
+    return "_n" + Date.now().toString(36);
+  }
   function itemHtml(it, i) {
+    // 现场新货行走另一套画法（字段就不一样：没有编号/需，多了进价和照）
+    if (isNewRow(it)) {
+      return newItemHtml(it, i);
+    }
     var p = findProduct(it.code);
     var gc = gotCls(it);
     var df = itemDiff(it);
@@ -425,7 +526,7 @@
       nameTxt = p.name || "(这个商品没写名称)";
       nameCls = "";
     } else {
-      nameTxt = "没这个编号（照样记）";
+      nameTxt = "无此编号";
       nameCls = "warn";
     }
     // 行内小图：**空行不取图**（只出一格「编号」占位，省一次请求）；取不到（404）由 onerror
@@ -461,10 +562,11 @@
       '<div class="pit-info">' +
       '<div class="pit-full">' + (hasCode ? esc(it.code) + " " + esc(p ? p.name || "(这个商品没写名称)" : "") : "先输编号，名称和图片自动带出来") + "</div>" +
       // 第二行（2026-10-17，老板定的）：库里有 → **进价 / 售价**（档口现场对照着算账，比一句
-      // 「商品库里有这个编号」有用得多）；库里没有 → 那句提示**靠右 + 更淡**，别占正位。
+      // 「商品库里有这个编号」有用得多）；库里没有 → 「无此编号」**靠右 + 更淡**（老板 10-17 定的四个字：
+      // 原来那句「商品库里没有这个编号（照样记进单子）」太长，而且"照样记进单子"是废话——这里就是单子）。
       (hasCode
         ? '<div class="pit-sub muted small' + (p ? "" : " pit-sub-r") + '">' +
-          (p ? "进价 " + fmtMoney(p.cost_price) + " · 售价 " + fmtMoney(p.sale_price) : "商品库里没有这个编号（照样记进单子）") +
+          (p ? "进价 " + fmtMoney(p.cost_price) + " · 售价 " + fmtMoney(p.sale_price) : "无此编号") +
           "</div>"
         : "") +
       "</div>" +
@@ -484,6 +586,144 @@
       "</div>";
     return h + "</div>";
   }
+  /**
+   * 现场新货行（2026-10-17，老板挑的「乙′」；当天晚些时候按他挑的 **B 档**定稿）：
+   *   第一行  [照 44][名称][进价][件]
+   *   第二行  [备注（可空）][¥114][🗑]
+   * ⚠️ **没有「需」这一格**：现场没有"本来该要几件"这回事（那是补货行的事）。
+   * ⚠️ 名称/进价都在行上直接改，不弹层 —— 档口一只手拿着货，能少一次点击就少一次。
+   * ⚠️⚠️ **不再有展开块**（原来那个抽屉里只剩"一行删除按钮 + 左边一大片空白"，老板：
+   *    "详情能点击的地方太小了不好打开" —— 这行四个格子全是输入框/按钮，压根没有能点的空地）。
+   *    去掉抽屉后，备注常驻第二行，删除也常驻，点不开/留白两个问题一起没了。
+   * ⚠️ 四个输入框**失焦不画框**（CSS `.pit-live` 那段）：四个方框并排是"挤"与"丑"的主因。
+   * ⚠️ 认货照是"随手拍一张、下次认得出是它"，不是商品展示图：不摆拍、不强制（`_n` 临时夹子）。
+   */
+  function newItemHtml(it, i) {
+    var gc = gotCls(it);
+    var shot = it.img
+      ? '<button class="pi-shot has" type="button" data-shot="' + i + '" aria-label="看大图 / 换一张照" title="看大图 / 换一张照">' +
+        '<img src="' + esc(API.imgUrl(it.img, "", "thumb")) + '" alt="" loading="lazy" onerror="this.remove()" />' +
+        "</button>"
+      : '<button class="pi-shot" type="button" data-shot="' + i + '" aria-label="拍张照" title="拍张照">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M4 8h3l1.4-2h7.2L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" />' +
+        '<circle cx="12" cy="13" r="3.2" />' +
+        "</svg></button>";
+    return (
+      '<div class="pit pit-live" data-i="' + i + '">' +
+      // 第一行：照 / 名称 / 进价 / 件（名称单行，合计不在它下面）
+      '<div class="pit-row">' +
+      shot +
+      '<input class="pi-name" type="text" autocomplete="off" spellcheck="false" placeholder="名称" value="' +
+      esc(it.name || "") + '" />' +
+      '<input class="pi-price" type="number" inputmode="decimal" min="0" step="0.1" placeholder="进价" value="' +
+      (nzNum(it.price) ? esc(numStr(it.price)) : "") + '" />' +
+      '<input class="pi-got' + (gc ? " " + gc : "") + '" type="number" inputmode="decimal" min="0" step="1" placeholder="件" value="' +
+      esc(numStr(it.got)) + '" />' +
+      "</div>" +
+      // 第二行：备注常驻 + 合计靠右 + 删行（删行跟补货行同一个垃圾桶图标，画法一致才叫"统一"）
+      '<div class="pit-row2">' +
+      '<input class="pi-note" type="text" placeholder="备注（可空）" value="' + esc(it.note) + '" />' +
+      '<span class="pit-amt">' + esc(amtTxt(it)) + "</span>" +
+      '<button class="pit-del" type="button" aria-label="删除这一行" title="删除这一行">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M3 6h18" />' +
+      '<path d="M19 6v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />' +
+      '<path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />' +
+      '<path d="M10 11v6" />' +
+      '<path d="M14 11v6" />' +
+      "</svg></button>" +
+      "</div></div>"
+    );
+  }
+  /**
+   * 现场新货行的「认货照」：现造一个 `<input type=file accept=image/*>` 点它 ——
+   * 手机系统会自己弹「相机 / 相册」，不用我们分两条路（跟 app.js 详情页上传同一个做法）。
+   * ⚠️ 图存在哪：这行还没有编号，所以先用一个**临时号**（`_n` 开头）当文件夹名，
+   *    传完把号记在 `it.img` 上，行上按这个号取图；以后转正/有编号了再挪（先不做）。
+   * ⚠️ 传完必须 renderItems()：小图那格要从"相机图标"换成照片。
+   */
+  function pickPhoto(i) {
+    var it = state.draft && state.draft.items[i];
+    if (!it) {
+      return;
+    }
+    var inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = "image/*";
+    inp.style.display = "none";
+    document.body.appendChild(inp);
+    inp.onchange = function () {
+      var f = inp.files && inp.files[0];
+      if (inp.parentNode) {
+        inp.parentNode.removeChild(inp);
+      }
+      if (!f) {
+        return;
+      }
+      var fr = new FileReader();
+      fr.onload = function () {
+        var code = it.img || tempImgCode();
+        it.img = code;
+        API.toast("照片上传中…");
+        API.invoke("receiveImageData", {
+          code: code,
+          items: [{ name: f.name || "photo.jpg", data: String(fr.result || "") }],
+        })
+          .then(function () {
+            API.toast("照片存好了");
+            markDirty();
+            renderItems();
+          })
+          .catch(function () {
+            API.toast("照片没传上，再试一次", true);
+          });
+      };
+      fr.onerror = function () {
+        API.toast("这张读不出来，换一张试试", true);
+      };
+      fr.readAsDataURL(f);
+    };
+    inp.click();
+  }
+  /**
+   * 看认货照的大图（2026-10-17 老板："能查看大图就好了，或者小图也行"）。
+   * ⚠️ 用 `size=mid`（1024 等比）而不是 `full`：手机原图实测 7.9MB 一张，档口流量/内存都吃不住，
+   *    mid 已经足够看清包装上的字。
+   * ⚠️ 换图走这里那颗「换一张」—— 点击分给"看"，换是明确动作，不会误触。
+   */
+  function showShotView(i) {
+    var it = state.draft && state.draft.items[i];
+    if (!it || !it.img) {
+      return;
+    }
+    var bg = document.createElement("div");
+    bg.className = "p-shotview";
+    bg.innerHTML =
+      '<div class="p-svbox">' +
+      '<img src="' + esc(API.imgUrl(it.img, "", "mid")) + '" alt="认货照" />' +
+      '<div class="p-svbar">' +
+      '<button class="p-svbtn" type="button" data-act="swap">换一张</button>' +
+      '<button class="p-svbtn" type="button" data-act="close">关掉</button>' +
+      "</div></div>";
+    document.body.appendChild(bg);
+    bg.onclick = function (e) {
+      var btn = e.target.closest("[data-act]");
+      var act = btn ? btn.getAttribute("data-act") : "";
+      if (act === "swap") {
+        close();
+        pickPhoto(i);
+        return;
+      }
+      // 点「关掉」、点大图外面、点图片本身都收起来（手机上最顺手的三个动作）
+      close();
+    };
+    function close() {
+      if (bg.parentNode) {
+        bg.parentNode.removeChild(bg);
+      }
+    }
+  }
   /** 搜索词（空 = 不筛，整单都显示） */
   function searchKeyword() {
     return String(state.searchQ || "").trim();
@@ -496,6 +736,10 @@
       return true;
     }
     var k = kw.toLowerCase();
+    // 现场新货行：搜的就是它手写的名字（没有编号可搜）
+    if (isNewRow(it)) {
+      return String(it.name || "").toLowerCase().indexOf(k) >= 0;
+    }
     if (String(it.code || "").toLowerCase().indexOf(k) >= 0) {
       return true;
     }
@@ -519,29 +763,156 @@
       return;
     }
     if (!state.draft.items.length) {
-      box.innerHTML =
-        '<p class="muted small">还没有商品。点下面那条「＋ 加一行」，输编号就行（会自动带出名称和图片）。</p>';
+      // 整张单还空着：说清"这一页该怎么加东西"（2026-10-17 晚起两页各有各的入口：
+      // 要补的＝底栏那颗「快速记」、现场进的＝「＋ 记一笔」）
+      box.innerHTML = isLiveTab()
+        ? '<p class="muted small">「现场进的」这页还是空的。点下面「＋ 记一笔」写个名字、填件数就行（编号可以先不填）。' +
+          "要按编号补的货，切到「要补的」那页。</p>"
+        : '<p class="muted small">还没有商品。点下面「快速记」，敲编号和件数就行（会自动带出名称和图片）；' +
+          "现场看见库里没有的新货，切到「现场进的」写个名字记一笔。</p>";
+      renderPTabs();
       return;
     }
     var items = state.draft.items;
     var kw = searchKeyword();
+    var live = isLiveTab();
     // ⚠️ i 是**在 items 里的真实下标**（不是筛完之后的序号）：data-i、改数量、删行、展开全靠它 ——
     //    拿过滤后的序号去标会串到别的商品上（改 A006 的数量结果改到了 A012）。
+    // 2026-10-17：先按**当前这一页**（要补的 / 现场进的）筛，再按「缺货」筛，再按搜索词筛。
+    // ⚠️ 三层都是"跳过不画"，**没有一处重排 items** —— 所以循环里的 i 永远是真实下标。
+    var only = shortOnly();
     var rows = [];
     for (var i = 0; i < items.length; i++) {
+      if (isNewRow(items[i]) !== live) {
+        continue;
+      }
+      if (only && !isShort(items[i])) {
+        continue;
+      }
       if (rowMatches(items[i], kw)) {
         rows.push(itemHtml(items[i], i));
       }
     }
     // 表头跟着行的列宽走（同一套 flex + gap，对得齐）；himg 那格对齐行内小图
-    var head =
-      '<div class="pit-head"><span class="himg"></span><span class="hcode">编号</span>' +
-      '<span class="hname">名称</span><span class="hnum">需</span><span class="hnum">拿</span></div>';
+    var head = live
+      ? '<div class="pit-head pit-head-live"><span class="himg"></span><span class="hname">名称</span><span class="hprice">进价</span><span class="hnum">件</span></div>'
+      : '<div class="pit-head"><span class="himg"></span><span class="hcode">编号</span>' +
+        '<span class="hname">名称</span><span class="hnum">需</span><span class="hnum">拿</span></div>';
     // 搜不到不留白屏（跟别处"空态要有一句话"一个规矩）；表头留着，列宽还有个参照
+    // ⚠️ 「缺货」筛出 0 款是**很常见**的结果（全拿齐了）—— 必须专门说一句，
+    //    不然一片空白 + 开关还亮着，他只会觉得"单子坏了"。
     var body = rows.length
       ? rows.join("")
-      : '<p class="muted small">这单里没有编号或名称带「' + esc(kw) + "」的行。</p>";
+      : '<p class="muted small">' +
+        (kw
+          ? "这单里没有编号或名称带「" + esc(kw) + "」的行。"
+          : only
+            ? "这单没有还缺的款 —— 全都拿齐了。点上面那颗「缺货」看整单。"
+            : live
+              ? "「现场进的」这页还是空的。点下面「＋ 记一笔」写个名字、填件数就行（编号可以先不填）。"
+              : "「要补的」这页还是空的。点下面「快速记」敲编号就行。") +
+        "</p>";
     box.innerHTML = head + body;
+    renderPTabs();
+  }
+  /** 现在是不是「现场进的」那一页 */
+  function isLiveTab() {
+    return state.pTab === "live";
+  }
+  /** 两段开关的高亮 + 两边的款数（只动这一小块，不重画列表） */
+  function renderPTabs() {
+    var plan = $("purchaseTabPlan");
+    var live = $("purchaseTabLive");
+    var cPlan = $("pCountPlan");
+    var cLive = $("pCountLive");
+    if (!plan || !live || !state.draft) {
+      return;
+    }
+    var pn = 0;
+    var ln = 0;
+    var items = state.draft.items || [];
+    for (var i = 0; i < items.length; i++) {
+      if (isNewRow(items[i])) {
+        ln++; // 新货行只要存在就算一笔（名字还没写也先算着，不然"点完加号没反应"）
+      } else if (String(items[i].code || "").trim()) {
+        pn++;
+      }
+    }
+    if (cPlan) {
+      cPlan.textContent = String(pn);
+    }
+    if (cLive) {
+      cLive.textContent = String(ln);
+    }
+    // 自检里的 DOM 桩很薄（没有 classList/setAttribute），这几步写成"有就做"
+    if (plan.classList && plan.classList.toggle) {
+      plan.classList.toggle("on", !isLiveTab());
+    }
+    if (live.classList && live.classList.toggle) {
+      live.classList.toggle("on", isLiveTab());
+    }
+    // 底部那颗按钮跟着页变称呼：要补的是「加一行」、现场进的是「记一笔」——
+    // 同一颗按钮干两件事，名字得跟着变，不然他会以为点错了。
+    // ⚠️ 2026-10-17 晚（老板：「加一行不需要了 只需要快速记（纯绿色）」）：
+    //    「要补的」那页**只留「快速记」**（纯绿通栏），这颗按页收起来。
+    //    **不能删**：现场那页只有它能加新货行（新货没有"需"，快速记管不到）。
+    var add = $("purchaseAddRow");
+    if (add) {
+      var label = isLiveTab() ? "＋ 记一笔" : "＋ 加一行";
+      if (add.textContent !== label) {
+        add.textContent = label;
+      }
+      if (add.setAttribute) {
+        add.setAttribute("aria-label", isLiveTab() ? "记一笔现场进的货" : "加一行");
+      }
+      if (add.hidden !== !isLiveTab()) {
+        add.hidden = !isLiveTab();
+      }
+    }
+    // 「缺货」那颗（2026-10-17）：数字 = 这单**还缺的款数**，只在「要补的」那页露。
+    // ⚠️ 数字算的是**整单的缺**（不是"当前筛完剩几行"）—— 开关上写的是"点下去会剩几款"，
+    //    不是"已经筛出几款"，这两者在没开的时候是同一个数、开着的时候才分叉。
+    renderShortBtn(items);
+    // 底栏那颗「快速记」也只露在「要补的」那页：另一页记的是手写名字的新货，没有"需"这回事
+    var qb = $("purchaseQuickBtn");
+    if (qb && qb.hidden !== isLiveTab()) {
+      qb.hidden = isLiveTab();
+    }
+  }
+  /** 「缺货」那颗开关的外壳：数字 / 露不露 / 亮不亮。
+   *  ⚠️ 单独抽出来是因为**打字时要单独刷它**（见 updateRowLive）：他只更新这一行 + 汇总，
+   *    不整块重画 —— 填完「拿」那颗数字得当场变小，不然要等下次重画才看得见。 */
+  function renderShortBtn(items) {
+    var sb = $("purchaseOnlyShort");
+    if (!sb) {
+      return;
+    }
+    var sc = $("pCountShort");
+    if (sc) {
+      sc.textContent = String(shortTotals(items || []).n);
+    }
+    if (sb.hidden !== isLiveTab()) {
+      sb.hidden = isLiveTab();
+    }
+    if (sb.classList && sb.classList.toggle) {
+      sb.classList.toggle("on", !!state.onlyShort);
+    }
+    if (sb.setAttribute) {
+      sb.setAttribute("aria-pressed", state.onlyShort ? "true" : "false");
+    }
+  }
+  /** 切页：只换列表 + 开关高亮，草稿一个字没动（底层是同一张单） */
+  function setPTab(t) {
+    var next = t === "live" ? "live" : "plan";
+    if (state.pTab === next) {
+      return;
+    }
+    state.pTab = next;
+    state.openRow = -1; // 摊开的那行在另一页上，别让它串过来
+    renderItems();
+    // 「缺货」只作用在「要补的」那页（shortOnly() 里判）→ 切到现场那页时
+    // 底下那句汇总得**换回整单口径**，不然还挂着"缺货 · 3 款"（2026-10-17）
+    renderSummary();
   }
   function renderDetail() {
     if (!state.draft) {
@@ -551,6 +922,7 @@
     renderTitle();
     renderSummary();
     applySearchRow(); // 搜索行露不露跟着 state（换单时已经清空，见 openOrder）
+    renderPTabs(); // 两段开关的款数（列表空的时候 renderItems 会提前返回，这里补一刀）
     renderItems();
   }
   function focusLastCode() {
@@ -558,7 +930,7 @@
     if (!box) {
       return;
     }
-    var els = box.querySelectorAll(".pi-code");
+    var els = box.querySelectorAll(".pi-code, .pi-name");
     var el = els[els.length - 1];
     if (el) {
       try {
@@ -601,6 +973,11 @@
                 need: num(it.need),
                 got: num(it.got),
                 note: it.note || "",
+                // 现场新货行（2026-10-17）：手写名字 / 进价 / 认货照的临时号 / 行的种类
+                name: it.name || "",
+                price: num(it.price),
+                img: it.img || "",
+                kind: Number(it.kind) ? 1 : 0,
               };
             }),
           }
@@ -609,10 +986,14 @@
       state.openRow = -1; // 换了一张单，展开中的行号没意义了
       state.searchQ = ""; // 搜索也一起清：上一张单筛的词对这张单没意义（搜索行也收起来）
       state.searchOpen = false;
-      // 新建时先白送一行空的：进来就能直接输编号，不用再点一次「＋ 加一行」。
+      state.pTab = "plan"; // 换单回到「要补的」那页（现场那页是临时记东西的，不是默认落脚点）
+      // 「缺货」也清掉：上一张单筛剩几款，换一张单还筛着 → 一进来就是空列表，像单子没数据
+      state.onlyShort = false;
+      // 新建时先白送一行空的：进来就能直接在行里输编号，不用先开一次「快速记」。
+      // （2026-10-17 晚起底栏在「要补的」那页只有「快速记」，「加一行」收在现场页了）
       // ⚠️ 这一行**不算改动**（没编号的行后端也不会存）—— 否则"掀开看一眼又退出去"会留下一张空单
       if (!src) {
-        state.draft.items.push({ code: "", need: 0, got: 0, note: "" });
+        state.draft.items.push({ code: "", need: 0, got: 0, note: "", name: "", price: 0, img: "", kind: 0 });
       }
       renderDetail();
     }
@@ -648,19 +1029,27 @@
       state.pending = true; // 上一条还在路上：等它回来说
       return;
     }
-    // 行整表替换（跟后端口径一致）：空编号的行在这儿就丢掉
+    // 行整表替换（跟后端口径一致）：空的行在这儿就丢掉。
+    // 2026-10-17：现场新货行**可以没有编号**（名字就是它的身份），所以判空看的是"编号和名字都空"。
     var items = [];
     for (var i = 0; i < d.items.length; i++) {
-      if (String(d.items[i].code || "").trim()) {
-        items.push({
-          code: d.items[i].code,
-          need: num(d.items[i].need),
-          got: num(d.items[i].got),
-          // 库里那列还在（后端没动，不必为一行 UI 改动去动表结构）；值由 isReady() 算，不是人工勾的
-          done: isReady(d.items[i]) ? 1 : 0,
-          note: d.items[i].note || "",
-        });
+      var it = d.items[i];
+      var liveRow = isNewRow(it);
+      if (liveRow ? !String(it.name || "").trim() && !String(it.code || "").trim() : !String(it.code || "").trim()) {
+        continue;
       }
+      items.push({
+        code: it.code || "",
+        need: liveRow ? 0 : num(it.need),
+        got: num(it.got),
+        // 库里那列还在（后端没动，不必为一行 UI 改动去动表结构）；值由 isReady() 算，不是人工勾的
+        done: liveRow ? 0 : isReady(it) ? 1 : 0,
+        note: it.note || "",
+        name: liveRow ? String(it.name || "").trim() : "",
+        price: liveRow ? num(it.price) : 0,
+        img: it.img || "",
+        kind: liveRow ? 1 : 0,
+      });
     }
     // 还没落库、又是一行都没有 → 什么都不用存（别在库里留一张空单）
     if (!items.length && !d.id) {
@@ -704,34 +1093,57 @@
    */
   function copyText() {
     var d = state.draft;
-    var lines = ["【补货单 " + (d.date || "") + "】"];
-    var rows = d.items
+    // 「缺货」开着时，**复制出去也只有缺的**（2026-10-17）：
+    // 这条清单是发给"去拿货的那个人"的 —— 老板的诉求就是"他只看还缺什么"。
+    // 整单备注（d.note）照旧带上（那是给人看的说明，不属于某一行）。
+    var only = shortOnly();
+    var lines = ["【补货单 " + (d.date || "") + "】" + (only ? "（只看还缺的）" : "")];
+    // 2026-10-17：现场新货行也跟着走，但**排在补货行后面**（老板："先把补货的读完，再拿那个进货的"）。
+    // ⚠️ 筛"还缺"的时候新货行整批不出：它们没有"需"，跟缺不是一件事，混进来反而让人以为新货也算欠的。
+    var planRows = d.items
       .filter(function (it) {
-        return String(it.code || "").trim();
+        return !isNewRow(it) && String(it.code || "").trim() && (!only || isShort(it));
       })
       .map(function (it) {
         var p = findProduct(it.code);
         var nm = p && p.name ? p.name : "";
         var label = (isReady(it) ? "✓ " : "") + it.code + (nm ? " " + nm : "");
-        return { it: it, label: label };
+        var got = num(it.got);
+        var d2 = got - num(it.need);
+        var seg = "需" + fmtNum(it.need) + " 拿" + fmtNum(got);
+        // ⚠️ 差 0 不写：跟行上"正好不显示差额"同一个口径（原来这儿会写成 `需10 拿10 0`，
+        //    那个孤零零的 0 看着像乱码；列表里也不该出现"正好"这个信息 —— 对齐的列已经说清了）
+        // ⚠️ **拿 0 要写**（2026-10-17 晚跟行上一起改的）：`需6 拿0 -6`。
+        //    原来 `got &&` 把这一档咽掉了 → 清单里那行看着像"不用买"，跟"缺货"筛选对不上。
+        if (num(it.need) && d2 !== 0) {
+          seg += " " + (d2 > 0 ? "+" : "") + fmtNum(d2);
+        }
+        return { it: it, label: label, seg: seg };
       });
+    // 新货行：没有需，只有件数；填了进价就顺带把金额写出来（跟行上那句话同口径）
+    var liveRows = only
+      ? []
+      : d.items
+          .filter(function (it) {
+            return isNewRow(it);
+          })
+          .map(function (it) {
+            var nm = String(it.name || "").trim() || "（没写名称）";
+            var seg = "拿" + fmtNum(it.got);
+            if (nzNum(it.price)) {
+              seg += " ¥" + fmtNum(it.price) + "×" + fmtNum(it.got) + "=¥" + fmtNum(num(it.price) * num(it.got));
+            }
+            return { it: it, label: "＋" + nm, seg: seg };
+          });
+    var rows = planRows.concat(liveRows);
     var w = 0;
     for (var i = 0; i < rows.length; i++) {
       w = Math.max(w, dispWidth(rows[i].label));
     }
     for (var j = 0; j < rows.length; j++) {
-      var it = rows[j].it;
-      var got = num(it.got);
-      var d2 = got - num(it.need);
-      var seg = "需" + fmtNum(it.need) + " 拿" + fmtNum(got);
-      // ⚠️ 差 0 不写：跟行上"正好不显示差额"同一个口径（原来这儿会写成 `需10 拿10 0`，
-      //    那个孤零零的 0 看着像乱码；列表里也不该出现"正好"这个信息 —— 对齐的列已经说清了）
-      if (got && d2 !== 0) {
-        seg += " " + (d2 > 0 ? "+" : "") + fmtNum(d2);
-      }
-      var line = padRight(rows[j].label, w + 2) + seg;
-      if (it.note) {
-        line += "  ｜" + it.note;
+      var line = padRight(rows[j].label, w + 2) + rows[j].seg;
+      if (rows[j].it.note) {
+        line += "  ｜" + rows[j].it.note;
       }
       lines.push(line);
     }
@@ -739,10 +1151,19 @@
       lines.push("备注：" + d.note);
     }
     var s = calcSummary(d.items);
-    lines.push(
-      "共 " + s.total + " 款 · 需 " + fmtNum(s.need) + " · 拿 " + fmtNum(s.got) +
-        " · 差 " + (s.diff > 0 ? "+" : "") + fmtNum(s.diff),
-    );
+    // 末尾那行跟着筛选换口径（跟屏幕上 #purchaseSummary 同一句话，两个出口不能各说各的）
+    if (only) {
+      var t = shortTotals(d.items);
+      lines.push("缺货 · " + t.n + " 款" + (t.n ? " · 缺口 " + fmtNum(t.qty) + " 件" : "（全拿齐了）"));
+    } else {
+      lines.push(
+        "共 " + (s.total + s.newCnt) + " 款" +
+          (s.newCnt ? "（补货 " + s.total + " · 新货 " + s.newCnt + "）" : "") +
+          " · 需 " + fmtNum(s.need) + " · 拿 " + fmtNum(s.got) +
+          " · 差 " + (s.diff > 0 ? "+" : "") + fmtNum(s.diff) +
+          (s.newAmt > 0 ? " · 新货 ¥" + fmtNum(s.newAmt) : ""),
+      );
+    }
     return lines.join("\n");
   }
   function doCopy() {
@@ -842,9 +1263,15 @@
     }
     flush(); // 先把这一版存住 —— 电脑端压图、查名称，得对着最新这份
     setExportBusy(true);
-    // 与后端同口径：滤掉空编号行（没填完的行不进导出）
+    // 与后端同口径：滤掉空编号行（没填完的行不进导出）。
+    // 「缺货」开着时**表里也只有缺的**（2026-10-17）—— 跟屏幕、跟复制清单同口径：
+    // 三个出口看到的必须是同一批货，否则他会拿着表去问"这 9 款哪来的"。
+    var only = shortOnly();
     var items = [];
     for (var i = 0; i < state.draft.items.length; i++) {
+      if (only && !isShort(state.draft.items[i])) {
+        continue;
+      }
       if (String(state.draft.items[i].code || "").trim()) {
         items.push({
           code: state.draft.items[i].code,
@@ -855,6 +1282,13 @@
           note: state.draft.items[i].note || "",
         });
       }
+    }
+    // ⚠️ 开着「缺货」又一款都不缺 → 传空数组上去，电脑那头只会生成一张光表头的表（还得压图）
+    //    → 直接在这儿拦住，说清为什么（2026-10-17）
+    if (only && !items.length) {
+      setExportBusy(false);
+      API.toast("现在只看缺货，这单没有缺的款", true);
+      return;
     }
     API.invoke(EXPORT_MSG, {
       date: state.draft.date,
@@ -913,6 +1347,312 @@
     if (s) {
       s.classList.remove("show");
     }
+  }
+
+  // ---------- 快速记数面板（2026-10-17 晚，老板："输入 33 然后边上按钮 + 然后我填多少个"）----------
+  /**
+   * 他要解决的是**档口现场那件事**：缺的货不是一次数完的，是一件一件数出来的
+   * （原话："我可能很多缺少是一个个的数出来看订单"）。
+   * 而"一行一行加"的每一步是：加一行 → 点编号格 → 敲编号 → 点需格 → 敲数字 → 收起键盘，
+   * 一件货四步、还得反复挪手 —— 所以他宁可不记。
+   *
+   * 这个面板把每一步压到**只敲两下屏幕外的键**：编号 ⏎ 件数 ⏎（回车连跳，手不离软键盘）。
+   * 三条口径是这一屏的全部规则：
+   *   ① **件数空着＝1** —— 数到一件、顺手补一件，不用先填个 1。
+   *   ② **同一个编号再记一次＝累加**（复用 mergeItems 那套"需相加"的意思，不是覆盖）。
+   *   ③ **底下留"本次已记"** —— 记错了当场点 × 撤掉，不用回列表里翻那一行（而且知道记到几笔了）。
+   * ⚠️ 只服务于「要补的」那页（另一页记的是手写名字的新货，没有"需"这回事）→ 那颗入口在
+   *    renderPTabs 里跟着页隐掉。
+   */
+  // 本次面板里记下的每一笔：{ item: <列表里那一行>, n: 件数, created: 这一行是不是这笔新建的 }
+  var qcLog = [];
+  // 最后动过的那一行：关面板时高亮它（"我刚记的落哪去了"）
+  var qcLast = null;
+
+  /**
+   * 记数/撤销的**算法本体**（纯函数：只动传进来的 items，不碰 DOM 和 state）
+   * ⚠️ 单独抽出来是为了能单测 —— 累加写成覆盖、件数为空当成 0、编号没归一，
+   *    这三种错**在界面上都看不出来**（数字不对也不会报错），只能靠断言钉死。
+   * @returns {{item:object, created:boolean, before:number, after:number, n:number}}
+   */
+  function qcApply(items, code, n) {
+    var qty = Math.floor(num(n));
+    if (!(qty >= 1)) {
+      qty = 1; // 件数空着/敲了 0 → 当 1（老板："输入 33 然后…我填多少个"，空着就是 1 件）
+    }
+    var hit = null;
+    for (var i = 0; i < items.length; i++) {
+      // 只在「要补的」那批里找同编号（现场新货行没有编号这回事）
+      if (!isNewRow(items[i]) && String(items[i].code || "") === code) {
+        hit = items[i];
+        break;
+      }
+    }
+    var created = false;
+    if (!hit) {
+      // 单里还没有这一款 → 新建一行（带编号，名称/图由 renderItems 按编号自动带出来）
+      hit = { code: code, need: 0, got: 0, note: "", name: "", price: 0, img: "", kind: 0 };
+      items.push(hit);
+      created = true;
+    }
+    var before = num(hit.need);
+    hit.need = before + qty;
+    return { item: hit, created: created, before: before, after: hit.need, n: qty };
+  }
+  /**
+   * 撤掉一笔（纯函数）。返回被从 items 里删掉的下标（没删就是 -1）。
+   * ⚠️ 这一行本来就是**这一笔新建**的、撤完需又归 0 了 → 整行删掉：
+   *    留一行"编号有、需是 0"的空壳既不算缺、又会被存进库（save 判空看的是编号和名字都空）。
+   */
+  function qcUndoApply(items, entry) {
+    if (!entry || !entry.item) {
+      return -1;
+    }
+    var it = entry.item;
+    it.need = Math.max(0, num(it.need) - num(entry.n));
+    if (entry.created && !num(it.need)) {
+      var k = items.indexOf(it);
+      if (k >= 0) {
+        items.splice(k, 1);
+        return k;
+      }
+    }
+    return -1;
+  }
+  /** 这个编号落在哪一行、现在需多少（提示框和撤销都要用；找不到就是 null） */
+  function qcFind(code) {
+    var items = (state.draft && state.draft.items) || [];
+    for (var i = 0; i < items.length; i++) {
+      if (!isNewRow(items[i]) && String(items[i].code || "") === code) {
+        return items[i];
+      }
+    }
+    return null;
+  }
+  /** 编号框里那串 → 归一后的编号（跟行内定稿同一个口径；归一不了就保留原文） */
+  function qcCode() {
+    var el = $("qcCode");
+    var raw = String((el && el.value) || "")
+      .replace(/\s+/g, "")
+      .toUpperCase();
+    return raw ? canonicalCode(raw) || raw : "";
+  }
+  /** 件数框里那串 → 正数（空着/0/负数一律当 1，和 qcApply 同一口径） */
+  function qcQty() {
+    var el = $("qcNum");
+    var n = Math.floor(num(el && el.value));
+    return n >= 1 ? n : 1;
+  }
+  /** 底部那行提示：敲编号的时候就告诉他"会记到哪一行、记完是多少" */
+  function qcHint() {
+    var el = $("qcHint");
+    if (!el) {
+      return;
+    }
+    var code = qcCode();
+    if (!code) {
+      el.textContent = "";
+      return;
+    }
+    var p = findProduct(code);
+    var cur = qcFind(code);
+    var have = cur ? num(cur.need) : 0;
+    var head = code + " " + (p ? p.name || "(这个商品没写名称)" : "无此编号");
+    // 老板要的是"敲之前就知道会记到几" → 后半句写的是**记完**的数（3 → 8），不是当前的 3
+    el.textContent = have
+      ? head + " · 已有 需 " + fmtNum(have) + " → 加上记 " + fmtNum(have + qcQty())
+      : head + " · 还没有这一款，加上会新建";
+  }
+  /** 底下"本次已记"：一笔一个胶囊（倒序，最新的在左边/最前），点 × 撤掉 */
+  function renderQcLog() {
+    var stat = $("qcStat");
+    var log = $("qcLog");
+    var i;
+    if (stat) {
+      var sum = 0;
+      for (i = 0; i < qcLog.length; i++) {
+        sum += num(qcLog[i].n);
+      }
+      stat.textContent = qcLog.length
+        ? "本次已记 " + qcLog.length + " 笔 · 共 " + fmtNum(sum) + " 件（点 × 撤掉）"
+        : "";
+    }
+    if (!log) {
+      return;
+    }
+    var h = "";
+    for (i = qcLog.length - 1; i >= 0; i--) {
+      var e = qcLog[i];
+      h +=
+        '<span class="qc-chip"><b>' +
+        esc(e.item.code || "") +
+        "</b>+" +
+        fmtNum(e.n) +
+        '<button class="qc-x" type="button" data-k="' +
+        i +
+        '" aria-label="撤掉这一笔">×</button></span>';
+    }
+    log.innerHTML = h;
+  }
+  function openQc() {
+    if (!state.draft) {
+      return;
+    }
+    // 摊开的那行先收起：面板占掉半屏，而且底下撤销可能删行（openRow 会串位）
+    state.openRow = -1;
+    qcLog = [];
+    qcLast = null;
+    var code = $("qcCode");
+    var nm = $("qcNum");
+    if (code) {
+      code.value = "";
+    }
+    if (nm) {
+      nm.value = "";
+    }
+    var s = $("qcSheet");
+    if (s) {
+      s.classList.add("show");
+    }
+    qcHint();
+    renderQcLog();
+    // ⚠️ 同步聚焦（不要 setTimeout）：这是点按钮那一下的手势上下文里，iOS 才肯弹软键盘。
+    //    面板一开键盘就在，他不用再点一下输入框 —— 这一下也是"少一步"。
+    if (code && code.focus) {
+      code.focus();
+    }
+  }
+  function closeQc() {
+    var s = $("qcSheet");
+    if (s) {
+      s.classList.remove("show");
+    }
+    qcLog = [];
+    renderQcLog();
+    if (state.draft) {
+      renderItems();
+      renderSummary();
+      // 关掉之后把最后动过那行点亮（走"编号撞车并进哪一行"同一个 markRow）
+      if (qcLast) {
+        markRow(qcLast);
+      }
+    }
+    qcLast = null;
+  }
+  /**
+   * 把一整批都撤掉（纯函数：返回撤了几笔）。「取消」和自检都用它。
+   * ⚠️ **必须倒着走**：同一行记了三次时，最早那笔才知道"这一行是我建出来的"（`created`），
+   *    先撤后面的、最后撤它，`need` 才会正好归 0 → 整行删掉，回到打开面板之前的样子。
+   *    正着撤的话，最早那笔先在 need=3 上减到 2（不删行），后面两笔又不是 created（也不删），
+   *    最后留一行"编号有、需 0"的空壳 —— 不算缺、还会被存进库，界面上完全看不出来。
+   */
+  function qcUndoAll(items, log) {
+    var n = 0;
+    for (var i = log.length - 1; i >= 0; i--) {
+      qcUndoApply(items, log[i]);
+      n++;
+    }
+    return n;
+  }
+  /**
+   * 【取消】：把**这次打开面板之后记的那几笔**全部撤回去，再关（2026-10-17 晚，老板挑的「撤掉本次再关」）。
+   * ⚠️ 只撤 `qcLog` 里记着的那几笔 —— 打开面板之前这单什么样，撤完就是什么样
+   *    （不是删单子，也不碰别人的行：`qcUndoApply` 只会把 `need` 减回去）。
+   * ⚠️ 一笔都没记就直接关、不弹提示（弹了等于告诉他"我撤了个寂寞"）。
+   */
+  function cancelQc() {
+    if (!state.draft) {
+      closeQc();
+      return;
+    }
+    var n = qcUndoAll(state.draft.items, qcLog);
+    qcLast = null; // 撤完了就没有"最后动过的那一行"（closeQc 靠它决定要不要高亮）
+    if (n) {
+      markDirty(); // 不标脏 = 屏幕上撤了、库里还在
+      API.toast("已撤掉本次 " + n + " 笔");
+    }
+    closeQc();
+  }
+
+  /**
+   * 【完成】：这一批**留着**（跟「取消」正相反），关面板之前说一句记了什么。
+   * 2026-10-17 晚老板：「我点击了完成，也弹出提示呀 我看你取消都有」——
+   * 他点完成时其实是在确认"这一批到底进了没有"，一句「已记 3 笔 · 共 8 件」就是那个确认。
+   * ⚠️ 必须在 `closeQc()` **之前**算：它会把 `qcLog` 清空。
+   * ⚠️ 一笔都没记就直接关、不弹（跟取消同一条规矩，弹了等于说"我记了个寂寞"）。
+   */
+  function doneQc() {
+    var n = qcLog.length;
+    var sum = 0;
+    for (var i = 0; i < n; i++) {
+      sum += num(qcLog[i].n);
+    }
+    if (n) {
+      API.toast("已记 " + n + " 笔 · 共 " + fmtNum(sum) + " 件");
+    }
+    closeQc();
+  }
+
+  /**
+   * 【加上】：编号 + 件数 → 累加进单子。回车和「加上」按钮都走这一条。
+   * 敲完立刻清空两个框、光标回编号格（连着记下一件，手指不用离开软键盘）。
+   */
+  function qcCommit() {
+    if (!state.draft) {
+      return;
+    }
+    var codeEl = $("qcCode");
+    var code = qcCode();
+    if (!code) {
+      API.toast("先输个编号", true);
+      if (codeEl && codeEl.focus) {
+        codeEl.focus();
+      }
+      return;
+    }
+    var n = qcQty();
+    var r = qcApply(state.draft.items, code, n);
+    qcLast = r.item;
+    qcLog.push({ item: r.item, n: r.n, created: r.created });
+    // 按编号排一次（跟行内定稿编号同一个口径）：关掉面板看到的是编号顺序，不会新记的散在最后
+    sortDraftItems(null);
+    if (codeEl) {
+      codeEl.value = "";
+    }
+    var nm = $("qcNum");
+    if (nm) {
+      nm.value = "";
+    }
+    renderQcLog();
+    qcHint();
+    // ⚠️ 面板开着也要重画列表：顶上那条「缺货 3」和两页款数是**列表算出来的**，
+    //   不跟着变的话他记完 20 笔、面板一关才发现数字还是进来时那个。
+    renderItems();
+    renderSummary();
+    markDirty();
+    if (codeEl && codeEl.focus) {
+      codeEl.focus();
+    }
+  }
+  /** 撤掉第 k 笔（× 那颗） */
+  function qcUndo(k) {
+    var e = qcLog[k];
+    if (!state.draft || !e) {
+      return;
+    }
+    var gone = qcUndoApply(state.draft.items, e);
+    qcLog.splice(k, 1);
+    if (gone >= 0) {
+      state.openRow = -1; // 刚删的正好是摊开那行（理论上 openQc 时已经收了）
+    }
+    if (qcLast === e.item) {
+      qcLast = qcLog.length ? qcLog[qcLog.length - 1].item : null;
+    }
+    renderQcLog();
+    qcHint();
+    renderItems();
+    renderSummary();
+    markDirty();
   }
 
   // ---------- 编号定稿那一下：撞车合并 + 自动排序（2026-10-16 晚，老板拍的两条）----------
@@ -1206,8 +1946,18 @@
           el.textContent = df.txt;
         }
       }
+      // 现场新货行：进价/件数一改，展开块那句合计跟着变（2026-10-17）
+      var amt = row.querySelector(".pit-amt");
+      if (amt) {
+        amt.textContent = amtTxt(it);
+      }
     }
     renderSummary();
+    // 「缺货」上那颗数字得当场跟着变（2026-10-17）：填满一行 → 缺的款数少一款，
+    // 不然他要等下次整块重画才看得见，会以为"填了没生效"。
+    // ⚠️ 但**这一行不立刻从列表里消失**：跟"填拿不重排"是同一课 —— 手正按在那儿，
+    //    行突然没了会串行（下一格就填到别的商品上）。它等下一次重画（切页/再点开关）才走。
+    renderShortBtn(state.draft.items);
   }
   /** 编号改了：只刷这一行的名称 + 行内小图（不动输入框，免得手还在那儿） */
   function refreshRowName(i) {
@@ -1228,7 +1978,7 @@
         nm.textContent = p.name || "(这个商品没写名称)";
         nm.parentElement.className = "pit-name";
       } else {
-        nm.textContent = "没这个编号（照样记）";
+        nm.textContent = "无此编号";
         nm.parentElement.className = "pit-name warn";
       }
     }
@@ -1257,7 +2007,7 @@
         sub.textContent = "进价 " + fmtMoney(p.cost_price) + " · 售价 " + fmtMoney(p.sale_price);
         sub.classList.remove("pit-sub-r");
       } else {
-        sub.textContent = "商品库里没有这个编号（照样记进单子）";
+        sub.textContent = "无此编号";
         sub.classList.add("pit-sub-r");
       }
     }
@@ -1392,9 +2142,117 @@
         state.searchQ = "";
         applySearchRow();
       }
-      state.draft.items.push({ code: "", need: 0, got: 0, note: "" });
-      renderItems(); // 不算 dirty：没编号的行不会存
+      // ⚠️ 「缺货」也得先关：新加的是**空行**（没编号、没需）→ 它必然不算缺 → 会被筛掉看不见。
+      //    跟上面清搜索是同一个坑（"点了加号没反应"），同一处解决。
+      if (state.onlyShort) {
+        state.onlyShort = false;
+      }
+      // 加的是哪一种行，看现在停在哪一页（2026-10-17）
+      var fresh = {
+        code: "",
+        need: 0,
+        got: 0,
+        note: "",
+        name: "",
+        price: 0,
+        img: "",
+        kind: isLiveTab() ? 1 : 0,
+      };
+      state.draft.items.push(fresh);
+      renderItems(); // 不算 dirty：空行不会存
       focusLastCode();
+      // ⭐ 加完**自动高亮**这一行（2026-10-17 晚，老板："我添加一行时，自动高亮哪行，
+      //    就和那个自动合并一样的主题色处理"）。
+      // 走的还是"编号撞车并进哪一行"那个 markRow（`.pit.hit`：品牌绿左侧细条 + 淡绿底 + 弹一下）——
+      // 同一件事（"新出现的那行在哪"）就该是同一个标记，别为它再造一套颜色。
+      // ⚠️ 放在 focusLastCode **之后**：先聚焦（键盘弹起、视口已经挪过），再按"看不见才滚"补一刀，
+      //    不然滚完又被聚焦那一下拽回去。
+      markRow(fresh);
+    };
+    // 两段开关：要补的 / 现场进的（外观分页，底层同一张单 —— 见 index.html 那段注释）
+    $("purchaseTabPlan").onclick = function () {
+      setPTab("plan");
+    };
+    $("purchaseTabLive").onclick = function () {
+      setPTab("live");
+    };
+    // 底栏那颗「快速记」→ 底部面板（2026-10-17 晚）
+    $("purchaseQuickBtn").onclick = openQc;
+    $("qcDone").onclick = doneQc;
+    // 「取消」＝撤掉本次记的那几笔再关（老板 2026-10-17 在他给的两个选项里挑的）
+    $("qcCancel").onclick = cancelQc;
+    $("qcAdd").onclick = qcCommit;
+    // 点面板外面那层半透明区：**什么都不做**（2026-10-17 晚，老板："只要显示确认和完成按钮就行，
+    // 其他就不能随便点，或者说做成模态窗口"）。
+    // ⚠️ 原来是"点外面 = 收起"，看着方便，实际是档口场景里最容易出的错：他一手拿货一手点屏幕，
+    //    误触一下面板就没了 —— 而"加上了没有"这件事在面板关掉之后是看不出来的（列表里那行本来就该有），
+    //    他只会以为记进去了。所以现在**只有「加上」和「完成」两个出口**。
+    // 点外面唯一的反应＝把焦点抢回编号框（刚从键盘收起状态点回来时，能接着敲）。
+    $("qcSheet").onclick = function (e) {
+      if (e.target !== $("qcSheet")) {
+        return;
+      }
+      var qc = $("qcCode");
+      if (qc && qc.focus) {
+        qc.focus();
+      }
+    };
+    // 敲编号就实时给提示（⚠️ 这里**只**更提示、绝不提交 —— 跟行内编号那个坑同一条规矩：
+    //   `canonicalCode` 对没输完的内容照样补零，边打边归一等于敲一个 3 就变成 A003）
+    $("qcCode").oninput = qcHint;
+    $("qcNum").oninput = qcHint; // 件数一变，提示里"加上记 8"那个数得跟着变
+    // 回车连跳：编号 ⏎ → 件数；件数 ⏎ → 加上（清空、回编号）。
+    // ⚠️ 老实说：iPhone/Android 的**数字键盘上没有 Return 键**，所以第二跳实际上是他点旁边那颗
+    //    「加上」（就在件数右边 7px，还在键盘上方）。这里照样接上 Enter，是为了外接键盘 / 电脑上
+    //    用手机版时也能一路敲到底 —— 不能因为"手机上用不到"就不写。
+    $("qcCode").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        $("qcNum").focus();
+      }
+    });
+    $("qcNum").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        qcCommit();
+      }
+    });
+    // 撤掉某一笔（胶囊上的 ×）
+    $("qcLog").onclick = function (e) {
+      var x = e.target.closest(".qc-x");
+      if (!x) {
+        return;
+      }
+      qcUndo(num(x.getAttribute("data-k")));
+    };
+    // 键盘遮挡：`--kb` 那套原来只接在 #fieldSheet 上（见 app.js 那段），这个面板也得垫 ——
+    // 不然底部 sheet 会被键盘整个压住，"加上"那颗根本露不出来。
+    // 复用同一个变量名（--kb）和同一套算法：Android 自己会 resize，量出来是 0，垫不垫都一样。
+    if (window.visualViewport) {
+      var qvv = window.visualViewport;
+      var liftQc = function () {
+        var kb = Math.max(0, window.innerHeight - qvv.height - qvv.offsetTop);
+        var qs = $("qcSheet");
+        if (qs) {
+          qs.style.setProperty("--kb", kb + "px");
+        }
+      };
+      qvv.addEventListener("resize", liftQc);
+      qvv.addEventListener("scroll", liftQc);
+    }
+    // 「缺货」（2026-10-17 晚，老板："把紧急缺货的自动筛选出来"）：
+    // ⚠️ **只切筛选、不排序**（老板原话："不需要按多的排序"）—— 列表顺序还是编号顺序。
+    // ⚠️ 也不重排 items / 不改 data-i：只是"不画"，改数量、删行仍按真实下标走。
+    // ⚠️ 汇总那句要跟着换（renderSummary 里判断 shortOnly()）：列表剩 3 行、底下写"共 12 款"
+    //    会让人以为列表少画了。
+    $("purchaseOnlyShort").onclick = function () {
+      if (!state.draft) {
+        return;
+      }
+      state.onlyShort = !state.onlyShort;
+      state.openRow = -1; // 摊开的那行可能已经被筛掉了，别留个 -1 之外的幽灵
+      renderItems();
+      renderSummary();
     };
     // 单内搜索（甲档：顶栏放大镜点开、默认收起）。⚠️ 放大镜跟右边三颗同一款（44×44、浅灰边）。
     $("purchaseSearchBtn").onclick = function () {
@@ -1477,6 +2335,17 @@
         it.need = num(t.value);
       } else if (t.classList.contains("pi-got")) {
         it.got = num(t.value);
+      } else if (t.classList.contains("pi-name")) {
+        // 现场新货行的名字：**边打边记**（不用等失焦），删行/返回都丢不了
+        it.name = t.value;
+        markDirty();
+        return;
+      } else if (t.classList.contains("pi-price")) {
+        // 进价一填/一改，第二行右端那个合计就跟着变（updateRowLive 里管 .pit-amt）
+        it.price = num(t.value);
+        updateRowLive(i);
+        markDirty();
+        return;
       } else if (t.classList.contains("pi-note")) {
         it.note = t.value;
       } else {
@@ -1497,7 +2366,7 @@
       }
       if (t.classList.contains("pi-code")) {
         // 编号归一：去空格 + 转大写，再走 canonicalCode（纯数字补成 `A` + 3 位）——
-        // 跟**后端保存时**同一套口径（原来这里只做去空格+大写，于是输 `006` 界面说"没这个编号"、
+        // 跟**后端保存时**同一套口径（原来这里只做去空格+大写，于是输 `006` 界面说"无此编号"、
         // 行内小图也取不到，可存进库的却是 `A006`，返回重进才全对 ＝ 界面跟库打架）。
         // ⚠️⚠️ **只能在 change（失焦/回车）里做，绝对不许挪到上面的 oninput**：
         //   `canonicalCode` 对**没输完的内容照样补零** —— 想敲 336、敲下第一个 `3` 的瞬间
@@ -1570,6 +2439,23 @@
         markDirty(); // 删行也算改动（要是一次全删光，库里那份也得跟着清）
         return;
       }
+      // 认货照那格：**没图 → 拍照/选图；有图 → 先给看大图**（2026-10-17 老板："能查看大图就好了"）。
+      // 换图放进大图里那颗「换一张」，别让"看"和"换"抢同一个点击。
+      var shot = e.target.closest(".pi-shot");
+      if (shot) {
+        if (!state.draft) {
+          return;
+        }
+        var si = rowIndex(shot);
+        if (si >= 0) {
+          if (shot.classList.contains("has")) {
+            showShotView(si);
+          } else {
+            pickPhoto(si);
+          }
+        }
+        return;
+      }
       // 输入框/勾选框/按钮自己管自己 —— 点它们不算"展开这一行"
       if (e.target.closest("input,label,button")) {
         return;
@@ -1577,6 +2463,12 @@
       // 点行的空白处 = 摊开 / 收起这一行（手机上不用双击：想不到也容易跟缩放打架）
       var row = e.target.closest(".pit");
       if (!row) {
+        return;
+      }
+      // ⭐ 现场新货行**没有抽屉**（2026-10-17 晚 B 档）：备注和删除都常驻在第二行，
+      //   再来一次"点行展开"只会把 `.open` 打开一个不存在的 `.pit-x`（什么都不发生，
+      //   还会把 state.openRow 指到这一行上）。所以这里直接不管它。
+      if (row.classList && row.classList.contains && row.classList.contains("pit-live")) {
         return;
       }
       var i = rowIndex(row);

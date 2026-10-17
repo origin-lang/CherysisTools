@@ -459,7 +459,8 @@
         <!-- 单内搜索入口（2026-10-16 晚，老板挑的**甲档**）：顶栏加一颗放大镜，
              点开才在列表上方滑出一行搜索框 —— **默认收起**，内容区一点不多占（还是 11 款一屏），
              而入口在顶栏（滚动区之外），单子再长也不用翻回去找。
-             图形口径跟右边那颗 ⋯ 同一款：44×44、浅灰边、只有一根线的图形（别染品牌绿 —— 那样比左边返回重）。 -->
+             图形口径跟右边那颗 ⋯ 同一款：44×44、品牌绿细边、只有一根线的图形（边框 2026-10-17 晚改绿，
+             理由写在 purchase.css 的 .p-icon 上面）。 -->
         <button id="purchaseSearchBtn" class="p-icon" type="button" title="在这张单里搜编号或名称" aria-label="在这张单里搜编号或名称">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true">
             <circle cx="10.5" cy="10.5" r="6.5" />
@@ -489,9 +490,24 @@
                保存提示也撤了 —— 只有**存失败**才弹一句 toast（改动边改边存，成功不打扰）。
                汇总压成一行、整单备注在列表底下（它跟着「复制清单」一起发出去）。 -->
           <div class="p-head">
-            <span class="p-headk">要补的商品</span>
-            <!-- 那颗「＋ 加一行」2026-10-16 晚**挪到屏幕底部的浮动条**去了（见 </main> 后面 .p-addbar）。
-                 原因：挂在这一行里，列表一长它就被滚出屏幕，每次加货都得先滚回顶上。 -->
+            <!-- 两段开关（2026-10-17，老板挑的「乙′」）：**外观分两页、底层同一张单**。
+                 要补的 = 有编号的行（名字从商品库查）；现场进的 = 手写名字的新货行。
+                 ⚠️ 底下是**同一批 items 按 kind 筛**，不是两份清单 —— 汇总/导出/复制清单一律合并算，
+                    这样不用维护两套"合并"逻辑（这就是没选真·两个 tab 的原因）。
+                 个数由 purchase.js 的 renderPTabs() 填（plan/live 各自几款）。
+                 那颗「＋ 加一行」仍挂在屏幕底部浮动条（见 </main> 后面的 .p-addbar）。 -->
+            <div class="p-seg" id="purchaseSeg" role="tablist" aria-label="切换清单">
+              <button id="purchaseTabPlan" class="p-segbtn on" type="button" role="tab">要补的 <span id="pCountPlan">0</span></button>
+              <button id="purchaseTabLive" class="p-segbtn" type="button" role="tab">现场进的 <span id="pCountLive">0</span></button>
+            </div>
+            <!-- 「缺货」筛选（2026-10-17 晚，老板："我后面拿到这个进货单的人 肯定要看下缺货的是有哪些…
+                 把紧急缺货的自动筛选出来"）。
+                 ⚠️ **只筛不排序**（老板原话："不需要按多的排序"）—— 行序仍是编号顺序，点了之后
+                    只是把不缺的藏起来；`data-i` 还是真实下标，改数量/删行不会串行。
+                 ⚠️ 只在「要补的」那页露（purchase.js 的 renderPTabs 置 hidden）：现场新货行没有"需"，
+                    永远不算缺，摆在那一页就是个永远 0 的死开关。
+                 个数 = 还缺的款数（需 > 0 且 拿 < 需；**拿 0 也算缺** —— 刚开的单全都没拿）。 -->
+            <button id="purchaseOnlyShort" class="p-shortbtn" type="button" aria-pressed="false" aria-label="只看缺货">缺货 <span id="pCountShort">0</span></button>
           </div>
           <!-- 单内搜索行（2026-10-16 晚）：**默认收起**（`hidden`），顶栏那颗放大镜点开才露。
                单子长的时候用来"这个编号到底有没有 / 出现在哪几行"—— 搜出来的行照样能改数量。
@@ -515,15 +531,21 @@
           <input id="purchaseNote" type="text" placeholder="整单备注（可空，会跟着复制清单发出去）" />
         </div>
       </main>
-      <!-- 底部浮动「＋ 加一行」（2026-10-16 晚，老板挑的 A 档「脚悬浮」）：
-           原来挂在上面的 .p-head 里，列表一长就被滚出屏幕 → 每次加货都得先滚回顶上找它。
+      <!-- 底部浮动条（2026-10-16 晚，老板挑的 A 档「脚悬浮」）：
+           原来是「＋ 加一行」挂在上面的 .p-head 里，列表一长就被滚出屏幕 → 每次加货都得先滚回顶上找它。
            ⚠️ 做法是**当 .screen 里最后一个 flex 孩子（占位）**，不是 absolute 盖上去：
              ① 永远在拇指位、一次不用滚；② 不盖住列表最后一行 / 汇总行 / 整单备注；
              ③ 因此**不用给 #screen-purchase-detail 加 position:relative** —— 商品详情页那条
                 浮动底条栽过（见 style.css 那条注释：加了 position 会盖掉宽屏抽屉模式下的 fixed）。
-           高度 = 8 + 44(--tap) + 8 ≈ 60px，差不多正是一行商品（56px）→ 代价就是"一屏少一行"。 -->
+           高度 = 8 + 44(--tap) + 8 ≈ 60px，差不多正是一行商品（56px）→ 代价就是"一屏少一行"。
+           ⭐ 2026-10-17 晚（老板：「加一行不需要了 只需要快速记（纯绿色）」）：**每页只露一颗** ——
+             「要补的」→ 只有「快速记」（纯绿通栏）；「现场进的」→ 只有「＋ 记一笔」。
+             两颗 DOM 都留着，由 purchase.js 的 renderPTabs 按页 hidden（现场那页只有「记一笔」能加新货行）。 -->
       <div class="p-addbar">
         <button id="purchaseAddRow" class="primary" type="button" aria-label="加一行">＋ 加一行</button>
+        <!-- 快速记数（2026-10-17）：老板"我 33 号的时候就想加一加一…很多缺少是一个个的数出来看订单"。
+             只在「要补的」那页露（现场新货行没有"需"，那个面板记的就是需）。 -->
+        <button id="purchaseQuickBtn" class="qc-open" type="button">快速记</button>
       </div>
     </section>
 
@@ -561,6 +583,38 @@
         </button>
         <div class="sheetbts">
           <button id="purchaseSheetCancel" type="button">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 快速记数面板（2026-10-17）：老板给的原型是"输 33 → 点 + → 我填多少个"。
+         两格一按钮：编号（只敲 33 也会归一成 A033）+ 件数（**空着＝1**）+「加上」。
+         ⚠️ 三个"缺了就难用"的点：
+            ① **回车连跳**：编号框⏎ → 件数框；件数框⏎ → 加上、清空、回编号框。
+               一整批能只看软键盘敲完，不用点屏幕（不然录 20 条要点 40 下）；
+            ② **提示"已有 需 3 → 加上记 8"**：同一款记第二次时心里有底，不在单里就写"加上会新建"；
+            ③ **底下「本次已记」每条能点 × 撤掉**：记错不用跑回列表改。
+         样式复用全局 .sheetbg / .sheet（跟「复制清单」那个弹层同款、从底部滑上来）。
+         ⚠️ 2026-10-17 晚（老板："其他就不能随便点，或者说做成模态窗口"）→ **它是模态**：
+            点外面那层半透明区不再收起（误触一下面板就没了，他会以为记进去了），
+            只有「加上」和「完成」两个出口。role/aria-modal 是给读屏的（外面那堆不算数）。 -->
+    <div id="qcSheet" class="sheetbg" role="dialog" aria-modal="true" aria-label="快速记数">
+      <div class="sheet qc">
+        <div class="sheetbar">
+          <button id="qcCancel" class="qc-cancel" type="button">取消</button>
+          <span class="sheet-title">快速记数</span>
+          <button id="qcDone" class="qc-done" type="button">完成</button>
+        </div>
+        <div class="qc-row">
+          <input id="qcCode" class="qc-code" type="text" placeholder="编号 33" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="编号" />
+          <input id="qcNum" class="qc-num" type="number" inputmode="numeric" min="1" step="1" placeholder="1" aria-label="件数" />
+          <button id="qcAdd" class="primary qc-add" type="button">加上</button>
+        </div>
+        <div class="qc-lbl"><span>编号（只敲 33 也行）</span><span>件数，空着＝1</span><span></span></div>
+        <div id="qcHint" class="qc-hint"></div>
+        <div class="qc-foot">
+          <div id="qcStat" class="qc-stat"></div>
+          <div id="qcLog" class="qc-log"></div>
         </div>
       </div>
     </div>
