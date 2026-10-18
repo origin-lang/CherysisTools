@@ -801,8 +801,24 @@
   border-radius: 50%;
   background: var(--brand);
 }
-.p-d.on .p-dot {
+.p-dot.on .p-dot {
   background: #fff;
+}
+/* 这天还有货没拿齐 → 红点（2026-10-18 晚）。
+   老板原话：「这呢如果说缺货了呢要换个颜色嘛，未完成我想在日期上也能显示，要么标个红色点点，
+   现在所有都是绿色点点了」—— 原来只要有单就是绿点，办完的和欠货的长得一样，翻月历看不出哪天真有事。
+   ⚠️ 选中那天（绿底）上，红点也要翻成白的：绿底配红点又糊又难看，选中态本身已经说明"你在看这天"。
+   为什么红点比绿点大一圈（5px + 外描边）：红是要"跳出来"的，纯靠色相在 4px 上分不出来。 */
+.p-dot.p-dot-short {
+  width: 5px;
+  height: 5px;
+  margin-left: -2.5px;
+  background: var(--danger);
+  box-shadow: 0 0 0 1.5px var(--card);
+}
+.p-d.on .p-dot.p-dot-short {
+  background: #fff;
+  box-shadow: none;
 }
 .p-todayrow {
   margin-top: 6px;

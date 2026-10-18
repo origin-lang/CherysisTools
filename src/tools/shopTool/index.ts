@@ -19,6 +19,9 @@ import { settingsHandlers } from "./handlers/settings.js";
 import { setHandlers } from "./handlers/sets.js";
 // ===== 进货单（补货单）===== 想整体去掉：删这行 + 下面 handlers 表带同标记的那一行 + handlers/purchase.ts
 import { purchaseHandlers } from "./handlers/purchase.js";
+// ===== 补货跟踪（客户订单欠货，2026-10-18）=====
+// 想整体去掉：删这行 + 下面 handlers 表带同标记的那一行 + WRITE_ACTIONS 里三条 + handlers/restock.ts
+import { restockHandlers } from "./handlers/restock.js";
 
 // 自动备份：每日首次启动自动留档（shop_auto_*），破坏性操作前追加留档（shop_pre_*）；两类各自独立配额剪除，只保留最新 N 份，不无限累积。
 const AUTO_BACKUP_KEEP = 14;
@@ -377,6 +380,12 @@ const WRITE_ACTIONS = new Set([
   // ===== 进货单（补货单）===== 写 purchase_order / purchase_item
   "purchaseSaveOrder",
   "purchaseDeleteOrder",
+  // ===== 补货跟踪（客户订单欠货）===== 写 restock_track
+  // ⚠️ 连 restockList 也别放进来 —— 它是**纯读**（跟直播排品那条纯读消息一个道理，
+  //    check-server-units 有专门的断言盯着"读的东西不许进这张写清单"）
+  "restockAdd",
+  "restockUpdate",
+  "restockDelete",
 ]);
 
 /**
@@ -971,6 +980,9 @@ export const shopTool: ToolDefinition = {
       ...setHandlers(h),
       // ===== 进货单（补货单）===== 同前，消息全在 handlers/purchase.ts 里
       ...purchaseHandlers(h),
+      // ===== 补货跟踪（客户订单欠货，2026-10-18）===== 消息全在 handlers/restock.ts 里
+      // ⚠️ 跟上面的进货单是**两回事**：进货单是"我要去进多少货"，这里是"哪个客户的单还欠着什么"
+      ...restockHandlers(h),
 
       // ===== 撤销 / 重做 =====
       async undoRequest() {

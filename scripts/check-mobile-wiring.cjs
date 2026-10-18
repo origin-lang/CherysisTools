@@ -32,7 +32,24 @@ const jsFiles = fs
 // 只有「设置页的档位输入框」是 JS 动态建的。原先还豁免 codeQ / codeQGroup
 // （筛选面板里那个编号输入框）—— 2026-10-11 它并进顶部搜索行了，那两个 id 整个不存在，
 // 豁免名单里留着会让这条闸门变成摆设。
-const DYNAMIC_IDS = new Set(["fsInput"]);
+//
+// 补货跟踪（restock.js，2026-10-18）这几个也是**运行时才建**的，而且都成对出现：
+//   · rsDraft / rsDWb / rsDItems / rsDDue / rsDNote → 点「＋ 记一条」时现建的底部弹层
+//   · rsSearch → 点放大镜才展开的搜索框
+//   · rsNewBtn → 底栏通栏按钮，paintBottomBar() 现画的（骨架 #rsBottombar 在 html 里，
+//     受闸门保护；按钮本体是每次 render 重画的，2026-10-18 晚四轮加）
+// 只豁免这几个；#restockRoot / #purchTabRestock / #purchPaneRestock 那些**骨架在 html 里**，
+// 照旧受这条闸门保护（改名忘了同步 → 这里立刻红）。
+const DYNAMIC_IDS = new Set([
+  "fsInput",
+  "rsDraft",
+  "rsDWb",
+  "rsDItems",
+  "rsDDue",
+  "rsDNote",
+  "rsSearch",
+  "rsNewBtn",
+]);
 
 /**
  * 服务端能发的事件名（唯一出处：events.ts 的 HubEvent 注释 + index.ts 的 publish 调用 +
@@ -1320,9 +1337,520 @@ const liveFn = (name) => {
   }
 }
 
+// ===== 补货跟踪（restock.js，2026-10-18）=====
+// 钉的都是"改起来很容易、坏了却只有用起来才发现"的口径：
+//   ① 骨架与接线：页签 / 面板 / 两屏注册 / 脚本引入（少一样 = 点了没反应或切过去空白）
+//   ② 编号归一：`058` → `A058`（老板明确要的），且**汉字孤品原样留**
+//   ③ 三档时间状态：>今天=等 / =今天=**该确认（橙）** / <今天=该催（红）—— 顺序错了橙色就永远不出现
+//   ④ 改期**只发改期**（不许顺手把 status 也发过去，否则"点了到了"那个入口会把状态改回来）
+//   ⑤ 删除必须**二次确认**且走**软删除**（老板："你不能够自己直接删"）
+//   ⑥ 搜索：单号和编号**都认**，结果**只显示匹配的行**
+//   ⑦ 打字时**不许重画搜索框**（换了 DOM = 光标丢、中文输入被打断）
+//   ⑧ CSS：[hidden] 要显式 display:none、输入框字号 ≥16px（iOS 会整页放大）
+const rjsPath = path.join(mobileDir, "restock.js");
+const rjs = fs.existsSync(rjsPath) ? fs.readFileSync(rjsPath, "utf8") : "";
+const rcssPath = path.join(mobileDir, "restock.css");
+const rcss = fs.existsSync(rcssPath) ? fs.readFileSync(rcssPath, "utf8") : "";
+/** restock.js 的按函数切片（同 liveFn：外层 fnBody 只认 app.js） */
+const rsFn = (name) => {
+  const i = rjs.indexOf("function " + name + "(");
+  if (i < 0) {
+    return "";
+  }
+  const open = rjs.indexOf("{", i);
+  let depth = 0;
+  for (let j = open; j < rjs.length; j++) {
+    if (rjs[j] === "{") {
+      depth++;
+    } else if (rjs[j] === "}") {
+      depth--;
+      if (depth === 0) {
+        return rjs.slice(i, j + 1);
+      }
+    }
+  }
+  return "";
+};
+{
+  if (!rjs) {
+    fails.push("src/webview/mobile/restock.js 不见了：补货跟踪整块功能没了");
+  } else {
+    // ① 骨架与接线
+    for (const id of ["purchTabOrder", "purchTabRestock", "purchPaneOrder", "purchPaneRestock", "restockRoot"]) {
+      if (!html.includes(`id="${id}"`)) {
+        fails.push(`index.html 里没有 id="${id}"：补货跟踪的页签/面板骨架不在，切过去一片空白`);
+      }
+    }
+    if (!html.includes('src="/restock.js"')) {
+      fails.push('index.html 没有引入 /restock.js：页签点了不会切，整块功能等于没装');
+    }
+    if (!/registerScreen\(\s*"screen-purchase"/.test(rjs)) {
+      fails.push("restock.js 没登记 screen-purchase 属于哪一格 tab：在补货跟踪里底部高亮会掉回「商品」");
+    }
+    if (!/invoke\(\s*"restockList"/.test(rjs)) {
+      fails.push('restock.js 没有调 restockList：进来永远是空列表');
+    }
+    // ⚠️ restockList 是**纯读**，绝不能进 WRITE_ACTIONS（进了之后只读模式/排队会把它当成写）
+    const shopIdx = fs.readFileSync(path.join(root, "src", "tools", "shopTool", "index.ts"), "utf8");
+    const waMatch = /const WRITE_ACTIONS = new Set\(\[([\s\S]*?)\]\);/.exec(shopIdx);
+    const waBody = waMatch ? waMatch[1] : "";
+    if (!/"restockAdd"/.test(waBody) || !/"restockUpdate"/.test(waBody) || !/"restockDelete"/.test(waBody)) {
+      fails.push("WRITE_ACTIONS 里缺 restockAdd / restockUpdate / restockDelete：只读模式拦不住，共享盘上会抢锁");
+    }
+    if (/"restockList"/.test(waBody)) {
+      fails.push("restockList 被塞进了 WRITE_ACTIONS：它是纯读，进了写清单会被排队/被只读模式误拦");
+    }
+    // ⚠️ 上面这几条都是拿正则切 WRITE_ACTIONS 的**整段文本**（含注释）来判的 ——
+    //    所以注释里也不能出现这些词（我自己踩过：写了句"跟 getLiveState 一个道理"，
+    //    结果 check-server-units 那条"读的别进写清单"当场红）。这里显式钉一下，
+    //    免得下一个人又在注释里写一遍。下面按行切、只认**引号里的字符串项**。
+    const waItems = waBody
+      .split(/\r?\n/)
+      .map((l) => l.replace(/\/\/.*$/, "").trim())
+      .filter((l) => l.startsWith('"'));
+    if (!waItems.includes('"restockAdd",') || !waItems.includes('"restockUpdate",') || !waItems.includes('"restockDelete",')) {
+      fails.push("WRITE_ACTIONS 里 restockAdd / restockUpdate / restockDelete 没排成独立的字符串项（别写进注释里）");
+    }
+
+    // ② 编号归一：058 → A058，汉字原样
+    const canon = rsFn("canonicalCode");
+    if (!canon) {
+      fails.push("restock.js 没有 canonicalCode()：输入 058 不会变成 A058");
+    } else {
+      if (!/head === "A" && digits\.length < 3/.test(canon)) {
+        fails.push("canonicalCode() 里 A 段补零到 3 位那段不见了：输入 58 会变成 A58 而不是 A058");
+      }
+      if (!/\^\(\[A-Z\]\*\)\(\\d\+\)\$/.test(canon)) {
+        fails.push("canonicalCode() 不再按「字母段+数字段」拆：A058 这种会归一失败，汉字孤品也会被当成编号");
+      }
+    }
+
+    // ③ 三档时间状态：顺序错了"该确认（橙）"就永远不会出现
+    //    ⚠️ 这里钉的是**分支结构**（over>0 → late / over===0 → today / 否则 wait），
+    //    别钉变量名（第一版叫 d、现在叫 over，钉名字的断言只会逼着人不敢改名）。
+    const ts = rsFn("timeState");
+    if (!ts) {
+      fails.push("restock.js 没有 timeState()：三档颜色（灰/橙/红）没有唯一算法");
+    } else {
+      if (!/over\s*>\s*0[\s\S]{0,40}return "late"/.test(ts)) {
+        fails.push('timeState() 里没有「逾期 → late（该催/红）」这一档：过了约定日的不会变红');
+      }
+      if (!/over\s*===\s*0[\s\S]{0,40}return "today"/.test(ts)) {
+        fails.push('timeState() 里没有「今天 → today（该确认/橙）」这一档：当天该确认的那批永远看不到');
+      }
+      if (!/return "wait"/.test(ts)) {
+        fails.push("timeState() 里「约定日还没到 → wait」那一档不见了");
+      }
+    }
+    // 橙色（该确认）必须有样式，否则"当天该确认"跟"还等着"长得一样
+    if (!/\.rs-p-today\s*\{[\s\S]{0,120}?color:\s*#c1740f/.test(rcss)) {
+      fails.push(".rs-p-today 没有橙色：①当天该确认的那批跟还等着分不出来（老板专门要的橙色）");
+    }
+
+    // ④ 改期只发改期：不许把 status 一起发（发了会把"已经到了"改回"还在等"）
+    const askDue = rsFn("askDue");
+    if (!askDue) {
+      fails.push("restock.js 没有 askDue()：改期入口不在");
+    } else if (/status/.test(askDue)) {
+      fails.push("askDue() 里出现了 status：改期会把状态一起写回去（点完「到了」再改期就会退回还在等）");
+    }
+
+    // ⑤ 删除必须二次确认 + 软删除
+    // ⚠️⚠️ 这里**必须按动作切片**（`act === "del"` 那一支），不能只查 actOn 整个函数体：
+    //    actOn 里"关了"那一支也有 window.confirm，同名字符串出现两次 →
+    //    "整函数里有没有 confirm" 永远绿（这条第一版就是这么漏的，变异 rs-del-confirm 抓出来的）。
+    const actOn = rsFn("actOn");
+    if (!actOn) {
+      fails.push("restock.js 没有 actOn()：行上的到了/关了/删除四颗按钮没地方去");
+    } else {
+      // 从 `act === "del"` 到那个 if 块结束（这一支是函数里最后一支，后面紧跟函数收尾的 `}`）
+      const delBranch = /act === "del"[\s\S]*$/.exec(actOn);
+      if (!delBranch) {
+        fails.push('actOn() 里没有 act === "del" 这一支：卡片上的「删除」点了没反应');
+      } else {
+        if (!/window\.confirm\(/.test(delBranch[0])) {
+          fails.push("删除那一支里没有 confirm：删一条不打招呼就没了（老板明确要求二次确认）");
+        }
+        if (!/restockDelete/.test(delBranch[0])) {
+          fails.push("删除那一支里没有调 restockDelete");
+        }
+      }
+    }
+    // ⭐ 动作按钮的顺序是老板定的（2026-10-18 晚五轮）：「到了 / 改期 / **编辑（第3）** / **删除（最右）**」。
+    //    走过一圈：四轮他先要"等货行去掉删除"，五轮又改成"把关了换成删除、放最右，编辑放第三" ——
+    //    以**五轮**为准。「关了」close 按钮已撤，别加回来。
+    const cardFn2 = rsFn("cardHtml").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    if (/data-act="close"/.test(cardFn2)) {
+      fails.push('cardHtml 里又出现 data-act="close"（关了）：老板已把它换成「删除」，别加回来');
+    }
+    {
+      const iEdit = cardFn2.indexOf('data-act="edit"');
+      const iDel = cardFn2.indexOf('data-act="del"');
+      if (iEdit < 0 || iDel < 0) {
+        fails.push("cardHtml 里缺「编辑」或「删除」按钮");
+      } else if (iEdit > iDel) {
+        fails.push("「编辑」排在「删除」后面了：老板要求编辑第 3、「删除」固定最右");
+      }
+    }
+    // 「删除」必须**每种状态都有**（五轮改回来）：它不再是等货行的例外。
+    // ⚠️ 这条以前是反的（要求包在 status !== "wait" 里），四轮拍的、五轮推翻 —— 别照着旧记忆改回去。
+    if (/status !== "wait"[\s\S]{0,220}data-act="del"/.test(cardFn2)) {
+      fails.push("「删除」又被包进 status !== \"wait\" 里了：五轮老板要求每种状态都有删除");
+    }
+    // 后端必须是软删除：DELETE FROM restock_track 这句一出现就是"真删了，捞不回来"
+    const dbSrc = fs.readFileSync(path.join(root, "src", "tools", "shopTool", "db.ts"), "utf8");
+    if (/DELETE FROM restock_track/.test(dbSrc)) {
+      fails.push("db.ts 里出现了 DELETE FROM restock_track：补货跟踪是**软删除**，真删了就捞不回来");
+    }
+    if (!/UPDATE restock_track SET deleted = 1/.test(dbSrc)) {
+      fails.push("db.ts 里的软删除语句（UPDATE restock_track SET deleted = 1）不见了");
+    }
+
+    // ⚠️「今天该确认」必须**单独成一组**：顶部四个数里有它一格，列表里要是没有对应的组，
+    //    那几条今天就彻底看不见了（第一版就是这样漏的：数字亮着 1，往下翻找不到是哪个单）。
+    const resAll = rsFn("resultsHtml");
+    if (!resAll || !/groupHtml\(\s*"today"/.test(resAll)) {
+      fails.push('resultsHtml() 里没有 groupHtml("today")：「今天该确认」那几条只在顶部数字里出现，列表里翻不到');
+    }
+    if (!/fold:\s*\{[^}]*today:\s*false/.test(rjs)) {
+      fails.push("state.fold 里没有 today: false：该确认那一组会默认折起来（undefined 看着像折了）");
+    }
+    // 日期方向：timeState 必须用 `dayDiff(约定日, 今天)`（= 今天 - 约定日），反了就会把
+    // "还没到"全算成逾期、把"逾期三天"算成还等着 —— 四个数一起错位（第一版就是这个 bug）。
+    // ⚠️ 只查"有没有 dayDiff(...todayStr()...)"不够：前面加个负号、或者把两个参数对调，
+    //    那个正则照样命中（变异 rs-daydiff-dir 抓出来的）。这里钉**参数次序**：
+    //    第一个参数必须是 due，第二个必须是今天。
+    if (ts && !/dayDiff\(\s*(String\(\s*r\.due\s*(?:\|\|\s*""\s*)?\)|r\.due)\s*,\s*todayStr\(\)\s*\)/.test(ts)) {
+      fails.push("timeState() 的 dayDiff 参数顺序不对（必须是 dayDiff(约定日, 今天)）：三档状态会整体反掉");
+    }
+    // ⚠️ 还得分两头堵：子串命中不代表**方向**对 —— `-dayDiff(a, b)` 里那个子串照样在（变异 rs-daydiff-dir
+    //    就是这么漏过去的）。所以：dayDiff 前面**不许有负号**，且下一档分支必须是 `over > 0 → late`。
+    if (ts && /-\s*dayDiff\(/.test(ts)) {
+      fails.push("timeState() 里 dayDiff 前面加了负号：方向又反了（今天-约定日 的正数才是逾期）");
+    }
+
+    // ⑥ 搜索：单号和编号都认 + 只显示匹配的行
+    const hit = rsFn("hitRow");
+    if (!hit) {
+      fails.push("restock.js 没有 hitRow()：搜索框不打字就筛不出东西");
+    } else {
+      if (!/r\.waybill/i.test(hit)) {
+        fails.push("hitRow() 不看单号：搜单号搜不出来（老板要的就是拖哪个单号都能搜）");
+      }
+    // ⚠️ hitRow 里 canonicalCode 出现两次（`canonicalCode(q)` 算要搜的、`canonicalCode(seg)` 算行里的）——
+    //    只查"函数体里有没有 canonicalCode"永远绿（变异 rs-hit-canon 抓出来的）。这里**数条数**。
+    const hitCanon = (hit.match(/canonicalCode\(/g) || []).length;
+    if (hitCanon < 2) {
+      fails.push("hitRow() 里 canonicalCode 出现不到 2 次：搜 035 找不到 A035（按段归一那一步丢了）");
+    }
+    }
+    const resHtml = rsFn("resultsHtml");
+    if (!resHtml || !/filter\(/.test(resHtml)) {
+      fails.push("resultsHtml() 搜索时没有 filter：搜到的结果会把不匹配的行也一起列出来");
+    }
+
+    // ⑦ 打字时不许重画搜索框本身（换了 DOM = 光标丢、中文输入被打断）
+    const onlyRes = rsFn("renderResultsOnly");
+    if (!onlyRes) {
+      fails.push("restock.js 没有 renderResultsOnly()：搜索时会整屏重画");
+    } else if (!/\.rs-results/.test(onlyRes)) {
+      fails.push("renderResultsOnly() 没有只换 .rs-results：整屏重画会把搜索框换掉，光标和中文输入都会断");
+    }
+    // 搜索框的 oninput 必须走 renderResultsOnly（调 render() 就是整屏重画）
+    const searchHandler = /search\.oninput = function[\s\S]{0,200}?\};/.exec(rjs);
+    if (!searchHandler) {
+      fails.push("restock.js 里没找到搜索框的 oninput 处理：边打边筛没了");
+    } else if (/render\(\)/.test(searchHandler[0])) {
+      fails.push("搜索框的 oninput 里调了 render()：每敲一个字整屏重画，光标会丢、中文输入被打断");
+    }
+
+    // ⑧ CSS 三条（每条对应一个看得见的故障）
+    if (!/\.p-tab-badge\[hidden\][\s\S]{0,40}display:\s*none/.test(rcss)) {
+      fails.push(".p-tab-badge[hidden]{display:none} 不见了：红点自己写了 display:inline-block，没有这一条就永远藏着不消失");
+    }
+    if (!/\.p-pane\[hidden\][\s\S]{0,40}display:\s*none/.test(rcss)) {
+      fails.push(".p-pane[hidden]{display:none} 不见了：两块面板会同时显示（进货单和补货跟踪叠在一起）");
+    }
+    if (!/\.rs-mask\[hidden\][\s\S]{0,40}display:\s*none/.test(rcss)) {
+      fails.push(".rs-mask[hidden]{display:none} 不见了：记一条的弹层会一直糊在屏幕上，关不掉");
+    }
+    // 输入框字号 ≥16px：iOS 上聚焦小于 16px 会整页放大
+    const rsInputs = rcss.match(/\.(rs-search|rs-dateinput)\s*\{[\s\S]{0,300}?\}/g) || [];
+    const sizeOk = rsInputs.filter((r) => /font-size:\s*1[6-9]px/.test(r) || /font-size:\s*2\dpx/.test(r));
+    if (sizeOk.length < 2) {
+      fails.push("补货跟踪的输入框（.rs-search / .rs-dateinput）字号不是 ≥16px：iOS 聚焦时会整页放大");
+    }
+    // 三档颜色的语义别被糊掉：该催必须红、还等着必须灰
+    if (!/\.rs-p-late\s*\{[\s\S]{0,120}?color:\s*var\(--danger\)/.test(rcss)) {
+      fails.push(".rs-p-late 不是红的（var(--danger)）：逾期该催的那批跟普通行分不出来");
+    }
+
+    // ===== ⑨ 界面返工五项（老板 2026-10-18 真机试完提的）=====
+    // 起因原话：「两个 Tab 页好像 UI 有问题，选中下面绿色然后上面都是白色」/「搜索按钮点了会没反应，
+    // 我也不知道点哪里…还会不小心放大」/「结束它的按钮图标长得好丑」/「不支持修改吧，打错了后面我还要改」/
+    // 「已结束那个清空按钮的位置也太丑了，为什么不能在右上角」
+    //
+    // (a) 页签选中态：乙档绿胶囊 —— `.p-tab.on` 必须实心品牌绿 + 白字。
+    //     原先只有一条细下划线（"上面全白"），他根本看不出选中在哪一格。
+    if (!/\.p-tab\.on\s*\{[\s\S]{0,200}?background:\s*var\(--brand\)/.test(rcss)) {
+      fails.push(".p-tab.on 没有 background: var(--brand)：页签选中态只剩一条细线，老板看不出选的是哪一格");
+    }
+    if (!/\.p-tab\.on\s*\{[\s\S]{0,200}?color:\s*#fff/.test(rcss)) {
+      fails.push(".p-tab.on 没有 color: #fff：实心绿底上写字还是深色（--brand 深色不随主题换，那样看不清）");
+    }
+    // (b) 搜索**常驻一整行**：不能再有"点放大镜才露"的开关（那颗按钮既难按中、又会跟旁边按钮抢点击区）
+    if (/rsSearchBtn/.test(rjs) || /rsSearchBtn/.test(html)) {
+      fails.push("又冒出 rsSearchBtn（放大镜开关）了：搜索框必须常驻一整行 —— 那颗按钮难点中、还会跟旁边按钮抢 44px 点击区");
+    }
+    if (!/id="rsSearch"/.test(rjs) || !/class="rs-searchrow"/.test(rjs)) {
+      fails.push("restock.js 里没有常驻的搜索行（.rs-searchrow > input#rsSearch）：搜索入口没了");
+    }
+    if (/searchOpen/.test(rjs)) {
+      fails.push("restock.js 里还有 state.searchOpen：搜索改成常驻了，这个开关状态不该留着（留着就会有人再把它接回去）");
+    }
+    // ✕ 必须挂进 .rs-searchwrap（CSS 里它是绝对定位压在输入框右边 34×34），挂错地方会掉到框下面
+    const paintClear = rsFn("paintCopyClear");
+    if (!paintClear || !/querySelector\(\s*"\.rs-searchwrap"\s*\)/.test(paintClear)) {
+      fails.push("paintCopyClear() 没把 ✕ 挂进 .rs-searchwrap：那颗 ✕ 会掉到输入框下面、还撑出 38px 高");
+    }
+    // 同名选择器只许有一份（旧的"点放大镜才露"那版写在后面，会把常驻那版整个盖回去）
+    const cntSel = (sel) => (rcss.match(new RegExp("^" + sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\{", "gm")) || []).length;
+    for (const sel of [".rs-searchrow", ".rs-search", ".rs-clear"]) {
+      if (cntSel(sel) > 1) {
+        fails.push(`restock.css 里 ${sel} 定义了 ${cntSel(sel)} 次：后一条会把前一条盖掉（旧的"点放大镜才露"那版就是这么把常驻版盖回去的）`);
+      }
+    }
+    // (c)「＋ 记一条」= **底栏通栏绿按钮**，跟进货单底栏「快速记」同款（2026-10-18 晚二轮）。
+    //     为什么换掉悬浮圆钮：老板「那个点点添加一行那个按钮我感觉不是很灵敏」——
+    //     52×52 的圆钮贴在屏幕右下角，那儿既是系统手势区又是手指最难够到的地方。
+    //     通栏按钮 300+ × 44（--tap），点哪儿都中。
+    if (!/id="rsNewBtn"[^>]*class="rs-newbtn"/.test(rjs)) {
+      fails.push("restock.js 里没有底栏通栏按钮 #rsNewBtn.rs-newbtn：「记一条」的入口不见了");
+    }
+    // ⚠️ 「记一条」的点击必须挂在**按钮自己**身上（paintBottomBar 里 btn.onclick）：
+    //    底栏是 #restockRoot 的**兄弟节点**，bindOnce 的 root.onclick 冒泡收不到 ——
+    //    2026-10-18 晚四轮老板真机踩过「点记一条没反应」。切片断言 + 数条数：
+    //    这个字符串只许出现在 paintBottomBar 一处（两处会让整份文件断言永远绿）。
+    const paintSeg = rsFn("paintBottomBar");
+    if (!paintSeg) {
+      fails.push("restock.js 里 paintBottomBar() 不见了：底栏按钮没地方画");
+    } else {
+      if (!/btn\.onclick\s*=/.test(paintSeg) || !/openDraft\(0\)/.test(paintSeg)) {
+        fails.push("paintBottomBar 里没有把点击挂在按钮自身（btn.onclick → openDraft(0)）：底栏在滚动容器外，root.onclick 收不到，「记一条」点了没反应");
+      }
+      const bindSeg = rsFn("bindOnce");
+      if (bindSeg && /rsNewBtn/.test(bindSeg.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, ""))) {
+        fails.push("bindOnce 里还在判 rsNewBtn：按钮在滚动容器外的底栏里，root.onclick 永远收不到这个点击（死分支 + 会骗过整份文件的断言）");
+      }
+    }
+    if (/rs-fab/.test(rjs) || /\.rs-fab\s*\{/.test(rcss)) {
+      fails.push("又出现 .rs-fab（右下角悬浮圆钮）了：老板嫌它不灵敏，已换成底栏通栏按钮");
+    }
+    if (!/id="rsBottombar"/.test(html)) {
+      fails.push("index.html 里没有 #rsBottombar：底栏按钮没地方挂");
+    }
+    // ⚠️ 底栏必须在 #restockRoot（滚动容器）**外面**：放进去会跟着列表一起滚走
+    const paneSeg = /<div id="purchPaneRestock"[\s\S]*?<\/div>\s*<\/section>/.exec(html);
+    if (paneSeg) {
+      const seg = paneSeg[0];
+      const iRoot = seg.indexOf('id="restockRoot"');
+      const iBar = seg.indexOf('id="rsBottombar"');
+      if (iRoot < 0 || iBar < 0 || iBar < iRoot) {
+        fails.push("#rsBottombar 没排在 #restockRoot 之后（或跑到面板外）：底栏会被塞进滚动容器里、跟着列表滚走");
+      }
+    }
+    // ⚠️ 切 CSS 规则**必须先剥注释**（注释里也会写规则片段，不剥就切错）
+    const rcssNoCmt = rcss.replace(/\/\*[\s\S]*?\*\//g, "");
+    const barCss = /\.rs-bottombar\s*\{[\s\S]{0,400}?\}/.exec(rcssNoCmt);
+    if (!barCss) {
+      fails.push(".rs-bottombar 样式不见了：底栏会变成一条没有背景的裸带子");
+    } else if (!/flex:\s*none/.test(barCss[0])) {
+      fails.push(".rs-bottombar 没有 flex:none：底栏会被列表挤扁（它必须固定高度、不吃剩余空间）");
+    } else if (!/padding:\s*8px var\(--pad\) 0\s*;/.test(barCss[0])) {
+      // 2026-10-18 晚五轮老板拍板：按钮直接贴 tab 栏上沿。安全区不能在这里再让一次 ——
+      // .screen 的 padding-bottom 和 .tabbar 的高度已经各让过一次，再来一次就是 iPhone 上
+      // 按钮下面 ~34px 白条（老板真机踩过：env()=0 的电脑预览里看不出来）。
+      fails.push(".rs-bottombar 的下内边距不是 0：按钮要贴住 tab 栏上沿（在这里留 safe-area 会跟 .screen/.tabbar 重复算，iPhone 上多一条白）");
+    }
+    // ⚠️ 「甲档」是老板 2026-10-18 晚三轮从甲/乙两档截图里**亲自拍的板**：按钮贴屏幕底。
+    //    代价他看过（列表矮时中间空一截）。乙档（按钮跟着列表走）被否 —— root 改成
+    //    flex:0 1 auto 就会悄悄变回乙档，所以这里把撑满钉死。
+    const rootCss = /\.restock\s*\{[\s\S]{0,400}?\}/.exec(rcssNoCmt);
+    if (!rootCss) {
+      fails.push(".restock 样式不见了：补货列表没有滚动容器");
+    } else if (!/flex:\s*1 1 auto/.test(rootCss[0])) {
+      fails.push(".restock 不是 flex:1 1 auto（撑满）：底栏会跟着列表上浮、屏幕底下空出来 —— 甲档（按钮贴屏底）被老板亲自选中，别改回乙档");
+    }
+    const newBtnCss = /\.rs-newbtn\s*\{[\s\S]{0,400}?\}/.exec(rcssNoCmt);
+    if (!newBtnCss) {
+      fails.push(".rs-newbtn 样式不见了：「记一条」会变成一个没有形状的方块");
+    } else {
+      if (!/height:\s*var\(--tap\)/.test(newBtnCss[0])) {
+        fails.push(".rs-newbtn 的高度不是 var(--tap)：比进货单那颗「快速记」矮，点着更费劲");
+      }
+      if (!/background:\s*var\(--brand\)/.test(newBtnCss[0]) || !/color:\s*#fff/.test(newBtnCss[0])) {
+        fails.push(".rs-newbtn 不是实心品牌绿 + 白字：跟进货单底栏那颗「快速记」不成一套");
+      }
+      if (!/flex:\s*1 1 auto/.test(newBtnCss[0])) {
+        fails.push(".rs-newbtn 没有通栏（flex:1 1 auto）：按钮会缩成一小块，点击区白缩");
+      }
+    }
+    // 底栏在滚动区外 → 列表底部**不该**再留 78px（留了就是一条空带子）
+    if (/\.restock\s*\{[\s\S]{0,300}?padding-bottom:\s*78px/.test(rcssNoCmt)) {
+      fails.push(".restock 还留着 padding-bottom: 78px：那是给悬浮圆钮让位的，现在底栏在滚动区外，留着就是一条空带");
+    }
+    // (d)「清空」挪到「已结束」组头右上角，且**不能嵌在组头 button 里**（按钮里放按钮是非法 HTML，
+    //     浏览器会把内层按钮拆出去 —— 那样位置就彻底乱了）
+    const gHtml = rsFn("groupHtml");
+    if (!gHtml) {
+      fails.push("restock.js 没有 groupHtml()：分组头全没了");
+    } else {
+      if (!/class="rs-ghead"/.test(gHtml)) {
+        fails.push("groupHtml() 里没有 .rs-ghead 外层：清空按钮只能塞进组头 button 里（非法 HTML）");
+      }
+      if (!/<\/button>\s*"\s*\+\s*\(key === "done"\s*\?\s*'<button class="rs-clear-done"/.test(gHtml)) {
+        fails.push("清空按钮没有紧跟在已结束组头 button **之后**（跑到组头里面 / 跑到别处去了）");
+      }
+      if (!/data-clear-done/.test(gHtml)) {
+        fails.push("groupHtml() 里没有 data-clear-done：清空按钮点了没反应");
+      }
+    }
+    // 组头 button 切片里绝不能出现 clear-done
+    const ghBtn = /<button class="rs-grouphead"[\s\S]*?<\/button>/.exec(gHtml);
+    if (ghBtn && /clear-done/.test(ghBtn[0])) {
+      fails.push("「清空」按钮被塞进了组头 <button> 里面：按钮嵌按钮是非法 HTML，浏览器会把它拆出去、位置全乱");
+    }
+    if (!/\.rs-clear-done\s*\{[\s\S]{0,300}?margin-left:\s*auto/.test(rcss)) {
+      fails.push(".rs-clear-done 没有 margin-left:auto：清空不会靠右（老板要的是「已结束的右上角」）");
+    }
+    // (e) 每行都能改（老板："万一我确实打错了呢，后面我再修改"）
+    //     ⚠️ 文案已换成「编辑」两个字（老板 2026-10-18 晚："有改这条那条那三个字有点多，
+    //        要不点修改吧。或者编辑也行啊，这个词汇不太好"）—— 「改这条」三个字别再回来。
+    const card = rsFn("cardHtml");
+    if (!card) {
+      fails.push("restock.js 没有 cardHtml()：展开卡片没了");
+    } else {
+      if (!/data-act="edit">编辑<\/button>/.test(card)) {
+        fails.push('卡片里没有「编辑」（data-act="edit">编辑</button>）：打错了改不了，只能删了重录');
+      }
+      if (/改这条/.test(card.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, ""))) {
+        fails.push("卡片里又出现「改这条」了：老板嫌三个字太多，按钮文案定的是「编辑」");
+      }
+      // 必须长在"三种状态"那个 if/else 链**之外** —— 放进某一支里，别的状态就没有编辑入口
+      const idxEdit = card.indexOf('data-act="edit"');
+      const idxElse = card.lastIndexOf('data-act="reopen">重新打开');
+      if (idxEdit < 0 || idxElse < 0 || idxEdit < idxElse) {
+        fails.push("「编辑」长在了状态分支里面：只有某一种状态能改，其它状态（尤其已结束）改不了");
+      }
+    }
+    if (!/act === "edit"\)\s*\{\s*openDraft\(id\)/.test(rjs)) {
+      fails.push('actOn() 里没有 act === "edit" → openDraft(id)：「编辑」点了没反应');
+    }
+    if (!/if \(d\.id\) \{\s*\n\s*API\.invoke\("restockUpdate"/.test(rjs)) {
+      fails.push("saveDraft() 没有按 d.id 分流：编辑会走成新增，同一条记录变成两条");
+    }
+    // 编辑弹层的标题也要是「编辑」，不能留着旧文案
+    if (/d\.id \? "改这条"/.test(rjs)) {
+      fails.push('编辑弹层标题还是"改这条"：跟按钮文案不一致');
+    }
+  }
+}
+
+// ===== ⑩ 2026-10-18 晚第二轮（老板真机又提的四条）=====
+// ⚠️ 这一段摆在 restock 那个大 if **外面**：进货单的卡点（pjs / purchase.css）跟补货跟踪的入口无关，
+//   放进去的话 restock.js 一旦缺失会连着把进货单的断言一起跳过。
+{
+  // (a) 进货单顶栏「＋ 新建」删掉（老板："我觉得不需要有点多余了嘛"）。
+  //     新建只剩日历那天卡里的 [data-newday]。断言钉死"不许复活"：
+  //     那颗按钮只能建"今天"，想建别的日子还得进去再改日期，本来就多余。
+  if (/id="purchaseNewBtn"/.test(html)) {
+    fails.push("进货单顶栏又出现 purchaseNewBtn（＋ 新建）：老板嫌多余删掉了，新建走日历那天卡里的「新建这天的单」");
+  }
+  if (/purchaseNewBtn/.test(pjs.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, ""))) {
+    fails.push("purchase.js 里还在引用 purchaseNewBtn：按钮已经删了，这行挂不上、会当场抛错");
+  }
+  if (!/data-newday=/.test(pjs.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, ""))) {
+    fails.push("进货单日历的「新建这天的单」（data-newday）不见了：新建入口彻底没了");
+  }
+  // (b) 日历圆点要按"还缺不缺货"分色 —— 老板："缺货了要换个颜色嘛，未完成我想在日期上也能显示，
+  //     要么标个红色点点，现在所有都是绿色点点了"
+  if (!/function dayHasShort\(/.test(pjs)) {
+    fails.push("purchase.js 没有 dayHasShort()：日历上的点永远是一个颜色，分不出哪天还欠货");
+  } else {
+    const dhs = pjs.match(/function dayHasShort\([\s\S]*?\n  \}/);
+    const dhsTxt = dhs ? dhs[0] : "";
+    // 口径必须跟当日卡 pill 同源（复用 calcSummary 的 statusText），不许另起一套算法
+    if (!/calcSummary\(/.test(dhsTxt) || !/statusText/.test(dhsTxt)) {
+      fails.push("dayHasShort() 没复用 calcSummary 的 statusText：日历的红绿会和当日卡上的状态打架");
+    }
+    if (!/已完成/.test(dhsTxt)) {
+      fails.push('dayHasShort() 里没有放行"已完成"：办完的日子也会标红点');
+    }
+  }
+  if (!/p-dot-short/.test(pjs)) {
+    fails.push("日历格子没有输出 p-dot-short：缺货的日子还是绿点");
+  }
+  const pcss = fs.readFileSync(path.join(mobileDir, "purchase.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  if (!/\.p-dot\.p-dot-short\s*\{[\s\S]{0,200}?background:\s*var\(--danger\)/.test(pcss)) {
+    fails.push(".p-dot.p-dot-short 不是红的：日历上缺货的日子跟办完的看不出区别");
+  }
+
+  // (c) 补货跟踪四组标题统一圆点（老板："都是圆圈一个颜色，那为什么还等着已结束用图标呢"）
+  const resAll2 = rsFn("resultsHtml").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  for (const emo of ["🔴", "🟠", "⏳", "✅"]) {
+    if (resAll2.includes(emo)) {
+      fails.push(`resultsHtml() 里还有分组 emoji「${emo}」：四组标题要统一成圆点，只靠颜色分`);
+    }
+  }
+  const gHtml2 = rsFn("groupHtml");
+  if (!/class="rs-gdot"/.test(gHtml2)) {
+    fails.push("groupHtml() 里没有 .rs-gdot：分组标题的圆点不见了");
+  }
+  const rc2 = rcss.replace(/\/\*[\s\S]*?\*\//g, "");
+  if (!/\.rs-g-late \.rs-gdot\s*\{[\s\S]{0,80}?background:\s*var\(--danger\)/.test(rc2)) {
+    fails.push(".rs-g-late .rs-gdot 不是红的：该催那组跟别的组分不出来");
+  }
+  if (!/\.rs-g-today \.rs-gdot\s*\{[\s\S]{0,80}?background:\s*#e08a1e/.test(rc2)) {
+    fails.push(".rs-g-today .rs-gdot 不是橙的：今天该确认那组跟该催撞色");
+  }
+  if (!/\.rs-g-done \.rs-gdot\s*\{[\s\S]{0,80}?background:\s*var\(--brand\)/.test(rc2)) {
+    fails.push(".rs-g-done .rs-gdot 不是品牌绿：老板说「已结束灰色为什么不是绿色呢」，办完了要用绿");
+  }
+  // 还等着 = 灰**实心**（老板："为什么还等着不用实体灰呢，还有空白的。我不喜欢这样的设计"）
+  if (!/\.rs-g-wait \.rs-gdot\s*\{[\s\S]{0,80}?background:\s*#c8ccd1/.test(rc2)) {
+    fails.push(".rs-g-wait .rs-gdot 不是灰实心（#c8ccd1）：还等着那组又变成空心/空白圈了");
+  }
+  // 四种全是实心 —— 空心那种写法（transparent + border）一颗都不许留
+  if (/\.rs-gdot\s*\{[\s\S]{0,200}?background:\s*transparent/.test(rc2) ||
+      /\.rs-g-\w+ \.rs-gdot\s*\{[\s\S]{0,120}?background:\s*transparent/.test(rc2)) {
+    fails.push("分组圆点里又有 background:transparent（空心圈）：老板明确说不喜欢空白圈，四组一律实心");
+  }
+  // 直径 13px：9px 那版老板说「怎么变小了」
+  const gdotCss = /\.rs-gdot\s*\{[\s\S]{0,200}?\}/.exec(rc2);
+  if (gdotCss && !/width:\s*13px/.test(gdotCss[0])) {
+    fails.push(".rs-gdot 的直径不是 13px：9px 那版老板嫌「变小了」");
+  }
+
+  // (d) 两个页签加高到 40px（老板："这两个 tab 也太小了吧，看着很不舒服啊，扁扁的"）。
+  //     ⚠️ 高度和圆角必须配套（radius = height/2），否则胶囊会变成"跑道"两头不出圆。
+  const tabCss = /\.p-tab\s*\{[\s\S]{0,300}?\}/.exec(rc2);
+  if (!tabCss) {
+    fails.push(".p-tab 样式不见了：两个页签会变成两个裸文字");
+  } else {
+    if (!/height:\s*40px/.test(tabCss[0])) {
+      fails.push(".p-tab 的高度不是 40px：30px 那版老板嫌扁（「看着很不舒服」）");
+    }
+    if (!/border-radius:\s*20px/.test(tabCss[0])) {
+      fails.push(".p-tab 的圆角不是 20px（= height/2）：胶囊两头会变成方的/跑道形");
+    }
+    if (!/font-size:\s*15px/.test(tabCss[0])) {
+      fails.push(".p-tab 的字号不是 15px：13.5px 在 40px 高的胶囊里显得空");
+    }
+  }
+}
+
 if (fails.length > 0) {
-  console.error(`❌ check-mobile-wiring：${fails.length} 项不通过`);
-  for (const f of fails) {
+  console.error(`❌ check-mobile-wiring：${fails.length} 项不通过`);  for (const f of fails) {
     console.error(`   - ${f}`);
   }
   process.exit(1);

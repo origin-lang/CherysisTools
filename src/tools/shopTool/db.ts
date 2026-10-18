@@ -128,6 +128,28 @@ export interface PurchaseOrderRow {
   items: PurchaseItemRow[];
 }
 
+// ===== 补货跟踪（客户订单欠货，2026-10-18）=====
+/** status 只有三种：还等着 / 到了 / 关了。**没有"已催""已发货"** —— 那些是过程，不是结果 */
+export type RestockStatus = "wait" | "done" | "closed";
+
+export interface RestockRow {
+  id: number;
+  /** 快递单号（一行一个） */
+  waybill: string;
+  /** 缺的编号/物品，纯文本（`A058、四叶草` 这种混写是允许的） */
+  items: string;
+  /** 约定日期 YYYY-MM-DD —— **真实日期**，不是"明天发" */
+  due: string;
+  status: RestockStatus;
+  note: string;
+  /** 改过几次期 */
+  due_changes: number;
+  /** 最初那个约定日（第一次改期时记下，之后不再变）。空 = 从没改过 */
+  due_first: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface StockInRow {
   id: number;
   product_id: number;
@@ -202,6 +224,15 @@ export interface ShopDB {
   /** 整张保存：id 为空则新建；**行整表替换**（跟 replaceLivePlan 一个套路）。返回这张单的 id */
   savePurchaseOrder(id: number | null, date: string, note: string, items: PurchaseItemRow[]): number;
   deletePurchaseOrder(id: number): void;
+  // ===== 补货跟踪（客户订单欠货，2026-10-18）=====
+  /** 全部**没删**的跟踪行（新的在前）。行数天然有限（几十到几百），一次读全 */
+  listRestock(): RestockRow[];
+  /** 新建一条。返回新 id */
+  addRestock(row: Omit<RestockRow, "id" | "created_at" | "updated_at">): number;
+  /** 改一条（整行覆盖式更新，id 之外的字段都传齐）。返回是否改到了 */
+  updateRestock(id: number, row: Omit<RestockRow, "id" | "created_at" | "updated_at">): boolean;
+  /** **软删除**（deleted=1）：界面看不见，行还在 —— 老板明确"你不能够自己直接删" */
+  deleteRestock(ids: number[]): number;
   // ===== 套装（可整体移除）=====
   /** 套装的成员清单（按 sort 排），带子商品**当前**的名称/进价/售价/状态 */
   listSetMembers(setCode: string): SetMemberRow[];
@@ -452,6 +483,32 @@ export function initDB(storageDir: string): boolean {
       PRIMARY KEY (order_id, sort)
     );
     CREATE INDEX IF NOT EXISTS idx_purchase_item_order ON purchase_item(order_id);
+    -- ===== 补货跟踪（客户订单欠货，2026-10-18）=====
+    -- **一行 = 一个快递单号**，缺的编号写在 items 里（可能好几个，纯文本）。
+    -- 老板的土办法就是 WPS 四列：单号 / 缺的编号 / 预期结果 / 实际情况 —— 这里只是把它搬进库里。
+    --
+    -- 三条口径（九轮谈下来的）：
+    --   · due 存**真实日期**，绝不存"明天发/2天后"这种相对说法（过两天就漂了）
+    --   · status: wait=还等着 / done=到了 / closed=关了（永远不来了，他手动关）
+    --     ⚠️ 只有 done/closed 才算结束；"发货了没/催了没"是过程，不进状态
+    --   · deleted 是**软删除**：界面看不见，但行还在（老板明确"你不能够自己直接删"）
+    --
+    -- ⚠️ 和进货单是**两回事**，别串：进货单是"我要去进多少货"，这张表是"哪个客户的单还欠着什么"。
+    CREATE TABLE IF NOT EXISTS restock_track (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      waybill     TEXT NOT NULL DEFAULT '',
+      items       TEXT NOT NULL DEFAULT '',
+      due         TEXT NOT NULL DEFAULT '',
+      status      TEXT NOT NULL DEFAULT 'wait',
+      note        TEXT NOT NULL DEFAULT '',
+      -- 改期记录：次数 + 最初那个约定日（"2 次 · 原定 10-15"就靠这两格）
+      due_changes INTEGER NOT NULL DEFAULT 0,
+      due_first   TEXT NOT NULL DEFAULT '',
+      created_at  TEXT NOT NULL DEFAULT '',
+      updated_at  TEXT NOT NULL DEFAULT '',
+      deleted     INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_restock_track_due ON restock_track(deleted, status, due);
   `);
   const settleCols = (db.prepare("PRAGMA table_info(monthly_settle)").all() as any[]).map(
     (r) => r.name,
@@ -729,6 +786,23 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
   const purchaseItemIns = c.prepare(
     "INSERT OR REPLACE INTO purchase_item (order_id, sort, code, need, got, done, note, name, price, img, kind) VALUES (@order_id, @sort, @code, @need, @got, @done, @note, @name, @price, @img, @kind)",
   );
+  // ===== 补货跟踪（客户订单欠货，2026-10-18）=====
+  // 读的时候**直接滤掉 deleted**：软删除的行对界面来说不存在（但行还在库里，将来要恢复/翻旧账都还能翻）
+  const restockList = c.prepare(
+    "SELECT id, waybill, items, due, status, note, due_changes, due_first, created_at, updated_at " +
+      "FROM restock_track WHERE deleted = 0 ORDER BY due ASC, id DESC",
+  );
+  const restockIns = c.prepare(
+    "INSERT INTO restock_track (waybill, items, due, status, note, due_changes, due_first, created_at, updated_at, deleted) " +
+      "VALUES (@waybill, @items, @due, @status, @note, @due_changes, @due_first, @created_at, @updated_at, 0)",
+  );
+  const restockUpd = c.prepare(
+    "UPDATE restock_track SET waybill = @waybill, items = @items, due = @due, status = @status, " +
+      "note = @note, due_changes = @due_changes, due_first = @due_first, updated_at = @updated_at " +
+      "WHERE id = @id AND deleted = 0",
+  );
+  // 软删除：只把标记立起来。**绝不 DELETE** —— 删错了还能捞回来
+  const restockSoftDel = c.prepare("UPDATE restock_track SET deleted = 1, updated_at = ? WHERE id = ? AND deleted = 0");
   // ===== 套装（可整体移除）=====
   // 成员列表用编号 JOIN products 拿「当前」的名称/进价/售价/状态 —— 改了子商品，套装这边立刻是新值，
   // 不用任何同步动作。合计值同理：全靠这里现算，绝不落库（落库就会跟子商品真实值不同步）。
@@ -1242,9 +1316,87 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
         tx();
       });
     },
+    // ===== 补货跟踪（客户订单欠货，2026-10-18）=====
+    listRestock(): RestockRow[] {
+      return (restockList.all() as any[]).map((r) => ({
+        id: Number(r.id),
+        waybill: String(r.waybill ?? ""),
+        items: String(r.items ?? ""),
+        due: String(r.due ?? ""),
+        // 库里存的是字符串，脏值一律当"还等着"（宁可多留一条在眼前，也别让它凭空消失）
+        status: (String(r.status ?? "") === "done"
+          ? "done"
+          : String(r.status ?? "") === "closed"
+            ? "closed"
+            : "wait") as RestockStatus,
+        note: String(r.note ?? ""),
+        due_changes: Number(r.due_changes ?? 0) || 0,
+        due_first: String(r.due_first ?? ""),
+        created_at: String(r.created_at ?? ""),
+        updated_at: String(r.updated_at ?? ""),
+      }));
+    },
+    addRestock(row): number {
+      return withRetry(() => {
+        const now = nowStr();
+        const status: RestockStatus =
+          row?.status === "done" || row?.status === "closed" ? row.status : "wait";
+        const info = restockIns.run({
+          waybill: String(row?.waybill ?? "").trim(),
+          items: String(row?.items ?? "").trim(),
+          due: String(row?.due ?? "").trim(),
+          status,
+          note: String(row?.note ?? ""),
+          due_changes: Number(row?.due_changes ?? 0) || 0,
+          due_first: String(row?.due_first ?? "").trim(),
+          created_at: now,
+          updated_at: now,
+        });
+        return Number(info.lastInsertRowid);
+      });
+    },
+    updateRestock(id, row): boolean {
+      return withRetry(() => {
+        const rid = Number(id);
+        if (!Number.isInteger(rid) || rid <= 0) {
+          return false;
+        }
+        const status: RestockStatus =
+          row?.status === "done" || row?.status === "closed" ? row.status : "wait";
+        const info = restockUpd.run({
+          id: rid,
+          waybill: String(row?.waybill ?? "").trim(),
+          items: String(row?.items ?? "").trim(),
+          due: String(row?.due ?? "").trim(),
+          status,
+          note: String(row?.note ?? ""),
+          due_changes: Number(row?.due_changes ?? 0) || 0,
+          due_first: String(row?.due_first ?? "").trim(),
+          updated_at: nowStr(),
+        });
+        return info.changes > 0;
+      });
+    },
+    deleteRestock(ids: number[]): number {
+      // 一次事务：单条删和"清空已结束"走同一段代码，共享盘上只提交一次
+      return withRetry(() => {
+        const tx = c.transaction((list: number[]): number => {
+          const now = nowStr();
+          let n = 0;
+          for (const raw of list) {
+            const id = Number(raw);
+            if (!Number.isInteger(id) || id <= 0) {
+              continue;
+            }
+            n += restockSoftDel.run(now, id).changes;
+          }
+          return n;
+        });
+        return tx(ids);
+      });
+    },
     // ===== 套装（可整体移除）=====
-    listSetMembers(setCode: string): SetMemberRow[] {
-      return (setMembersList.all(String(setCode)) as any[]).map((r) => ({
+    listSetMembers(setCode: string): SetMemberRow[] {      return (setMembersList.all(String(setCode)) as any[]).map((r) => ({
         code: String(r.code),
         name: String(r.name ?? ""),
         cost_price: Number(r.cost_price ?? 0),

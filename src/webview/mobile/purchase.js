@@ -344,6 +344,27 @@
   // ---------- 列表屏：月历 + 当日卡（2026-10-16 改版） ----------
   // 老板要的：一进来先看日历（哪天补过货一眼扫完），点日子出当日统计，再进去填。
   // ⚠️ 双击不用 —— 手机上双击跟缩放手势打架、换个人也想不到，全部单击。
+  /**
+   * 这一天的单**还有没有货没拿齐**。
+   * 老板 2026-10-18 晚：「缺货了要换个颜色嘛，未完成我想在日期上也能显示，要么标个红色点点，
+   * 现在所有都是绿色点点了」—— 原来日历上只要有单就是一颗绿点，缺货的日子和办完的日子
+   * 长得一模一样，翻月历根本看不出哪天还欠货。
+   *
+   * 口径跟当日卡上那个 pill **完全一样**，直接复用 calcSummary 的 statusText：
+   *   · "已完成" / "空单" / "现场记了 N 款" → 不用再补了 → 绿点
+   *   · 其它（未开始 / 已齐 x/y）→ 还欠着 → 红点
+   * ⚠️ 一天可能有好几张单（补了两次货就两张）：**只要有一张没完成就是红点** ——
+   *    日历是"这天还有事没办完"的提示，不能因为另一张办完了就把提示吞掉。
+   */
+  function dayHasShort(list) {
+    for (var i = 0; i < list.length; i++) {
+      var st = calcSummary(list[i].items || []).statusText;
+      if (st !== "已完成" && st !== "空单" && String(st).indexOf("现场记了") !== 0) {
+        return true;
+      }
+    }
+    return false;
+  }
   /** 按日期把单子分堆（同一天可能不止一张：补了两次货就两张） */
   function ordersByDate() {
     var by = {};
@@ -378,10 +399,13 @@
     }
     for (var d = 1; d <= days; d++) {
       var ds = y + "-" + pad2(m + 1) + "-" + pad2(d);
+      // 点 = 这天有没有单；点**什么颜色** = 这天的货拿齐了没有（红=还欠着 / 绿=办完了）
+      var hasOrder = !!byDate[ds];
+      var shortCls = hasOrder && dayHasShort(byDate[ds]) ? " p-dot-short" : "";
       h +=
         '<button class="p-d' + (ds === state.selDate ? " on" : "") + '" type="button" data-day="' + ds + '">' +
         d +
-        (byDate[ds] ? '<span class="p-dot"></span>' : "") +
+        (hasOrder ? '<span class="p-dot' + shortCls + '"></span>' : "") +
         "</button>";
     }
     h += "</div>";
@@ -2101,9 +2125,9 @@
     };
 
     // 列表屏
-    $("purchaseNewBtn").onclick = function () {
-      openOrder(0, true); // 永远开一张新的（理由见 openOrder 的 forceNew）
-    };
+    // ⚠️ 顶栏那颗「＋ 新建」已删（2026-10-18 晚，老板嫌多余）——
+    //    新建只走日历那天卡里的 [data-newday]，见下面 purchaseList 的 click 分发。
+    //    **别把按钮加回来**：check-mobile-wiring 有断言盯着 purchaseNewBtn 不许复活。
     $("purchaseList").onclick = function (e) {
       var del = e.target.closest("[data-del]");
       if (del) {

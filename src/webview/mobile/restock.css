@@ -1,0 +1,681 @@
+/* 手机版「补货跟踪」的样式 —— 独立一份（2026-10-18）。
+   想整体摘掉：删本文件 + restock.js + index.html 里那三处（这一行 link、页签+面板、脚本）。
+   进货单那边（purchase.css）一行都不用动。
+
+   ⚠️ 颜色只用 :root 里那几个（--brand/--line/--card/--fg/--muted），别在这里另开一套 ——
+      深色模式是靠 style.css 的 prefers-color-scheme 换变量实现的，写死颜色在深色下就瞎了。
+   ⚠️ 三档状态色（灰/橙/红）是这一块**唯一的语义色**，别拿去别处用：
+      还等着=灰、该确认=橙（仅当天）、该催=红（逾期）。 */
+
+/* ---------- 进货屏里的两个页签 ----------
+   2026-10-18 晚老板挑的**乙档：选中做成绿胶囊**（走过一圈：先是"绿字+绿下划线"，
+   他说"下面绿色上面全白"，两个白块叠在一起认不出选中哪个 → 挑了这个）。
+   ⚠️ 胶囊的高度（30）+ 上下 padding（各 6）= 42，**改这三个数要一起看** ——
+      只改胶囊不改 padding，页签栏会突然变高、把内容往下压。 */
+.p-tabs {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  /* 2026-10-18 晚二轮：老板「这两个 tab 也太小了吧，看着很不舒服啊，扁扁的」→ 30px 加到 40px。
+     上下 padding 也各给 2px，别让胶囊贴着分隔线。 */
+  padding: 8px var(--pad);
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+.p-tab {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 20px; /* = height/2，正胶囊（高度改了这里必须跟着改，否则变"跑道"） */
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+}
+.p-tab.on {
+  /* 实心品牌绿 + 白字：`--brand` 深色模式不换色，所以字必须写死白（写 var(--fg) 深色下会糊） */
+  background: var(--brand);
+  color: #fff;
+  font-weight: 600;
+}
+/* 页签上的红点数字（该催 + 待确认）。0 条时整个 hidden（挂个 0 像坏了）。
+   ⚠️ 选中态是绿底，红点在上面要留一圈**白边**才不糊在一起（用 box-shadow 画，不加尺寸）。 */
+.p-tab-badge {
+  display: inline-block;
+  min-width: 17px;
+  height: 17px;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 17px;
+  text-align: center;
+  vertical-align: 1px;
+  box-shadow: 0 0 0 1.5px var(--card);
+}
+.p-tab.on .p-tab-badge {
+  box-shadow: 0 0 0 1.5px var(--brand);
+}
+.p-tab-badge.warn {
+  background: #e08a1e;
+}
+/* ⚠️ 自带 display 的元素要显式写 [hidden] —— 否则 display:inline-block 会把 hidden 顶掉 */
+.p-tab-badge[hidden] {
+  display: none;
+}
+.p-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.p-pane[hidden] {
+  display: none;
+}
+
+/* ---------- 补货跟踪主体 ---------- */
+/* ⚠️ flex:1 1 auto（撑满）是**老板拍的板**（2026-10-18 晚三轮，甲/乙两档截图他选甲）：
+   按钮永远贴屏幕底，列表矮时中间的空白就空着 —— 他说"甲"时看过代价（列表和按钮之间空一截）。
+   乙档（按钮跟着列表走、空白挪到按钮下面）被否，别再改回去。
+   顺手查过：底栏位置从来没飘过 —— .p-pane 是 column-flex，root 撑满、底栏贴底，
+   老板真机看到的"空"就是列表内容少，不是布局错。 */
+.restock {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  /* ⚠️ 原来这里有一条 `position:relative` + `padding-bottom:78px`：给右下角悬浮圆钮留位置。
+     2026-10-18 晚二轮圆钮换成**底栏通栏按钮**了，那两条一并撤掉 ——
+     底栏在滚动区外面、把列表挤上去，不需要留白，也不需要定位基准了。 */
+}
+/* 底栏（「＋ 记一条」）—— 跟进货单 `.p-addbar` 一颗按钮的形态**完全同款**：
+   flex:none 贴着面板底部、上面一条分隔线、按钮吃满整条、高 44px（--tap）实心品牌绿 + 白字。
+   为什么不再用悬浮圆钮：老板 2026-10-18 晚二轮「那个点点添加一行那个按钮我感觉不是很灵敏…
+   你可以跟进货单一样的，它下面那个快速记那一栏吧，感觉点那个更好一点」——
+   通栏按钮的点击区是 300+ × 44，圆钮只有 52×52 还贴着屏幕右下角（那儿是系统手势区）。
+   ⚠️ 它必须跟 #restockRoot（滚动容器）平级、在它外面，否则会跟着列表滚走。 */
+.rs-bottombar {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  /* 2026-10-18 晚五轮：下内边距 **0** —— 按钮直接贴住 tab 栏上沿。
+     ⚠️ 之前写 env(safe-area-inset-bottom) 是**重复算了安全区**：.screen 的
+     padding-bottom 和 .tabbar 的高度都已经各自让过一次安全区，底栏再让一次，
+     iPhone 上按钮下面就多出 ~34px 白条（老板真机看到的"按钮下方很多白底"就是这个）。
+     电脑预览 env()=0 所以一直看不出来 —— 改这种"贴底"样式必须拿真机说话。 */
+  padding: 8px var(--pad) 0;
+  background: var(--card);
+  border-top: 1px solid var(--line);
+}
+.rs-newbtn {
+  flex: 1 1 auto;
+  height: var(--tap);
+  min-height: 0;
+  border: 0;
+  border-radius: 10px;
+  background: var(--brand);
+  /* 实心绿上写字必须写死白（--brand 深色模式不换色） */
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+}
+.rs-newbtn:active {
+  opacity: 0.88;
+}
+/* 搜索：2026-10-18 晚从"点放大镜才露"改成**常驻一整行**。
+   为什么：老板原话"这个搜索按钮好像点了会没反应，而且我也不知道点哪里…还会不小心放大"——
+   放大镜跟旁边的按钮挤在一起，44px 的点击区互相压、手指按偏就打到了别的按钮。
+   常驻一行最简单：不用点、不用找，进来就能打。 */
+.rs-searchrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px var(--pad) 0;
+}
+.rs-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 38px;
+  padding: 0 34px 0 12px;
+  /* ⚠️ 输入框字号必须 ≥16px，否则 iOS 聚焦时会把整页放大一下 ——
+     老板说的"还会不小心放大"一半是这个坑，一半是点击区太小按到了别处 */
+  font-size: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--fg);
+}
+.rs-search:focus {
+  border-color: var(--brand);
+  outline: none;
+}
+/* 搜索行的定位壳：✕ 要绝对定位到输入框右端 */
+.rs-searchwrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+}
+/* ✕ 清空：**34×34 的实心可点区**（不是小图标），压进输入框右边 */
+.rs-clear {
+  position: absolute;
+  right: 2px;
+  top: 2px;
+  width: 34px;
+  height: 34px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+}
+.rs-clear:active {
+  background: var(--soft);
+}
+/* 四个数：等 / 待确认 / 该催 / 已结束（跟搜索行分两次 padding，别叠在一起） */
+.rs-stats {
+  display: flex;
+  gap: 6px;
+  padding: 10px var(--pad) 10px;
+}
+.rs-stat {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 4px;
+  border-radius: 10px;
+  background: var(--card);
+  border: 1px solid var(--line);
+}
+.rs-stat b {
+  font-size: 19px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.rs-stat span {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+/* 0 的那格**变淡**：四个数里"一个都没有"和"有 3 个"要一眼分得开 */
+.rs-stat.zero b {
+  color: var(--muted);
+  font-weight: 500;
+  opacity: 0.55;
+}
+.rs-today b {
+  color: #e08a1e;
+}
+.rs-late b {
+  color: var(--danger);
+}
+
+/* ⚠️ 旧的"点放大镜才露"那版 `.rs-searchrow/.rs-search/.rs-search:focus` 三条已经删掉（2026-10-18 夜）：
+   它们写在后面、把常驻那版整个盖回去了（padding 被改成 0 … 6px、输入框去掉右侧 34px 让位）。
+   **搜索框样式只有上面那一段**，别再加第二份。 */
+/* 搜编号时那一句：「编号 A058 还有 2 单在等」 */
+.rs-note-host:empty {
+  display: none;
+}
+.rs-note {
+  margin: 0 var(--pad) 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(35, 168, 132, 0.1);
+  color: var(--brand);
+  font-size: 12.5px;
+}
+
+/* ---------- 分组（该催 / 还等着 / 已结束） ---------- */
+.rs-group {
+  margin: 0 var(--pad) 10px;
+  border-radius: 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+/* 组头这一行：左边是"标题 + 折叠箭头"那颗整条按钮，右边（仅已结束组）是「清空」。
+   ⚠️ 为什么要多这一层 .rs-ghead：`清空` 不能塞进 grouphead 里面 —— 组头本身是个 <button>，
+      按钮里嵌按钮是非法 HTML，浏览器会把里面的按钮拆出去，点了行为就乱了。
+      拆成"外层 div 布局 + 内层 button 只管折叠"是唯一干净的做法。 */
+.rs-ghead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 12px;
+}
+.rs-grouphead {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  min-height: 0;
+  height: 42px;
+  padding: 0 0 0 12px;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font-size: 14px;
+  text-align: left;
+}
+.rs-gtitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+/* 四组标题统一一颗圆点，**只有颜色/实心空心的差别**（2026-10-18 晚）。
+   老板问："该催了、今天该催的都是用圆圈一个颜色，那为什么还等着已结束用图标呢？你有什么设计在里面吗"
+   —— 没有设计，是拼出来的。现在形状一致，横向比颜色就知道谁更急：
+     红实心 = 该催 / 橙实心 = 今天该确认 / 灰实心 = 还等着 / 绿实心 = 已结束。
+
+   2026-10-18 晚二轮老板：「圆圈该催了，今天该确认它们怎么变小了，之前都没有这么小」「已结束。
+   灰色为什么不是绿色呢？为什么还等着不用实体灰呢，还有空白的。我不喜欢这样的设计」
+   → ① 直径 9px → 13px（跟行内文字一档，之前 9px 确实缩了一圈）；
+      ② **四种全是实心**，空心那种"空白圈"他不喜欢，去掉 border 改用满色底；
+      ③ 已结束改成**绿**（办完了 = 好结果，用品牌绿）；还等着是**灰实心**（不急，但也算件事，
+         所以不用空心、也不用绿——绿留给"已经办完"）。
+   ⚠️ 空心那种写法（background:transparent + border）已经**删干净**了，别加回来。 */
+.rs-gdot {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.rs-g-late .rs-gdot {
+  background: var(--danger);
+}
+.rs-g-today .rs-gdot {
+  background: #e08a1e;
+}
+.rs-g-wait .rs-gdot {
+  background: #c8ccd1;
+}
+.rs-g-done .rs-gdot {
+  background: var(--brand);
+}
+.rs-gcount {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.rs-gright {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rs-foldnote {
+  font-size: 12px;
+  color: var(--muted);
+}
+/* 「清空」（2026-10-18 晚挪的）：原来夹在组标题右边、跟折叠箭头挤在一起，老板说位置不好。
+   现在它单独占**组头最右侧**一格，跟左边"标题 + 折叠箭头"用 `margin-left:auto` 隔开。
+   ⚠️ 它必须**比整条组头矮一圈**（26 vs 42）：一样高的话，两颗可点的东西挨着，
+      手指按"清空"按偏一点就折了组、按"折叠"按偏一点就清了空 —— 那正是这次要修的病。
+   ⚠️ 不染红：这一页红已经表示"该催了"，清空是灰色动作，红字会让人以为要出事。 */
+.rs-clear-done {
+  flex: none;
+  min-height: 0;
+  height: 26px;
+  margin-left: auto;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.rs-clear-done:active {
+  background: var(--soft);
+}
+.rs-caret {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  transition: transform 0.15s;
+}
+.rs-group.folded .rs-caret {
+  transform: rotate(-90deg);
+}
+
+/* ---------- 一行（表格式，一屏 12~15 条） ---------- */
+.rs-row {
+  border-top: 1px solid var(--grid);
+}
+.rs-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  min-height: 48px;
+}
+.rs-row.open .rs-line {
+  background: var(--soft);
+}
+.rs-row:active .rs-line {
+  background: var(--soft);
+}
+/* 单号：最长，占着主要宽度。超了截断（要全看有复制按钮，见卡片） */
+.rs-wb {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2px;
+  color: var(--fg);
+}
+/* 缺的编号：第二宽，最多两行（超了省略号 —— 一行列七八个编号的极端情况） */
+.rs-items {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--fg);
+}
+/* 「A058 还有 2 单在等」：挂在编号底下那一小行 */
+.rs-wat {
+  display: block;
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 约定那列：状态胶囊 + 日期 + （过期 N 天） */
+.rs-due {
+  flex: none;
+  width: 82px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+.rs-pill {
+  font-size: 10.5px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+/* 三档颜色。⚠️ 这三个是本块唯一的语义色，别拿去别处用 */
+.rs-p-wait {
+  background: rgba(138, 144, 153, 0.14);
+  color: var(--muted);
+}
+.rs-p-today {
+  background: rgba(224, 138, 30, 0.16);
+  color: #c1740f;
+}
+.rs-p-late {
+  background: rgba(214, 69, 69, 0.14);
+  color: var(--danger);
+}
+.rs-p-done {
+  background: rgba(35, 168, 132, 0.14);
+  color: var(--brand);
+}
+.rs-p-closed {
+  background: rgba(138, 144, 153, 0.14);
+  color: var(--muted);
+}
+.rs-date {
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.rs-sub {
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--danger);
+}
+/* 已结束的行整行变淡（它已经不重要了，沉在底部） */
+.rs-done .rs-wb,
+.rs-closed .rs-wb {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--line);
+}
+.rs-row.rs-late .rs-line {
+  /* 逾期那一行左边一条红杠：扫一眼就知道哪几条红了（比整行染红克制得多） */
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+/* 「今天该确认」那一行同理走橙杠：只在今天有效，明天自动变红。
+   ⚠️ 这是老板专门要的那一档 ——"我22号时候也得确认一下，这个是不是真的到了呀"：
+      约定当天不提醒、直接跳到红，他就错过了"该打电话问一下到没到"的那个窗口。 */
+.rs-row.rs-today .rs-line {
+  box-shadow: inset 3px 0 0 #e08a1e;
+}
+
+/* ---------- 展开后的小卡片（只给这一条做操作） ---------- */
+.rs-card {
+  padding: 2px 12px 12px;
+  background: var(--soft);
+}
+.rs-cl {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+.rs-lb {
+  flex: none;
+  width: 40px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 19px;
+}
+.rs-val {
+  flex: 1 1 auto;
+  min-width: 0;
+  word-break: break-all;
+  line-height: 19px;
+}
+.rs-val.mono {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2px;
+}
+/* 复制：小，但有 44 高的点击区（这几颗都不大，点击区要够） */
+.rs-copy {
+  flex: none;
+  min-height: 0;
+  height: 28px;
+  padding: 0 10px;
+  margin-top: -4px;
+  border: 1px solid var(--brand);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--brand);
+  font-size: 12px;
+}
+.rs-chg {
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+/* 四个动作：到了 / 改期 / 关了 / 删除 */
+.rs-acts {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.rs-act {
+  flex: 1 1 0;
+  min-height: 0;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--fg);
+  font-size: 13.5px;
+}
+.rs-act.ok {
+  border-color: var(--brand);
+  background: var(--brand);
+  /* 实心绿上写字用白（--brand 深色模式不换，写 var(--fg) 在深色下会糊成一片） */
+  color: #fff;
+  font-weight: 600;
+}
+.rs-act.del {
+  flex: 0 0 auto;
+  padding: 0 14px;
+  color: var(--danger);
+  border-color: rgba(214, 69, 69, 0.4);
+}
+
+/* 空态 */
+.rs-empty {
+  margin: 40px var(--pad);
+  color: var(--muted);
+  font-size: 13.5px;
+  text-align: center;
+  line-height: 1.9;
+}
+/* 搜索命中那条"搜到 N 条"的行头 */
+.rs-results > .rs-grouphead {
+  padding: 2px var(--pad) 8px;
+  height: auto;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+/* ---------- 记一条 / 编辑：底部弹起的卡片 ---------- */
+.rs-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.42);
+}
+/* ⚠️ 自带 display:flex 的元素，[hidden] 必须显式写 display:none（否则 hidden 不生效） */
+.rs-mask[hidden] {
+  display: none;
+}
+.rs-sheet {
+  width: 100%;
+  max-height: 88dvh;
+  overflow-y: auto;
+  padding: 6px var(--pad) calc(14px + env(safe-area-inset-bottom));
+  border-radius: 16px 16px 0 0;
+  background: var(--card);
+  animation: rs-up 0.18s ease-out;
+}
+@keyframes rs-up {
+  from {
+    transform: translateY(28px);
+    opacity: 0.6;
+  }
+}
+.rs-sheet-h {
+  position: relative;
+  padding: 10px 0 12px;
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+}
+.rs-sheet-x {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 40px;
+  height: 40px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 17px;
+}
+.rs-f {
+  display: block;
+  margin-bottom: 12px;
+}
+.rs-f > span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.rs-f input[type="text"],
+.rs-dateinput {
+  width: 100%;
+  height: 42px;
+  padding: 0 12px;
+  /* ⚠️ ≥16px：iOS 聚焦时整页放大的坑 */
+  font-size: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.rs-f input:focus {
+  border-color: var(--brand);
+  outline: none;
+}
+/* 日期快捷键：今天 / 明天 / 2天后 / 3天后 —— 点一下**换算成真实日期**写进下面那个日期框 */
+.rs-quick {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.rs-q {
+  flex: 1 1 0;
+  min-height: 0;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+}
+.rs-q.on {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: rgba(35, 168, 132, 0.1);
+  font-weight: 600;
+}
+.rs-sheet-b {
+  padding-top: 2px;
+}
+.rs-save {
+  width: 100%;
+  min-height: 0;
+  height: 46px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* ---------- 右下角悬浮圆钮：已撤（2026-10-18 晚二轮） ----------
+   老板先是想要"悬浮在右下角的 +"，真机用了之后改成：「那个点点添加一行那个按钮我感觉不是很灵敏，
+   我不知道为什么。你可以跟进货单一样的，它下面那个快速记那一栏吧，感觉点那个更好一点」
+   → 换成底栏通栏按钮 `.rs-newbtn`（见上面 .rs-bottombar 那段）。
+   ⚠️ 52×52 的圆钮在屏幕上其实不算小，问题是它**贴在右下角**：那里既是系统手势区（底部上滑、
+      右上角下拉），又是手指最难够到的地方；通栏按钮 300+ × 44，随便点哪儿都中。
+   断言钉着 `.rs-fab` 不许回来 —— 想换回去先想清楚这一点。 */

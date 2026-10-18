@@ -10,6 +10,8 @@
     <link rel="stylesheet" href="/purchase.css" />
     <!-- 直播排品的样式也单独一份（同理：这块功能是独立文件，摘掉就删这三行 + live.js + 那一屏 + 底部那一格） -->
     <link rel="stylesheet" href="/live.css" />
+    <!-- 补货跟踪（客户订单欠货）的样式也单独一份（同理：摘掉就删这三行 + restock.js + 那一屏 + 一个页签） -->
+    <link rel="stylesheet" href="/restock.css" />
     <!-- ===== 加到主屏幕（PWA-lite）=====
          手机浏览器「添加到主屏幕」后变成全屏图标，没有地址栏。只有 manifest + 这几个 meta，
          **没有 service worker**（667 是局域网纯 HTTP，浏览器不给注册 SW；也正因如此，
@@ -510,15 +512,43 @@
          purchase.js 两行；app.js 不用动（它只认自己那几屏，不认这里的任何 id）。 -->
     <section id="screen-purchase" class="screen">
       <header class="bar">
-        <span class="title">🧾 进货单</span>
-        <!-- 新建一张单：默认就是今天，进去先给一行空的，省得还要点一次「＋ 加一行」 -->
-        <button id="purchaseNewBtn" class="primary" type="button">＋ 新建</button>
+        <span id="purchaseHeadTitle" class="title">🧾 进货单</span>
+        <!-- 右上角的「＋ 新建」2026-10-18 晚**删掉了**（老板：「主页那个右上角不是有个新建吗，
+             我觉得不需要有点多余了嘛」）。
+             新建只剩一处入口：日历上点某一天 → 没单的那天卡里有「新建这天的单」。
+             为什么这样不丢功能：想建"今天"的单 = 点日历上的今天；想建别的日子 = 点那一天，
+             反而比原来更准（原来那颗按钮只能建"今天"，还得进去再改日期）。 -->
       </header>
-      <main class="content">
-        <!-- 单子列表：每张一行（日期 + 状态 + 款数/需求/实拿），点开进详情、点「删除」删整张。
-             空态由 purchase.js 写一行灰字（不留一片白 —— 一片白看着像页面坏了）。 -->
-        <div id="purchaseList"></div>
-      </main>
+      <!-- ===== 两个页签：进货单 / 补货跟踪（2026-10-18）=====
+           老板要的摆法：「进货里加一个补货跟踪我觉得也不错」→ 同一个「进货」tab 里两块。
+           ⚠️ 补货跟踪那一格带一颗**红色数字**（该催几条）—— 他每天第一件事就是"看今天该催谁"，
+              藏在二级页签里、还得点进去才知道有几条，等于白做。
+           ⚠️ 页签的**显示/高亮/切换**都在 restock.js 里（它自己接的 onclick），
+              purchase.js 不认这块 —— 两块功能各管自己，摘掉任一都不影响另一块。
+              这里只放骨架，JS 不写死这两个 id。 -->
+      <nav id="purchTabs" class="p-tabs">
+        <button id="purchTabOrder" class="p-tab on" type="button">进货单</button>
+        <button id="purchTabRestock" class="p-tab" type="button">
+          补货跟踪<i id="purchTabRestockBadge" class="p-tab-badge" hidden></i>
+        </button>
+      </nav>
+      <!-- 进货单那一块：跟原来一模一样，只是被页签管了显隐 -->
+      <div id="purchPaneOrder" class="p-pane">
+        <main class="content">
+          <!-- 单子列表：每张一行（日期 + 状态 + 款数/需求/实拿），点开进详情、点「删除」删整张。
+               空态由 purchase.js 写一行灰字（不留一片白 —— 一片白看着像页面坏了）。 -->
+          <div id="purchaseList"></div>
+        </main>
+      </div>
+      <!-- 补货跟踪那一块：整屏内容由 restock.js 现画（列表屏就在这一个 div 里） -->
+      <div id="purchPaneRestock" class="p-pane" hidden>
+        <!-- 滚动区：搜索行 / 四个数 / 四组列表全在里面 -->
+        <div id="restockRoot" class="restock"></div>
+        <!-- 底栏：跟「进货单」填表页底栏那颗「快速记」同款的通栏绿按钮（2026-10-18 晚二轮）。
+             ⚠️ 必须在 #restockRoot **外面**：它是滚动容器，按钮放进去会跟着列表滚走。
+                这里只放空壳，#rsNewBtn 由 restock.js 的 paintBottomBar() 画（切页/重画都不会丢）。 -->
+        <div id="rsBottombar" class="rs-bottombar"></div>
+      </div>
     </section>
 
     <!-- 进货单详情（一张单）：整单日期 + 备注、汇总、行清单 -->
@@ -783,5 +813,8 @@
     <!-- 直播排品：同样独立，同样必须排在 app.js 之后（接缝先建好）。
          注意：这里做的是**排品表本身**（3×3 填编号、能改能存），不是"生成好的成品图"。 -->
     <script src="/live.js"></script>
+    <!-- 补货跟踪（客户订单欠货）：同样独立、同样必须排在 app.js 之后。
+         它接的是「进货」屏里的第二个页签，进货单那边一行都不用改。 -->
+    <script src="/restock.js"></script>
   </body>
 </html>
