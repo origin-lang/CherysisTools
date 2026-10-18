@@ -904,6 +904,422 @@ const pjs = fs.existsSync(pjsPath) ? fs.readFileSync(pjsPath, "utf8") : "";
   }
 }
 
+// ---------- ⑫ 直播排品：手机版第二个「独立功能文件」（2026-10-17） ----------
+// ⚠️ 这一节换过一次：第一版做成了"成品文件墙"（把生成好的九宫格图/HTML 列出来看），
+// 老板当场否掉 ——「我以为是类似于现在的九宫格排品那样的呢」。现在是**排品表本身**：
+// 每组 3×3 格子、格子里填编号、能改能存回库（live_plan）。
+// 口径必须跟电脑端 client-live.js 一致，钉这四类：
+//   ① 骨架与引入（少了 = 点了没反应 / 切过去一片空白）；
+//   ② 读写走对消息（读 getLiveState，写 saveLivePlan，且**保留 slot_no:0 的空组占位**）；
+//   ③ 落位后**不许整块重绘**（手机上重绘一次，正在输入的格子和键盘都会被冲掉）；
+//   ④ 三档状态与"先排上后补商品"的口径（库里没有也照存，只标红）。
+const ljsPath = path.join(mobileDir, "live.js");
+const ljs = fs.existsSync(ljsPath) ? fs.readFileSync(ljsPath, "utf8") : "";
+const lcssPath = path.join(mobileDir, "live.css");
+const lcss = fs.existsSync(lcssPath) ? fs.readFileSync(lcssPath, "utf8") : "";
+// live.js 的按函数切片（外层的 fnBody 只认 app.js 那个 js）
+const liveFn = (name) => {
+  const i = ljs.indexOf("function " + name + "(");
+  if (i < 0) {
+    return "";
+  }
+  const open = ljs.indexOf("{", i);
+  let depth = 0;
+  for (let j = open; j < ljs.length; j++) {
+    if (ljs[j] === "{") {
+      depth++;
+    } else if (ljs[j] === "}") {
+      depth--;
+      if (depth === 0) {
+        return ljs.slice(i, j + 1);
+      }
+    }
+  }
+  return "";
+};
+{
+  if (!html.includes('id="tabLive"')) {
+    fails.push('index.html 里没有 id="tabLive"：底部「直播」那一格不在');
+  }
+  const atProducts = html.indexOf('id="tabProducts"');
+  const atLive = html.indexOf('id="tabLive"');
+  const atPurchase = html.indexOf('id="tabPurchase"');
+  if (!(atProducts > 0 && atLive > atProducts && atPurchase > atLive)) {
+    fails.push("底部四格的顺序不对：老板要的是 商品 / 直播 / 进货 / 设置（直播在第 2 位）");
+  }
+  if (!/id="screen-live"\s+class="screen"/.test(html)) {
+    fails.push('index.html 里没有 <section id="screen-live" class="screen">：那一屏的骨架不在（切过去是空白）');
+  }
+  if (!html.includes('href="/live.css"')) {
+    fails.push("index.html 没引入 live.css：排品格子会以无样式铺开（三列变一列、封面撑爆屏）");
+  }
+  if (!html.includes('src="/live.js"')) {
+    fails.push("index.html 没引入 live.js：这一格**整个不会跑**，而页面看上去完全正常");
+  }
+  // 星标备选那一排（2026-10-17 晚按老板的话删了）：骨架和样式两头都不许回来
+  if (/id="liveStars"|class="lv-stars"|lv-star\b/.test(html)) {
+    fails.push('index.html 里又出现了星标备选（#liveStars / .lv-stars）：老板说手机上看这个没必要，已删');
+  }
+  // 出图三件套的骨架：右上角配置 / 底栏两颗 / 编号四态 / 成品层
+  if (!/id="liveCfgBtn"/.test(html)) {
+    fails.push("顶栏没有「配置」那颗（#liveCfgBtn）：编号怎么标在手机上就没地方改");
+  }
+  const addbar = /<div class="lv-addbar">([\s\S]*?)<\/div>/.exec(html);
+  if (!addbar) {
+    fails.push('index.html 里没有 <div class="lv-addbar">：底栏那条浮动条不在（生成全部也没地方放）');
+  } else if (!/id="liveAddGroup"/.test(addbar[1]) || !/id="liveGenLong"/.test(addbar[1])) {
+    fails.push("底栏那条里不是「＋ 加一组」和「生成长图」两颗并排：2026-10-18 老板定的是这两颗");
+  }
+  if (!/id="liveLabelSeg"/.test(html)) {
+    fails.push("配置弹层里没有 #liveLabelSeg：编号标注的四个档位没地方摆");
+  } else {
+    for (const md of ["num", "code", "both", "none"]) {
+      if (!new RegExp('data-mode="' + md + '"').test(html)) {
+        fails.push('配置弹层少了 data-mode="' + md + '" 那档：四态要跟桌面端一致');
+      }
+    }
+  }
+  // ⚠️ 2026-10-18 老板：「已生成这个入口我不需要」「刷新是啥意思，感觉没啥用」
+  //    → 「已生成」整层（#liveArts）和 ↻（#liveRefreshBtn）都撤了，只留大图弹层给"生成完直接显示"。
+  if (/id="liveArts"/.test(html) || /id="liveArtsBtn"/.test(html)) {
+    fails.push("「已生成」入口/面板又回来了（#liveArts / #liveArtsBtn）：老板 2026-10-18 明确说不需要");
+  }
+  if (/id="liveRefreshBtn"/.test(html)) {
+    fails.push("顶栏又出现 ↻ 刷新（#liveRefreshBtn）：老板说没用，进屏本来就会自动读一遍");
+  }
+  if (!/id="liveArtView"/.test(html) || !/id="liveArtImg"/.test(html)) {
+    fails.push("大图弹层（#liveArtView / #liveArtImg）不在：生成完的图没地方弹");
+  }
+  if (!ljs) {
+    fails.push("找不到 live.js：直播排品的逻辑文件不在（改名/挪走了？这条闸门就失效了，请同步更新本脚本）");
+  } else {
+    // 剥掉 `//` 注释的那份源码：给"不许再出现某个名字"这类断言用。
+    // （live.js 的注释里会写着这些名字，按原文查会永远红 —— 这个坑栽过好几次）
+    const ljsCode0 = ljs.replace(/^\s*\/\/.*$/gm, "");
+    if (!/\$\("tabLive"\)/.test(ljs) || !/\.onclick\s*=/.test(ljs)) {
+      fails.push("live.js 里没给 #tabLive 接 onclick：底部「直播」那一格点了没反应");
+    }
+    if (!/registerScreen\("screen-live",\s*"tabLive"\)/.test(ljs)) {
+      fails.push('screen-live 没 registerScreen 到 tabLive：切过去时底部高亮会留在「商品」格');
+    }
+    // ② 读写两条消息
+    if (!/API\.invoke\("getLiveState"\)/.test(ljs)) {
+      fails.push('live.js 没调 getLiveState：手机上读不到库里的排品（拿不到 plan 就是一屏空白）');
+    }
+    if (!/API\.invoke\("saveLivePlan"/.test(ljs) || !/plan:\s*planForSave\(\)/.test(ljs)) {
+      fails.push("live.js 没用 saveLivePlan 存整张表：改了只在手机内存里，电脑那边看不到");
+    }
+    if (!/slot_no\) === 0/.test(ljs)) {
+      fails.push(
+        "planForSave 里丢了 slot_no:0 的空组占位：新加的组一旦没填货，存下去整组消失（电脑端也这么存的）",
+      );
+    }
+    // 3×3 与跨组连续序号
+    // ⚠️ 光在整份文件里 grep 公式不够：别处（原来是星标填格的 fillNext，2026-10-17 已删）
+    //    也可能有同样的算式 —— 把 cellHtml 的算式改坏了，整份文件照样命中 → 漏网过一次。
+    //    必须切片钉住 cellHtml 自己。
+    if (!/SLOTS = 9/.test(ljs)) {
+      fails.push("每组不是 9 格（SLOTS = 9）：九宫格排品就是 3×3");
+    }
+    if (!/\(g - 1\) \* SLOTS \+ s/.test(liveFn("cellHtml"))) {
+      fails.push("格号不是「跨组连续」：第 2 组第 1 格必须算 10 号（cellHtml 里要写 (g - 1) * SLOTS + s）");
+    }
+    if (!/function dupCounts\(\)/.test(ljs) || !/for \(var i = 0; i < state\.plan\.length; i\+\+\)/.test(ljs)) {
+      fails.push("重复检测必须扫**整份**排品（跨组也算重复），不能只看本组");
+    }
+    // ③ 落位不许整块重绘
+    if (!/function paintCell\(g, s\)/.test(ljs)) {
+      fails.push("没有 paintCell：落位后就只能整块重绘，会把用户正在输入的格子冲掉");
+    }
+    if (/function commitCell\([\s\S]{0,900}?\brender\(\)/.test(ljs)) {
+      fails.push("commitCell 里调了 render()：手机上重绘一次，正在输入的格子会被冲掉、键盘也会跳");
+    }
+    // ④ 库里没有也照存（先排上，回头补商品）
+    if (/if \(code && !productOf\(code\)\)/.test(ljs)) {
+      fails.push("编号在库里不存在时不许挡着不存：电脑端的口径是「先排上、标红、回头补商品」");
+    }
+    if (!/function canonicalCode\(/.test(ljs)) {
+      fails.push("缺 canonicalCode：手机上敲 335 必须落成 A335，跟后端/电脑端一条口径");
+    }
+    // 保存节流 + 自己的回包不覆盖本地
+    if (!/SAVE_DELAY/.test(ljs) || !/clearTimeout\(state\.saveTimer\)/.test(ljs)) {
+      fails.push("保存没做节流：手机上等于每敲一格发一次整表写库");
+    }
+    if (!/if \(state\.saving \|\| state\.dirty\) \{\s*\n\s*return;/.test(ljs)) {
+      fails.push(
+        "liveState 回包没防覆盖：自己保存的回包一到就把本地刚敲的那一格冲回旧值（要 saving/dirty 时直接 return）",
+      );
+    }
+    // 空态指路 + 组操作都在
+    // ⚠️ 钉"保存那一处"，别只查字符串：live.js 现在有两处 __opFailed（保存 / 生成），
+    //    只查存在的话，把保存那处改没了照样绿（漏网过一次）。
+    if (!/if \(j && j\.__opFailed\) \{\s*throw new Error/.test(ljs)) {
+      fails.push(
+        "保存没看 __opFailed（要 if (j && j.__opFailed) 后紧跟 throw）：只读模式下后端只回一条红 toast（不 reject），界面会一边写「已保存」一边什么都没存",
+      );
+    }
+    if (!/加一组/.test(ljs)) {
+      fails.push("空态里没写「加一组」：一片空白会让人以为页面坏了");
+    }
+    const acts = [
+      ["addGroup", "加组"],
+      ["clearGroup", "清空本组"],
+      ["removeGroup", "删组"],
+    ];
+    for (const [fn, label] of acts) {
+      if (!new RegExp("function " + fn + "\\(").test(ljs)) {
+        fails.push("live.js 缺 " + fn + "()：" + label + "做不了，手机上排不完整场");
+      }
+    }
+    // ---- 手机端出图（2026-10-17 晚；老板：为啥不提供生成本组 / 右上角配置 / 全部生成）----
+    // 每个出口对应一条后端消息，少一个就是"那个按钮点了没反应"，而界面上看不出来
+    for (const m of ["generateLiveGrid", "generateLiveLong"]) {
+      if (!ljs.includes('"' + m + '"')) {
+        fails.push("live.js 没发 " + m + "：对应的那个生成出口点了会没反应");
+      }
+    }
+    // 2026-10-18 老板收窄：「手机上不需要支持生成全部九宫格（多张的），电脑更快；但可以暴露长图」
+    // → HTML 样品那条出口从手机上去掉了。别偷偷加回来（加了就是多一颗没人用的按钮）。
+    if (ljs.includes('"generateLiveHtml"')) {
+      fails.push("手机端又接了 generateLiveHtml：老板说手机上只留长图（全部九宫格和 HTML 样品都回电脑上出）");
+    }
+    // 打字不落位：只有失焦/回车才算填完（老板："实时刷新太不稳定了"）
+    // ⚠️ 必须用剥过注释的那份：文件里那句注释本身就写着 COMMIT_DELAY（栽过好几次了）
+    if (/COMMIT_DELAY/.test(ljsCode0) || /addEventListener\("input"/.test(ljsCode0)) {
+      fails.push("live.js 又在打字时自动落位了（COMMIT_DELAY / input 监听）：边打边改会让别格的颜色跟着变，字还可能被改掉");
+    }
+    // 网页版宿主没有对话框通道（chooseAction 恒 undefined）→ 不带这个标记会被当成"取消"
+    if (!/skipConfirm:\s*true/.test(ljs)) {
+      fails.push("生成消息没带 skipConfirm:true：网页版会把「确认输出目录」当成取消，手机上点生成像没反应");
+    }
+    if (!/function genStart\(kind, groups\)/.test(ljs)) {
+      fails.push("没有 genStart()：几个入口（每组 / 长图）就会各拼一遍消息，改一处必漏三处");
+    }
+    // 进度：done / cancelled / error 三条终态里没把忙碌态收掉，按钮会永远停在「生成中」
+    const st = liveFn("bindGenStatus");
+    if (!st) {
+      fails.push("没有 bindGenStatus()：生成时界面一片静默，手机上根本看不出它在跑");
+    } else {
+      if (!/API\.on\("liveGridStatus"/.test(st)) {
+        fails.push("没订阅 liveGridStatus：进度和后端返回的终态都收不到");
+      }
+      // ⚠️ 不能写成「ph === "done" 之后 260 字内有 setGenBusy(false)」：
+      //    done 后面紧挨着 error/cancelled 分支，那里也有一句 setGenBusy(false) → 漏网过一次。
+      //    必须钉"就在 done 这一支的开头"。
+      if (!/if \(ph === "done"\) \{\s*setGenBusy\(false\);/.test(st)) {
+        fails.push("done 分支没在开头调 setGenBusy(false)：出完图按钮还写着「生成中」，再也点不动");
+      }
+      if (!/cancelled/.test(st)) {
+        fails.push("没管 cancelled：取消/选不了目录时按钮同样会卡在「生成中」");
+      }
+    }
+    // 编号标注：四态要一字不差地跟桌面端对齐（num/code/both/none）
+    if (!/cherysis_live_label/.test(ljs) || !/localStorage/.test(ljs)) {
+      fails.push("编号标注没存本机（localStorage 里的 cherysis_live_label）：每次生成都回到默认值");
+    }
+    for (const md of ["num", "code", "both", "none"]) {
+      if (!new RegExp('"' + md + '"').test(ljs)) {
+        fails.push('编号标注少了一档 "' + md + '"：四态要跟桌面端 live_grid_label 一致');
+      }
+    }
+    // 「已生成」层 2026-10-18 撤了 → 三个只读接口前端不再调（原断言已反向，见下面 ④）。
+    // token 那条还要：生成走 /api/invoke，别的 fetch（没了）……这条留给 apiUrl 自身。
+    if (!/function apiUrl\(p\)/.test(ljs) || !/encodeURIComponent\(API\.token\)/.test(liveFn("apiUrl"))) {
+      fails.push(
+        "apiUrl() 没把 token 拼进去（切片里要看到 encodeURIComponent(API.token)）：服务端配了口令时一律 403，界面看起来只是空列表",
+      );
+    }
+    // 第一版的"成品墙"形态不许回来：那是把**整屏**做成"生成好的图的列表"（老板否的就是这个）。
+    // 但 2026-10-17 晚老板又要了「生成完能在手机上看」→ `/api/live/*` 现在**允许**出现，
+    // 前提是只出现在「成品」那层（loadArts / renderArts / openArt），
+    // 主渲染 render() 里一个字都不许提，否则打开这一屏又是先看到一堆图。
+    // ⚠️ 先剥注释：注释里写着这些路径，按原文查会永远红（这条坑栽过好几次）。
+    if (/liveView/.test(ljsCode0)) {
+      fails.push("live.js 里还有第一版「成品墙」的 liveView：老板已经否掉那个形态了");
+    }
+    if (/\/api\/live\//.test(liveFn("render"))) {
+      fails.push("render() 里在读成品文件：这一屏的主渲染必须是排品表，成品只在「成品」那层出现");
+    }
+    // 「星标备选」那一排 2026-10-17 晚按老板的话整块删了（「画册星标选品那个不需要显示」）。
+    // 连同"点一下填到下一个空格"的 fillNext() 一起 —— 只删界面、留着那个函数 = 一段没人调的
+    // 死代码，而且谁看见 fillNext 就会以为界面上还有入口。两头都钉住，别偷偷加回来。
+    // ⚠️ 必须先剥掉注释再查：live.js 顶上的注释里就写着"fillNext() 一起去掉了"，
+    //    不剥的话这条永远红（这个坑在别的断言上栽过好几次）。
+    const ljsCode = ljs.replace(/^\s*\/\/.*$/gm, "");
+    if (/liveStars|renderStars|fillNext|lv-star/.test(ljsCode)) {
+      fails.push(
+        "live.js 里又出现了星标备选（liveStars / renderStars / fillNext）：老板明确说手机上看这个没必要，2026-10-17 已整块删掉",
+      );
+    }
+    // ---- 2026-10-18 老板四件事：失焦才落位 / 清空所有格子 / 「已生成」能删 / 只留长图 ----
+    // ① 落位只认失焦 + 回车。列表里挂的是 focusout（capture）：
+    //    没有它，手机上点空白处收键盘不会提交，**最后敲的那一格等于白敲**（老板原话：
+    //    「为啥不能我失焦后再刷新，实时刷新太不稳定了」）。
+    if (!/addEventListener\(\s*"focusout"/.test(ljs)) {
+      fails.push("排品格子没挂 focusout：点空白收键盘时最后一格不会被提交（老板要的是失焦才落位）");
+    }
+    // ② 老的三出口下拉（#liveGenSheet）已撤：现在只有「每组生成这组」+「底栏生成长图」两颗。
+    //    装回来 = 底栏又多一层弹层，而手机上其实只想发一张长图。
+    if (/id="liveGenSheet"/.test(html) || /liveGenSheet/.test(ljsCode0)) {
+      fails.push("又出现了三出口下拉（#liveGenSheet）：老板定的是「每组生成这组 + 底栏生成长图」两颗");
+    }
+    // ③ 清空所有格子：必须按 slot_no:0 占位**重建**，绝不能 state.plan = []
+    //    （组的存在靠的就是那行占位，清成空数组＝连组一起删，跟他要的「清格子」是两回事）
+    const atClear = ljs.indexOf('var cfgClear = $("liveCfgClear");');
+    const clearSeg = atClear < 0 ? "" : ljs.slice(atClear, atClear + 1500);
+    if (!clearSeg) {
+      fails.push("没给配置弹层里的「清空所有格子」（#liveCfgClear）接 onclick：那颗按钮点了没反应");
+    } else if (!/group_no: nos\[i\], slot_no: 0, code: ""/.test(clearSeg)) {
+      fails.push(
+        "清空所有格子没按 slot_no:0 占位重建：整组会被一起删掉（组的存在就靠那一行占位）",
+      );
+    }
+    if (/state\.plan = \[\];/.test(ljsCode0)) {
+      fails.push("又出现了 state.plan = []：那是**连组一起删**，不是清空格子");
+    }
+    // ④ 「已生成」层 2026-10-18 整块撤了（老板：入口不需要）→ 成品那套函数不许回来：
+    //    列表/删除走的是 /api/live/list|delete，回来了就等于入口又回来了。
+    if (/api\/live\/list|api\/live\/thumb|api\/live\/file/.test(ljsCode0)) {
+      fails.push("live.js 又在调 /api/live/list|thumb|file：「已生成」层撤了，这些只剩后端留着，前端不该再调");
+    }
+    if (/function (loadArts|renderArts|deleteArt|openArt|openArts)\(/.test(ljsCode0)) {
+      fails.push("成品列表那套函数（loadArts/renderArts/deleteArt/openArt/openArts）又回来了：入口已按老板的话撤掉");
+    }
+    // 大图弹层必须是「能被 showInline 打开」的：
+    // ⚠️⚠️ 2026-10-18 血教训——弹层原来嵌在 hidden 的 #liveArts 里，fixed 也渲染不出来，
+    //      生成完"弹图"弹了个寂寞，老板只能去点「已生成」。所以这里钉两件事：
+    //      showInline 里要有 view.hidden = false（忘了打开＝什么都不弹）；
+    //      index.html 里 liveArtView 不能嵌在别的容器层里（已随 #liveArts 一起治了）。
+    const showFn = liveFn("showInline");
+    // ---- 2026-10-18 下午：生成完**直接显示**，手机不再让电脑目录落文件 ----
+    // 老板原话：「和进货单那样子，就是生成直接出来显示嘛，为什么写的电脑上的目录里呢？我不想这样」
+    // ① 发消息必须带 inline:true（少了它后端就退回"写电脑目录 + 手机去列目录"那套）
+    if (!/inline:\s*true/.test(liveFn("genStart"))) {
+      fails.push("genStart 没带 inline:true：手机上生成又会写进电脑那个目录，出完还得自己去清");
+    }
+    // ② 结果直接推到这台手机 → 必须订阅并当场显示
+    if (!/API\.on\("liveInlineImage"/.test(ljs)) {
+      fails.push('没订阅 liveInlineImage：图推回来了却没人接，表现是"生成好了但什么都没有"');
+    }
+    if (!showFn) {
+      fails.push("没有 showInline()：生成结果没地方显示");
+    } else {
+      if (!/atob\(/.test(liveFn("blobUrlOf")) || !/createObjectURL/.test(liveFn("blobUrlOf"))) {
+        fails.push("blobUrlOf 没把 base64 解成 Blob（atob + createObjectURL）：大图只能当字符串，显示不出来");
+      }
+      if (!/blobUrlOf\(/.test(showFn)) {
+        fails.push("showInline 没走 blobUrlOf()：base64 没解成可显示的地址");
+      }
+      if (!/liveArtView/.test(showFn) || !/\$\(\s*"liveArtImg"\s*\)/.test(showFn)) {
+        fails.push("showInline 没复用大图弹层（#liveArtView / #liveArtImg）：点完什么都不弹");
+      }
+      // ⭐ 弹层必须真的被打开：嵌在 hidden 父层里那次的教训 —— 字符都在、图就是看不见
+      if (!/view\.hidden\s*=\s*false/.test(showFn)) {
+        fails.push("showInline 没把弹层打开（view.hidden = false）：图塞进去了但永远看不见");
+      }
+    }
+    // ③ done 分支：inline 时只收忙碌态（列表已经没了，没有"去刷列表"这回事了）
+    if (!/if \(m\.inline\) \{/.test(ljs)) {
+      fails.push("done 分支没分 inline：手机上出完会走「电脑生成」那套收尾（早没列表可刷了）");
+    }
+    // 跳过没图的组时要告诉用户跳了几组，不然"生成了 1 张"会让人以为丢了一组
+    if (!/m\.skipped/.test(ljs)) {
+      fails.push("没把「跳过了几组没图」显示出来：数字对不上时他只会觉得少生成了");
+    }
+    // ---- 2026-10-18 晚：老板「每修改一个编号 感觉全刷新」----
+    // 三个"重画"入口都得看住。原来只有 commitCell 里那条（上面 ③），可真正把正在编辑的
+    // 那一格连人带键盘一起换掉的是 applyLiveState 的 render()：自己那次 saveLivePlan
+    // 的回包一到就整块 innerHTML 重画一遍。
+    const applyFn = liveFn("applyLiveState");
+    if (!applyFn) {
+      fails.push("没有 applyLiveState()：后端推来的排品没地方落地");
+    } else if (!/editingCell\(\)/.test(applyFn) || !/repaintAll\(\)/.test(applyFn)) {
+      fails.push(
+        "applyLiveState 不再判「有格子在编辑」：后端回一条 liveState 就整块 render()，" +
+          "正在敲的那一格连字带键盘一起被换掉（老板：「每修改一个编号 感觉全刷新」）",
+      );
+    }
+    // ⚠️ 这两条必须**按函数体切片**查：`state.savedEcho` / `blurIfKeyboardGone(` 在
+    //    doSave 和函数定义里各有一处 —— 只查"整份文件里有没有"，把监听里那段吃掉逻辑
+    //    删干净照样绿（漏网过一次，单条复验才抓出来）。
+    const bindSeg = liveFn("bind");
+    if (!bindSeg || !/state\.savedEcho/.test(bindSeg) || !/savedEcho\s*=\s*false/.test(bindSeg)) {
+      fails.push(
+        "自己保存的回包没被吃掉（bind 里那条 liveState 监听要判 state.savedEcho）：每改一格紧接着来一条回包触发整块 render()，看着像整页刷新",
+      );
+    }
+    const commitSeg = liveFn("commitCell");
+    // ⚠️ 要**数条数**：commitCell 里两处都会调（「值没变」提前返回那条、落位那条）。
+    //    只判"有没有"，删掉落位那条照样绿 → 改了编号反而收不了键盘（单条复验时漏网过）。
+    const kbCalls = commitSeg ? (commitSeg.match(/blurIfKeyboardGone\(inp\)/g) || []).length : 0;
+    if (kbCalls < 2) {
+      fails.push(
+        "commitCell 里收键盘的调用少于 2 处（现在 " +
+          kbCalls +
+          " 处）：落位那条也要调 blurIfKeyboardGone(inp)，" +
+          "否则改完编号光标留在格子里、键盘赖着不走，整屏被顶上去又掉下来，看着就是「全刷新」",
+      );
+    }
+    if (!/next\.focus\(\)/.test(ljs)) {
+      fails.push("回车不再跳下一格：手机上填完一格还得自己去点下一格（跟电脑端不一致）");
+    }
+
+    // 反向：app.js 里不许出现这一屏的 id（堆回去就白分了）
+    const lLeak = [...new Set([...js.matchAll(/\$\("(live[A-Za-z0-9_-]*|tabLive)"\)/g)].map((m) => m[1]))];
+    if (lLeak.length) {
+      fails.push(
+        `app.js 里出现了直播排品的 id（${lLeak.join(" / ")}）：它是**独立功能文件**，逻辑该待在 live.js 里`,
+      );
+    }
+  }
+  if (!lcss) {
+    fails.push("找不到 live.css：排品表的样式不在（这条闸门也就失效了，请同步更新本脚本）");
+  } else {
+    // 三条 CSS 各对应一个看得见的故障
+    if (!/grid-template-columns:\s*repeat\(3,\s*1fr\)/.test(lcss)) {
+      fails.push("排品格子不是 3 列（grid-template-columns: repeat(3, 1fr)）：九宫格排品就是 3×3");
+    }
+    if (!/\.lv-sheetbg\[hidden\][\s\S]{0,40}display:\s*none/.test(lcss)) {
+      fails.push(".lv-sheetbg[hidden]{display:none} 不见了：弹层自己写了 display:flex，会一直糊在屏幕上");
+    }
+    if (!/\.lv-inp\s*\{[\s\S]{0,200}?font-size:\s*16px/.test(lcss)) {
+      fails.push(".lv-inp 字号不是 16px：iOS 上聚焦小于 16px 的输入框会**整页放大**");
+    }
+    if (!/\.lv-addbar[\s\S]{0,260}?bottom:\s*calc\(var\(--tabbar\)/.test(lcss)) {
+      fails.push("「＋ 加一组」没浮在底部 tab 栏上方（bottom 要读 --tabbar）：会被 tab 栏压住半截");
+    }
+    // 出图那几层（2026-10-17 晚加）：[hidden] 少一个，弹层就会一直盖在屏幕上
+    // （.lv-artsbg 2026-10-18 随「已生成」层一起删了 —— 回来了就是有人把入口又堆了回去）
+    if (/\.lv-artsbg/.test(lcss)) {
+      fails.push(".lv-artsbg 的样式又回来了：「已生成」层已按老板的话整个撤掉");
+    }
+    if (!/\.lv-artview\[hidden\][\s\S]{0,40}display:\s*none/.test(lcss)) {
+      fails.push(".lv-artview[hidden]{display:none} 不见了：大图会永远糊在上面，关不掉");
+    }
+    if (!/\.lv-arttip\s*\{/.test(lcss)) {
+      fails.push(".lv-arttip 不见了：弹层上没写「长按图片」的提示，他不知道怎么存进相册");
+    }
+    if (!/\.lv-addbar\s*\{[\s\S]{0,200}?display:\s*flex/.test(lcss)) {
+      fails.push(".lv-addbar 不是 flex 两颗并排：老板挑的 A 档是「加一组 + 全部生成」并排");
+    }
+    if (!/\.lv-seg\s*\{[\s\S]{0,200}?display:\s*flex/.test(lcss)) {
+      fails.push(".lv-seg 不是 flex：编号四态会竖着堆成四行，弹层一下占掉半屏");
+    }
+    // 「生成这组」老板 2026-10-18 挑的 B 档：纯绿实心 + 白字（原来是白底绿描边）
+    const genCss = /\.lv-ghead\s+\.lv-gen\s*\{[\s\S]{0,400}?\}/.exec(lcss);
+    if (!genCss) {
+      fails.push(".lv-ghead .lv-gen 那条规则不见了：「生成这组」会退回全局按钮样式（44px 高、组头被撑破）");
+    } else {
+      if (!/background:\s*var\(--brand\)/.test(genCss[0])) {
+        fails.push("「生成这组」不是纯绿实心（background 要 var(--brand)）：老板挑的是 B 档");
+      }
+      if (!/color:\s*#fff/.test(genCss[0])) {
+        fails.push("「生成这组」绿底上没写白字（color: #fff）：绿底绿字看不清");
+      }
+    }
+  }
+}
+
 if (fails.length > 0) {
   console.error(`❌ check-mobile-wiring：${fails.length} 项不通过`);
   for (const f of fails) {

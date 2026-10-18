@@ -506,6 +506,36 @@ let wiringCases = 0;
     "服务端应发 changed 事件（没它前端不会提示「有改动」）",
   );
 
+  // ---- 删成品那条路由（2026-10-18）----
+  // 这是整个服务里唯一删文件的地方，而目标目录里还躺着进货单导出的 xlsx。
+  // 三条硬门槛，少一条就可能把他的进货单删了：
+  //   ① 只收 POST；② all 的候选只从 listArtifacts 来（jpg/png/html）；
+  //   ③ 每个名字再过 isArtifactName + resolveArtifact。
+  // ⚠️ index.ts 是 CRLF：写成 \n 结尾永远匹配不到（这次就栽了一回）
+  const delBlock = /if \(p === "\/api\/live\/delete"\)([\s\S]*?)\r?\n      \}\r?\n/.exec(serverIndex);
+  wiringCases++;
+  ok(!!delBlock, "要有 /api/live/delete 路由（手机「已生成」层要能删、能清空）");
+  wiringCases++;
+  ok(
+    !delBlock || /req\.method !== "POST"/.test(delBlock[1]),
+    "/api/live/delete 必须只收 POST（GET 一条链接就能删文件太危险）",
+  );
+  wiringCases++;
+  ok(
+    !delBlock || /body\.all === true[\s\S]{0,200}?listArtifacts\(dir/.test(delBlock[1]),
+    "delete 的 all 分支必须从 listArtifacts 取候选：那个目录里还有进货单的 xlsx，按 readdirSync 全删就完了",
+  );
+  wiringCases++;
+  ok(
+    !delBlock || !/readdirSync/.test(delBlock[1]),
+    "delete 里不许出现 readdirSync：删除只能按白名单走，不能\"列目录然后全删\"",
+  );
+  wiringCases++;
+  ok(
+    !delBlock || /!isArtifactName\(n\)[\s\S]{0,160}?resolveArtifact\(dir, n\)/.test(delBlock[1]),
+    "delete 每个名字都要过 isArtifactName + resolveArtifact 两道（扩展名白名单 + 路径不许逃出目录）",
+  );
+
   // 长活儿那两处必须真的走 runLongTask：少一处就是"网页版上两个人同时点生成把共享盘打满"，
   // 或者"那个请求挂几分钟" —— 都属于不报错但很难受的那类。
   const imgSrc = fs.readFileSync(path.join(root, "src", "tools", "shopTool", "handlers", "image.ts"), "utf8");
@@ -1121,6 +1151,240 @@ let gateCases = 0;
   }
 }
 
+// ------------------------------------------------- 直播成品只读（2026-10-17 手机版 A 档）
+// 手机版「直播」那一格只看已经生成好的九宫格 / HTML 样品，走 /api/live/{list,thumb,file}。
+// 这里钉的是**唯一的高危面**：目录里能放任意文件，参数一旦能带 `../` 就是把整台机器开放下载。
+{
+  const LA = require(path.join(root, "out", "server", "liveArtifacts.js"));
+  const liveIndexSrc = fs.readFileSync(path.join(root, "src", "server", "index.ts"), "utf8");
+  const liveSrc = fs.readFileSync(path.join(root, "src", "server", "liveArtifacts.ts"), "utf8");
+  const idxNoC = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  const liveNoC = idxNoC(liveSrc);
+  const liveCases = { n: 0 };
+  const ck = (cond, msg) => {
+    liveCases.n++;
+    ok(cond, msg);
+  };
+
+  ck(
+    typeof LA.isSafeArtifactName === "function" &&
+      typeof LA.resolveArtifact === "function" &&
+      typeof LA.listArtifacts === "function" &&
+      typeof LA.ensureThumb === "function" &&
+      typeof LA.mimeOf === "function",
+    "liveArtifacts 要导出 名字校验 / 解路径 / 列表 / 缩略图 / MIME 这五样",
+  );
+
+  // ---- 名字校验：这一组红一条就等于开了个下载机
+  for (const bad of ["../x.jpg", "..\\x.jpg", "a/b.jpg", "a\\b.jpg", "", ".", "..", "C:x.jpg", "a\0.jpg"]) {
+    ck(LA.isSafeArtifactName(bad) === false, `名字校验必须挡住 ${JSON.stringify(bad)}（能带分隔符就是路径穿越）`);
+  }
+  ck(LA.isSafeArtifactName("a".repeat(201) + ".jpg") === false, "名字校验要挡住超长名字（200 字符以上）");
+  ck(
+    LA.isSafeArtifactName("直播排品样品_20261017.html") === true,
+    "正常中文成品名要放行（他的文件全是中文名，挡了就等于没功能）",
+  );
+
+  // ---- 解路径：basename 过了还要 resolve 前缀二次校验
+  {
+    const d = path.join(root, "out");
+    ck(LA.resolveArtifact(d, "../package.json") === null, "解路径要挡住 ../package.json（上一级就是仓库根）");
+    ck(LA.resolveArtifact(d, "sub/x.jpg") === null, "解路径要挡住带子目录的名字");
+    ck(LA.resolveArtifact("", "a.jpg") === null, "目录为空时不许解出路径");
+    ck(
+      LA.resolveArtifact(d, "x.jpg") === path.join(path.resolve(d), "x.jpg"),
+      "合法名字要解成「目录 + 名字」的绝对路径",
+    );
+  }
+
+  // ---- 列表：只认图片和 html，新的排前面
+  {
+    const tmp = path.join(root, "tmp-web-test", "live-art-check");
+    fs.mkdirSync(tmp, { recursive: true });
+    const jpg = path.join(tmp, "九宫格_1.jpg");
+    const html = path.join(tmp, "样品_1.html");
+    fs.writeFileSync(jpg, Buffer.alloc(1200, 1));
+    fs.writeFileSync(html, "<html></html>");
+    fs.writeFileSync(path.join(tmp, "不该出现.txt"), "x");
+    fs.mkdirSync(path.join(tmp, "假图片.jpg"), { recursive: true }); // 名字像图片的目录
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(jpg, old, old);
+    const items = LA.listArtifacts(tmp);
+    ck(
+      items.length === 2 && items.every((i) => i.name === "九宫格_1.jpg" || i.name === "样品_1.html"),
+      "列表只认 jpg/png/html（txt 和「名字像图片的目录」都不许混进来）",
+    );
+    ck(items[0].name === "样品_1.html", "列表要按修改时间倒序（他要的多半是刚生成的那批）");
+    ck(
+      items[0].kind === "html" && items[1].kind === "grid",
+      "kind 要分开（手机端按它决定是「看长图」还是「存下来转发」）",
+    );
+    ck(LA.listArtifacts(tmp, 1).length === 1, "limit 要生效");
+    ck(LA.listArtifacts(path.join(tmp, "不存在")).length === 0, "目录不在时回空数组，不许抛（手机上会弹一堆错）");
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+
+  // ---- 缩略图缓存键：mtime + 名字哈希，两样都不能少
+  {
+    const c = path.join(root, "tmp-web-test");
+    const a = LA.thumbCachePath(c, "九宫格_1.jpg", 111);
+    const b = LA.thumbCachePath(c, "长图_1.jpg", 111);
+    const d2 = LA.thumbCachePath(c, "九宫格_1.jpg", 222);
+    ck(/111-/.test(path.basename(a)), "缩略图缓存键要带 mtime（不带的话重新生成还是拿旧图）");
+    ck(a !== b, "中文名压成下划线后会撞车 → 缓存键必须再把名字哈希算进去（同批两个文件别共用一张缩略图）");
+    ck(a !== d2, "同一个名字 mtime 变了要换键");
+    ck(/\.webp$/.test(a), "缓存是 webp（手机上一屏挂六七张，jpeg 大一圈）");
+  }
+
+  // ---- 接线：三条路由，各道校验都在
+  {
+    const noC = idxNoC(liveIndexSrc);
+    ck(
+      /p === "\/api\/live\/list"/.test(noC) &&
+        /p === "\/api\/live\/thumb"/.test(noC) &&
+        /p === "\/api\/live\/file"/.test(noC),
+      "三条接口都要在（列表 / 缩略图 / 原文件）",
+    );
+    ck(
+      (noC.match(/resolveArtifact\(liveOutDir\(\), name\)/g) || []).length === 2,
+      "thumb 与 file 都必须过 resolveArtifact —— 直接 path.join(dir, name) 就是下载机",
+    );
+    ck(
+      !/path\.join\((liveOutDir\(\)|dir), *name\)/.test(noC),
+      "任何地方都不许用 path.join(目录, 用户给的名字) 拼路径",
+    );
+    ck(
+      noC.indexOf('/api/live/file') > 0 && noC.indexOf('/api/live/file') < noC.indexOf("sendStatic(res, p ==="),
+      "三条接口要插在 sendStatic 之前（排在后面会被静态兜底吃掉，永远 404）",
+    );
+    ck(/Content-Security-Policy/.test(noC) && /img-src data:/.test(noC), "内联预览 HTML 要带 CSP 按住脚本");
+    // ⚠️ 光查字符串存在不够：`if (dl) {` 改成 `if (false) {` 时字符串还在，断言照样绿（漏网过一次）。
+    //    所以钉结构：Content-Disposition 必须挂在 `if (dl) {` 分支开头那一段里。
+    const dlAt = noC.indexOf("if (dl) {");
+    const cdAt = noC.indexOf("Content-Disposition");
+    ck(
+      /url\.searchParams\.get\("dl"\) === "1"/.test(noC) &&
+        dlAt > 0 &&
+        cdAt > dlAt &&
+        cdAt - dlAt < 200 &&
+        /"attachment; filename\*=UTF-8''"/.test(noC),
+      "?dl=1 要走附件下载（中文名必须 filename*=UTF-8''，否则存下来是乱码）",
+    );
+    ck(
+      /const liveOutDir = \(\): string =>/.test(noC) && /prefs\.get\("live_out_dir"/.test(noC),
+      "成品目录要读本机偏好 live_out_dir（跟电脑端生成时同一个目录，别另开一份）",
+    );
+    ck(
+      /fs\.statSync\(d\)\.isDirectory\(\) \? d : ""/.test(noC),
+      "成品目录要验活（盘没挂上就回空串，别四处散播 ENOENT）",
+    );
+  }
+
+  // ---- 模块内部的两条注释级硬规矩（防止以后"优化"掉）
+  ck(
+    /if \(s\.includes\("\/"\) \|\| s\.includes\("\\\\"\) \|\| s\.includes\("\.\."\)/.test(liveNoC),
+    "名字校验里那条「/ \\ .. 空字节一律拒绝」不许拆开写成分散判断（拆开容易漏一条）",
+  );
+  ck(
+    /full\.startsWith\(root \+ path\.sep\)/.test(liveNoC),
+    "resolveArtifact 的「必须落在目录里」前缀校验不许删（basename 那条只是第一道）",
+  );
+
+  // ---- 手机版排品：读 / 写两条消息（2026-10-17 晚第二版，手机上能改排品） ----
+  // 老板第一版要的是"看成品"，看到实物后改口要**排品表本身**并能改 → 手机端直接调
+  // `getLiveState`（读）和 `saveLivePlan`（写整张表）。这两条的"读/写"归类必须对，
+  // 否则要么只读模式下被误拦，要么写操作绕过排队。
+  {
+    const liveSrc2 = fs.readFileSync(path.join(root, "src", "tools", "shopTool", "handlers", "live.ts"), "utf8");
+    const shopIdx = fs.readFileSync(path.join(root, "src", "tools", "shopTool", "index.ts"), "utf8");
+    const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+    ck(
+      /getLiveState\(\)\s*\{\s*h\.postLiveState\(\);\s*\}/.test(strip(liveSrc2)),
+      "要有 getLiveState：纯读一条 liveState（手机只拿 plan，不该顺带把整库商品再读一遍）",
+    );
+    const wr = /const WRITE_ACTIONS = new Set\(\[([\s\S]*?)\]\);/.exec(shopIdx);
+    const wl = wr ? wr[1] : "";
+    ck(/saveLivePlan/.test(wl), "saveLivePlan 必须在 WRITE_ACTIONS 里（写库 → 要排队、只读模式下要拦）");
+    ck(!/getLiveState/.test(wl), "getLiveState 是读，不该进 WRITE_ACTIONS（进了就会被只读模式挡掉）");
+    ck(
+      /saveLivePlan\(msg\)\s*\{[\s\S]{0,400}?db\.replaceLivePlan\(/.test(strip(liveSrc2)),
+      "saveLivePlan 要走 replaceLivePlan（整表一次事务），别逐行插",
+    );
+
+    // ---- 手机端出图：没有对话框通道，必须能跳过「确认输出目录」（2026-10-17 晚）----
+    // 网页版宿主（src/server/httpHost.ts）的 chooseAction 一律回 undefined，而 generateLiveGrid
+    // 原来**只要目录可用就问一句确认**，undefined 会被当成「取消」→ 手机上点了没反应。
+    // 所以手机端带 skipConfirm:true，且**只在目录可用时**才认这个标记（目录不可用还得走选目录）。
+    const g = strip(liveSrc2);
+    ck(
+      /else if \(msg\.skipConfirm === true\) \{[\s\S]{0,120}?outDir = saved;/.test(g),
+      "generateLiveGrid 要有 skipConfirm 分支：网页版没有对话框通道，否则手机点生成会一路走到「已取消」",
+    );
+    ck(
+      /const saved = String\(h\.getSetting\("live_out_dir"\)[\s\S]{0,4000}?else if \(msg\.skipConfirm === true\)/.test(g),
+      "skipConfirm 必须排在「目录可用」那条 else 之后：目录不可用时不能跳过选目录",
+    );
+    ck(
+      /skipConfirm/.test(g) && !/if \(msg\.skipConfirm\)/.test(g),
+      "skipConfirm 必须写成 === true 的显式判断（手机发的是 1/字符串也别误伤，但 truthy 判断容易被别的消息带进来）",
+    );
+
+    // ---- 手机出图**不落盘**（2026-10-18）：老板「为什么写的电脑上的目录里呢？我不想这样」----
+    // 做法跟进货单导出一样：内存里出 jpg → base64 随定向消息推给点按钮的那台手机。
+    ck(/const inline = msg\.inline === true;/.test(g), "generateLiveGrid 要有 inline 判断（手机出图不写电脑目录）");
+    ck(
+      /if \(!inline\) \{[\s\S]{0,4000}?mkdirSync\(outDir/.test(g),
+      "inline 为真时必须整块跳过目录选择/确认（否则手机上还得弹一个选不了的框）",
+    );
+    ck(
+      /renderLiveGridBuffer\(cells, g, labelMode\)/.test(g),
+      "inline 出九宫格要走 renderLiveGridBuffer（内存里出，别落盘）",
+    );
+    ck(/type: "liveInlineImage"/.test(g), "生成完要发 liveInlineImage 回手机：否则界面上什么都没有");
+    ck(/b64: .*toString\("base64"\)/.test(g), "liveInlineImage 必须带 b64（jpg 字节 base64 过去）");
+    // ⚠️ 不能只查"liveInlineImage 附近有 toRequester"：单组那条也在附近，长图那条被改坏了照样绿（漏网过一次）。
+    //    两条路各推一张，所以必须**数够两条**。
+    const targetedPosts = (g.match(/toRequester:\s*true/g) || []).length;
+    ck(
+      targetedPosts >= 2,
+      "两条 liveInlineImage（单组 / 长图）都必须 toRequester: true：少一条，那条路就把几 MB 的图广播给所有设备",
+    );
+    ck(!/toRequester:\s*false/.test(g), "toRequester 不该写成 false：那等于没写定向，看着有其实没有");
+    // ⚠️ 用"在长图这段里的先后顺序"判断，别用「中间隔多少字符」：
+    //    中间插了「筛掉没图的组」那几句之后，距离一变就误报红。
+    const longSeg = g.slice(g.indexOf("generateLiveLong(msg)"));
+    const atInline = longSeg.indexOf("if (msg.inline === true)");
+    const atUsable = longSeg.indexOf("renderLiveLongBuffer(usable");
+    const atReady = longSeg.indexOf("readyOutDir()");
+    ck(atUsable > 0, "generateLiveLong 的 inline 分支要走 renderLiveLongBuffer(usable)（内存出长图）");
+    ck(
+      atInline > 0 && atReady > 0 && atInline < atReady,
+      "长图的 inline 分支必须排在 readyOutDir() 之前：排在后面就还是会先去要目录",
+    );
+
+    // ---- 一组一张图都没有就别拼（2026-10-18 老板：「没有任何图就不要让它拼接了，除非有一张」）----
+    ck(
+      /if \(!cells\.some\(\(c\) => c\.img\)\) \{[\s\S]{0,300}?continue;/.test(g),
+      "generateLiveGrid 要跳过「整组没图」的组：否则拼出来就是 9 个白格子（手机上还得存一张全白的图）",
+    );
+    ck(
+      /const usable = payload\.filter\(\(g\) => g\.cells\.some\(\(c\) => c\.img\)\);/.test(g),
+      "generateLiveLong 要先按「至少有一张图」筛掉没图的组：全白的卡拼进长图只是把图拉长",
+    );
+    ck(
+      /renderLiveLongBuffer\(usable, \{ labelMode \}\)/.test(g) &&
+        /renderLiveLongImage\(usable, outDir, \{ labelMode \}\)/.test(g),
+      "长图两条路都必须用筛过的 usable，别漏一条又去拼白格子",
+    );
+    ck(
+      /if \(files\.length === 0 && shots\.length === 0\) \{[\s\S]{0,300}?gridStatus\("error"/.test(g),
+      "一组都没图时必须回 error（不能假装「已生成 0 张」）",
+    );
+  }
+
+  global.__liveCases = liveCases.n;
+}
+
 // ---------------------------------------------------------------- 汇总
 if (fails.length > 0) {
   console.error(`❌ check-server-units：${fails.length} 项不通过`);
@@ -1129,11 +1393,13 @@ if (fails.length > 0) {
   }
   process.exit(1);
 }
+const liveCases = global.__liveCases || 0;
 console.log(
   `✅ check-server-units：EventHub 14 组 + 请求收集器 ${reqCases} 组 + 串行队列 ${queueCases} 组` +
     ` + 重活队列 ${taskCases} 组 + changed 判定 ${changeCases} 组 + 长活儿入口 ${seamCases} 组` +
-    ` + 外网隧道落点 ${tunnelCases} 组 + 外网密码门 ${gateCases} 组 + 接线断言 ${wiringCases} 组，` +
-    `共 ${14 + reqCases + queueCases + taskCases + changeCases + seamCases + tunnelCases + gateCases + wiringCases} 组用例全通过`,
+    ` + 外网隧道落点 ${tunnelCases} 组 + 外网密码门 ${gateCases} 组 + 直播（成品只读 + 排品读写）${liveCases} 组` +
+    ` + 接线断言 ${wiringCases} 组，` +
+    `共 ${14 + reqCases + queueCases + taskCases + changeCases + seamCases + tunnelCases + gateCases + liveCases + wiringCases} 组用例全通过`,
 );
 })().catch((err) => {
   // 用例本身崩了（不是断言失败）也要非零退出，否则 CI 会把它当通过

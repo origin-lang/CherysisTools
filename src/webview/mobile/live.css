@@ -1,0 +1,426 @@
+/* 手机版「直播排品」的样式 —— **独立功能文件**，2026-10-17 第二版。
+   跟着 live.js 走：逻辑在那边、骨架是 index.html 里的 #screen-live。
+   想整体摘掉这个功能：删本文件 + live.js + 那一屏 + 底部那一格 + 两行引入。
+
+   ⚠️ 这一屏是**排品表**，不是"看图"。所以格子的重点是「一眼认出第几号是哪款」：
+   每格上半是封面、下半是编号输入框，左上角钉一个「12号」角标 ——
+   跟电脑端 client-live.js 的 .live-cell 同一套信息，只是换成手机宽度（3 列）。 */
+
+/* ⚠️ 2026-10-17 晚：一、二两节换了位置 —— 原来第一节是「星标备选」那一排横条
+   （.lv-stars / .lv-star / .lv-starnone），老板说手机上不需要显示，整块删了。
+   现在第一节就是「组」，屏幕里第一眼看到的就是排品格子。 */
+
+/* ---------- 一、组 ---------- */
+.lv-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pad);
+}
+.lv-group {
+  padding: 10px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.lv-ghead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.lv-ghead b {
+  font-size: 14px;
+}
+.lv-ghead .muted {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lv-ghead .lv-more {
+  flex: none;
+  width: 36px;
+  height: 32px;
+  min-height: 0;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--muted);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+/* 「⋯」这颗是破坏性操作（清空/删组）的入口，得看得出能点 */
+.lv-ghead .lv-more:active {
+  background: var(--soft);
+}
+/* 「生成这组」：2026-10-18 老板挑的 B 档 —— 纯绿实心、白字、32px（原先是白底绿描边）。
+   ⚠️ min-height:0 —— 全局 button 有 min-height:var(--tap)=44px，不写会把这行撑成两层高。 */
+.lv-ghead .lv-gen {
+  flex: none;
+  min-height: 0;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: #fff;
+  background: var(--brand);
+  border: 1px solid var(--brand);
+  border-radius: 999px;
+}
+/* 按下去深一档：实心按钮在手机上按下去没变化，看着像没点上 */
+.lv-ghead .lv-gen:active {
+  background: #1c8e6f;
+  border-color: #1c8e6f;
+}
+/* 有生成任务在跑：这颗只是变淡、仍然可点（误触会被 live.js 的 genBusy 挡下并提示一句），
+   不用 pointer-events:none —— 手机上看不出"为什么点不动"，比多一句提示更难懂。 */
+.lv-groups.busy .lv-gen,
+.lv-groups.busy .lv-more {
+  opacity: 0.45;
+}
+
+.lv-9 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.lv-cell {
+  position: relative;
+  overflow: hidden;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.lv-cover {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1 / 1;
+  background: var(--soft);
+}
+.lv-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* 角标：几号。压在封面左上角，深底白字（封面是图，浅色底会看不见） */
+.lv-num {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 2;
+  padding: 1px 5px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 4px;
+}
+/* 编号输入框：字号 16px 不能小 —— iOS 上小于 16 会整页放大 */
+.lv-inp {
+  display: block;
+  width: 100%;
+  height: 32px;
+  padding: 0 2px;
+  font-size: 16px;
+  line-height: 32px;
+  text-align: center;
+  letter-spacing: 0.5px;
+  font-weight: 700; /* 2026-10-18 老板挑 C 档：跟电脑端一样，编号一律加粗（空格子由 placeholder 那条退回 400） */
+  color: var(--fg);
+  background: var(--card);
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  text-transform: uppercase;
+}
+.lv-inp::placeholder {
+  font-size: 12px;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--muted);
+}
+.lv-inp:focus {
+  outline: none;
+  background: var(--card);
+}
+
+/* 三档状态（2026-10-18 老板挑 C 档：**跟电脑端 .live-cell 一个画法**——
+   实心底 + 白字；原来只描 1px 边，他嫌「太浅了颜色不分明」）：
+   绿=库里查得到的正常款；红=库里没有这个编号；橙=这个编号在整份排品里出现了两次。
+   ⚠️ 电脑端色值照抄（ok #23a884 / err #e0404b / dup #e6a23c），两边看同一个排品表要一个颜色。
+   ⚠️ 特异性：这三条 (0,3,0) 压得过 `.lv-inp:focus` 的 (0,2,0) —— 正在改一个红格子时
+      底色不会闪回白色（跟电脑端一致，改完落位才重算状态）。 */
+.lv-cell.ok {
+  border-color: #23a884;
+}
+.lv-cell.ok .lv-inp {
+  background: #23a884;
+  color: #fff;
+}
+.lv-cell.err {
+  border-color: #e0404b;
+}
+.lv-cell.err .lv-inp {
+  background: #e0404b;
+  color: #fff;
+}
+.lv-cell.dup {
+  border-color: #e6a23c;
+}
+.lv-cell.dup .lv-inp {
+  background: #e6a23c;
+  color: #fff;
+}
+@media (prefers-color-scheme: dark) {
+  .lv-num {
+    background: rgba(0, 0, 0, 0.7);
+  }
+}
+
+.lv-empty {
+  padding: 24px 8px;
+  text-align: center;
+  line-height: 1.8;
+}
+
+/* ---------- 二、底栏上方那条「＋ 加一组 / 全部生成」 ----------
+   ⚠️ 得浮在底部 tab 栏**上面**（读 --tabbar，跟 .p-addbar 同一套路）；
+   挂进列表里的话，排到第三组时它早被滚出去了。
+   ⚠️ 2026-10-17 晚改成两颗并排（老板挑的 A 档）：
+      「加一组」让出一部分宽度给「全部生成 ▾」。老板的取舍是"两边都给"，
+      所以别再回到"一颗通栏、另一颗塞进哪里"的老样子。 */
+.lv-addbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--tabbar) + env(safe-area-inset-bottom));
+  z-index: 5;
+  display: flex;
+  gap: 8px;
+  padding: 8px var(--pad);
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+.lv-addbar button {
+  flex: 1 1 0;
+  min-width: 0;
+  white-space: nowrap;
+}
+/* 生成是"第二重要"的那颗：给个固定宽度，别跟着「加一组」一起被拉长 */
+.lv-addbar #liveGenLong {
+  flex: 0 0 44%;
+}
+/* 内容区要给这条浮动条让出高度，否则最后一行永远被它压住 */
+#screen-live .content {
+  padding-bottom: 64px;
+}
+/* 提示 + 「成品」入口同一行：提示平时是空的，入口贴最右，不额外占高度 */
+.lv-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+}
+.lv-sub #liveHint {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+.lv-mini {
+  flex: none;
+  min-height: 0;
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--brand);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  text-decoration: none;
+}
+.lv-mini:active {
+  background: var(--soft);
+}
+/* 内容区要给这条浮动条让出高度，否则最后一行永远被它压住 */
+#screen-live .content {
+  padding-bottom: 64px;
+}
+
+/* ---------- 三、组头的「⋯」弹层 ---------- */
+.lv-sheetbg {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.35);
+}
+/* ⚠️ 这条不能省：.lv-sheetbg 自己写了 display:flex，浏览器给 [hidden] 的 display:none 盖不住它 */
+.lv-sheetbg[hidden] {
+  display: none;
+}
+.lv-sheet {
+  width: 100%;
+  padding: 12px var(--pad) calc(env(safe-area-inset-bottom) + 12px);
+  background: var(--card);
+  border-radius: 14px 14px 0 0;
+  border-top: 1px solid var(--line);
+}
+.lv-sheet-title {
+  margin: 2px 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+}
+.lv-opt {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 15px;
+  color: var(--fg);
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.lv-opt em {
+  display: block;
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.lv-opt.lv-danger {
+  color: var(--danger);
+  border-color: rgba(214, 69, 69, 0.4);
+}
+#liveSheetCancel {
+  width: 100%;
+  min-height: var(--tap);
+  margin-top: 4px;
+  font-size: 15px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+}
+
+/* ---------- 四、顶栏那颗 ⚙（2026-10-18 老板挑 B 档：无框，光一个 ⚙）----------
+   原来是白底+绿细边，他说突兀（整屏唯一该抢眼的是组头那颗实心「生成这组」）。
+   ⚠️ 写成 `.bar .lv-icon`：style.css 里有 `.bar button{min-height:36px}`，单类选择器压不过它。
+   ⚠️ 点击区仍是 44×44（--tap），只是不画框不铺底 —— 缩小会点不中。 */
+.bar .lv-icon {
+  flex: none;
+  width: var(--tap);
+  height: var(--tap);
+  min-height: 0;
+  padding: 0;
+  font-size: 19px;
+  line-height: 1;
+  color: var(--brand);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+}
+
+/* ---------- 五、生成设置（编号怎么标）----------
+   桌面端叫 live_grid_label，四态 num / code / both / none。
+   手机上不改库里的设置：它只是**这一次生成**的参数，存在本机 localStorage 里。 */
+.lv-seg {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.lv-seg button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  height: 38px;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.lv-seg button.on {
+  color: #fff;
+  background: var(--brand);
+  border-color: var(--brand);
+}
+.lv-cfg-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+.lv-cfg-label {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+#liveCfgClose {
+  width: 100%;
+  min-height: var(--tap);
+}
+#liveGenCancel {
+  width: 100%;
+  min-height: var(--tap);
+  margin-top: 4px;
+  font-size: 15px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+}
+
+/* ---------- 六、大图弹层（2026-10-18 起：生成完直接显示的唯一出口）----------
+   「已生成」列表层整块撤了（老板：入口不需要）→ 成品列表那批样式（面板/网格/卡片）一起删。
+   ⚠️ 弹层是 screen 的直接子级，不嵌在别的 hidden 容器里（嵌进去 fixed 也不渲染，弹不出来）。 */
+.lv-artview {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.92);
+}
+.lv-artview[hidden] {
+  display: none;
+}
+.lv-artview img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+/* 顶上一行操作提示：微信拦 a[download]，长按存相册/转发才是主路径 */
+.lv-arttip {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + 14px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
+  text-align: center;
+  pointer-events: none; /* 别挡长按 */
+}
+.lv-artbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom) + 18px);
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+.lv-artbar .lv-mini {
+  padding: 8px 16px;
+  font-size: 14px;
+  background: #fff;
+  border-color: #fff;
+}

@@ -489,6 +489,19 @@ function syncListCellState() {
   }
 }
 
+// 数值列（表头点击排序走数字比较，不走字符串）：
+// 进价 / 售价 / 库存 / 累计售出 都是商品对象上现成的数字字段；
+// **累计净售（netTotal）是算出来的**（累计售出 − 累计退），p 上没有这个字段 ——
+// 以前直接读 p[sortKey] 拿到 undefined，它就掉进字符串比较（10 < 2 < 8），
+// 净售这一列排序完全不对（2026-10-18 老板报"只有编号能排"时查出来的）。
+const NUM_SORT_FIELDS = new Set(["cost_price", "sale_price", "stockTotal", "soldTotal", "netTotal"]);
+function sortNumOf(p, key) {
+  if (key === "netTotal") {
+    return Number(p.soldTotal || 0) - Number(p.refundTotal || 0);
+  }
+  return Number(p[key] || 0);
+}
+
 function filteredProducts() {
   const kw = keywordMemo(filters.keyword);
   // 枚举列勾选集合预先整理成 Set：原版每条商品都 filterCurrent() 一次、再展开一次数组，
@@ -573,6 +586,12 @@ function filteredProducts() {
   }
   const coll = new Intl.Collator("zh-Hans-CN");
   const keyed = out.map((p) => {
+    // 数值列统一走 sortNumOf：`netTotal` 是**算出来的**（累计售出 − 累计退），
+    // 商品对象上根本没有这个字段 —— 以前直接读 p[sortKey] 拿到 undefined，
+    // 它就掉进字符串比较（10 < 2 < 8），表现是"净售这一列排序完全不对"（2026-10-18 老板报的）。
+    if (NUM_SORT_FIELDS.has(sortKey)) {
+      return { p, num: sortNumOf(p, sortKey) };
+    }
     const va = p[sortKey];
     if (typeof va === "number") {
       return { p, num: va };
@@ -1120,7 +1139,9 @@ function renderListHead() {
     }
     const f = vis[i];
     headCols.push(
-      `<th><span class="th-label" data-sort="${f.key}">${f.label}${sortKey === f.key ? (sortDir === 1 ? ' <span class="th-arrow">▲</span>' : ' <span class="th-arrow">▼</span>') : ""}</span></th>`,
+      // ⚠️ data-sort 挂在 **th** 上（原来挂在里面那个 span 上）：th 本来就有 cursor:pointer +
+      //    hover 底色，可点区域却只有列头那几个字，点空白处毫无反应 —— 看着像"这列不能排"。
+      `<th data-sort="${f.key}"><span class="th-label">${f.label}${sortKey === f.key ? (sortDir === 1 ? ' <span class="th-arrow">▲</span>' : ' <span class="th-arrow">▼</span>') : ""}</span></th>`,
     );
   }
   if (imgAt >= vis.length) {
@@ -1151,7 +1172,7 @@ function renderListBody(list) {
       const isSelected = state.selectedProducts.has(p.id);
       const isSet = isSetProduct(p);
       tds.push(
-        `<td><input type="checkbox" class="product-checkbox" data-id="${p.id}" ${isSelected ? "checked" : ""} title="选择 #${p.code}" /></td>`,
+        `<td class="cell-check" title="点这格任意位置＝选中/取消"><input type="checkbox" class="product-checkbox" data-id="${p.id}" ${isSelected ? "checked" : ""} title="选择 #${p.code}" /></td>`,
       );
       for (let i = 0; i < vis.length; i++) {
         if (i === imgAt) {
@@ -1850,6 +1871,19 @@ function bindBatchOps() {
         state.selectedProducts.delete(id);
       }
       updateSelectionUI();
+    };
+  });
+
+  // 勾选那格整格当点击区（2026-10-18 老板嫌原生框太小）：点格子里任何位置都切换。
+  // ⚠️ 点在框本身上要让原生行为走（只发一次 change），td 再响应就双重切换了。
+  document.querySelectorAll("td.cell-check").forEach((td) => {
+    td.onclick = (e) => {
+      const cb = td.querySelector(".product-checkbox");
+      if (!cb || e.target === cb) {
+        return;
+      }
+      cb.checked = !cb.checked;
+      cb.dispatchEvent(new Event("change"));
     };
   });
 

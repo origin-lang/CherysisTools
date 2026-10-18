@@ -5,7 +5,7 @@ import { Handler, HandlerCtx, runLongTask } from "./types.js";
 import { LivePlanRow, Product } from "../db.js";
 import { canonicalCode } from "../pricing.js";
 import { firstImageFile, previewThumbPath } from "../images.js";
-import { renderLiveGrid, renderLiveHtml, renderLiveLongImage, renderStarOverviewBuffer, renderStarOverviewGrid, localStamp, StarLabelOptions, LiveHtmlGroup } from "../liveGrid.js";
+import { renderLiveGrid, renderLiveGridBuffer, renderLiveHtml, renderLiveLongBuffer, renderLiveLongImage, renderStarOverviewBuffer, renderStarOverviewGrid, localStamp, StarLabelOptions, LiveHtmlGroup } from "../liveGrid.js";
 
 // 同一时刻只准一个九宫格生成任务在跑。
 // 必须挂在模块上而不是 liveHandlers 闭包里：index.ts 每条消息都重新调一次
@@ -315,6 +315,16 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
       log("🗑已取消全部星标");
     },
 
+    /**
+     * 只把排品状态回一条（2026-10-17，手机版「直播」那一格要读它）。
+     * **纯读**：不碰库、不碰图片目录，只 `postLiveState()` 一次。
+     * 为什么单开一条：原来只有 `loadAll` 和那几个写操作会回 `liveState`，
+     * 手机只想拿一份 plan（几十行），不该顺带把整库商品再读一遍（共享盘上几十毫秒起）。
+     */
+    getLiveState() {
+      h.postLiveState();
+    },
+
     saveLivePlan(msg) {
       const raw = Array.isArray(msg.plan) ? (msg.plan as any[]) : [];
       db.replaceLivePlan(
@@ -392,7 +402,22 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
         // 规矩：同一时刻屏幕上只准有一个框。原来的写法是「目录 statSync 失败 → 先自己弹一次
         // 目录选择器 → 再无条件弹一次确认框」，叠起来就是两个，取消要按两下。
         // 现在改成：有得确认就只确认，没得确认才直接要目录，两者绝不叠加。
+        //
+        // ⚠️⚠️ 2026-10-17 晚加了 `skipConfirm`（手机版这一屏要能自己出图）：
+        //   网页版宿主（src/server/httpHost.ts）**没有对话框通道** —— chooseAction 一律返回
+        //   undefined，而下面那条 else 分支把 undefined 当「取消」。于是手机上点「生成」会
+        //   一路走到「❌已取消生成」，看起来就是**按钮点了没反应**。
+        //   所以手机端发消息时带 skipConfirm:true，目录可用就直接出图。
+        //   只在目录**可用**时才认这个标记：目录不可用还是要走选目录，选不了就只能失败。
+        //
+        // ⚠️⚠️ 2026-10-18 又加了一层 `inline`（老板：「和进货单那样子，就是生成直接出来显示嘛，
+        //   为什么写的电脑上的目录里呢？我不想这样」）：手机上出图**根本不碰目录** ——
+        //   内存里出 jpg，base64 随定向消息推回那台手机，电脑上不留任何文件
+        //   （跟进货单导出 xlsx 同一个套路，见 handlers/purchase.ts 的 purchaseXlsxExport）。
+        //   `inline` 为真时下面整块目录逻辑全跳过：既不弹确认，也不读 live_out_dir。
+        const inline = msg.inline === true;
         let outDir = "";
+        if (!inline) {
         const saved = String(h.getSetting("live_out_dir") || "").trim();
         if (!dirUsable(saved)) {
           // 手上没有「待确认的目录」，这时候弹确认框是没话找话，直接要一个就够
@@ -410,6 +435,9 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
           await h.setSetting("live_out_dir", picked);
           h.postLiveState();
           outDir = picked;
+        } else if (msg.skipConfirm === true) {
+          // 手机端：没有确认框通道，目录又是好的 → 直接用（上面那段注释说了为什么）
+          outDir = saved;
         } else {
           gridStatus("dialog", { text: `确认输出目录：${saved}` });
           while (true) {
@@ -448,6 +476,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
             return;
           }
         }
+        }
         const onlyGroups = Array.isArray(msg.groups) ? new Set((msg.groups as any[]).map(Number)) : null;
         const labelMode: "num" | "code" | "both" | "none" =
           msg.labelMode === "code" || msg.labelMode === "both" || msg.labelMode === "none"
@@ -463,6 +492,9 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
           return;
         }
         const files: string[] = [];
+        // inline 模式收的是内存里的字节，不是路径（一张一条定向消息推回手机）
+        const shots: Array<{ file: string; buf: Buffer; group: number }> = [];
+        let noPicGroups = 0;
         for (const [i, g] of groupNos.entries()) {
           const slots = groups.get(g)!;
           const cells: Array<{ code: string; img: string | null }> = [];
@@ -470,14 +502,56 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
             const code = slots.get(s) ?? "";
             cells.push({ code, img: code ? firstImageFile(dir, code) : null });
           }
+          // ⚠️⚠️ 2026-10-18 老板：「一个九宫格里没有任何图就不要让它拼接了，除非有一张」。
+          //    整组一张图都没有 → 拼出来就是 9 个白格子（纯浪费一次生成、手机上还得存一张全是白的图），
+          //    直接跳过并记一笔，最后把"跳过了几组"一起告诉他。
+          if (!cells.some((c) => c.img)) {
+            noPicGroups++;
+            log(`⏭️第 ${g} 组一张图都没有，跳过（先给这几个商品补图）`);
+            gridStatus("running", { group: g, done: i + 1, total: groupNos.length, ok: false, noPic: true });
+            continue;
+          }
           gridStatus("running", { group: g, done: i, total: groupNos.length });
           try {
-            files.push(await renderLiveGrid(cells, outDir, g, labelMode));
+            if (inline) {
+              const buf = await renderLiveGridBuffer(cells, g, labelMode);
+              const startNum = (g - 1) * 9 + 1;
+              shots.push({ file: `${startNum}号-${startNum + 8}号_${localStamp()}.jpg`, buf, group: g });
+            } else {
+              files.push(await renderLiveGrid(cells, outDir, g, labelMode));
+            }
             gridStatus("running", { group: g, done: i + 1, total: groupNos.length, ok: true });
           } catch (err: any) {
             log(`❌第 ${g} 组生成失败：${err.message}`);
             gridStatus("running", { group: g, done: i + 1, total: groupNos.length, ok: false });
           }
+        }
+        // 一组都没图 → 这不是"生成成功 0 张"，得说清楚是没图
+        if (files.length === 0 && shots.length === 0) {
+          log("❌选中的组里一张商品图都没有，没有可拼接的格子");
+          gridStatus("error", {
+            text: noPicGroups ? "这几组都还没有图（先给商品补图再生成）" : "没有可生成的组",
+          });
+          return;
+        }
+        if (inline) {
+          // 只发给点按钮的那一端（toRequester）：别人没点，不该白收这几百 KB
+          for (const it of shots) {
+            post(
+              {
+                type: "liveInlineImage",
+                kind: "grid",
+                group: it.group,
+                file: it.file,
+                size: it.buf.length,
+                b64: it.buf.toString("base64"),
+              },
+              { toRequester: true },
+            );
+          }
+          log(`🖼九宫格已生成 ${shots.length} 张（直接发到手机上，电脑目录没写文件）`);
+          gridStatus("done", { count: shots.length, inline: true, skipped: noPicGroups });
+          return;
         }
         try {
           await ctx.revealInOS(outDir);
@@ -488,7 +562,7 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
           `🖼直播九宫格完成 ${files.length} 张（${groupNos.map((g) => `第${g}组`).join(" ")}）`,
         );
         post({ type: "liveGenerated", dir: outDir, count: files.length });
-        gridStatus("done", { count: files.length, dir: outDir });
+        gridStatus("done", { count: files.length, dir: outDir, skipped: noPicGroups });
         h.postLiveState();
         }).finally(() => {
           gridJobActive = false;
@@ -574,23 +648,56 @@ export function liveHandlers(h: HandlerCtx): Record<string, Handler> {
               return;
             }
             gridStatus("start");
+            const labelMode = liveLabelModeOf(msg);
+            // ⚠️ 2026-10-18 老板：「一个九宫格里没有任何图就不要让它拼接了，除非有一张」。
+            //    长图是把每组竖着拼起来的 —— 一组全是白格子，拼进去只是把长图拉长、白占地方。
+            //    所以先按"有没有至少一张图"筛一遍；一组都没有就直接说清楚，别拼出一张全白的图。
+            const usable = payload.filter((g) => g.cells.some((c) => c.img));
+            if (usable.length === 0) {
+              log("❌一组商品图都没有，长图没得拼");
+              gridStatus("error", { text: "一组图都没有（先给商品补图）" });
+              return;
+            }
+            if (usable.length < payload.length) {
+              log(`⏭️${payload.length - usable.length} 组一张图都没有，没拼进长图`);
+            }
+            // 手机端：内存出图，base64 直接推回这台手机（电脑上不留文件，见文件头 inline 注释）
+            if (msg.inline === true) {
+              gridStatus("running", { done: 0, total: usable.length });
+              const buf = await renderLiveLongBuffer(usable, { labelMode });
+              const count = usable.reduce((n, g) => n + g.cells.filter((c) => c.code).length, 0);
+              log(
+                `🖼已生成长图 ${Math.round(buf.length / 1024)}KB（直接发到手机上，电脑目录没写文件）`,
+              );
+              post(
+                {
+                  type: "liveInlineImage",
+                  kind: "long",
+                  file: `直播排品长图_${localStamp()}.jpg`,
+                  size: buf.length,
+                  count,
+                  b64: buf.toString("base64"),
+                },
+                { toRequester: true },
+              );
+              gridStatus("done", { count: usable.length, inline: true, skipped: payload.length - usable.length });
+              return;
+            }
             const outDir = await readyOutDir();
             if (!outDir) {
               return;
             }
-            gridStatus("running", { done: 0, total: groupNos.length });
-            const file = await renderLiveLongImage(payload, outDir, {
-              labelMode: liveLabelModeOf(msg),
-            });
+            gridStatus("running", { done: 0, total: usable.length });
+            const file = await renderLiveLongImage(usable, outDir, { labelMode });
             try {
               await ctx.revealInOS(outDir);
             } catch {
               /* 忽略打开失败 */
             }
-            const count = payload.reduce((n, g) => n + g.cells.filter((c) => c.code).length, 0);
-            log(`🖼已生成长图：${path.basename(file)}（${groupNos.length} 组 / ${count} 款）`);
-            post({ type: "liveLongDone", dir: outDir, file, count, groups: groupNos.length });
-            gridStatus("done", { count: groupNos.length, dir: outDir });
+            const count = usable.reduce((n, g) => n + g.cells.filter((c) => c.code).length, 0);
+            log(`🖼已生成长图：${path.basename(file)}（${usable.length} 组 / ${count} 款）`);
+            post({ type: "liveLongDone", dir: outDir, file, count, groups: usable.length });
+            gridStatus("done", { count: usable.length, dir: outDir, skipped: payload.length - usable.length });
           } catch (err: any) {
             log(`❌生成长图出错：${err?.message ?? err}`);
             gridStatus("error", { text: "生成过程出错，已中止" });

@@ -322,14 +322,20 @@ export function impexpHandlers(h: HandlerCtx): Record<string, Handler> {
           .getLivePlan()
           .filter((r) => r.code)
           .sort((a, b) => a.group_no - b.group_no || a.slot_no - b.slot_no);
-        const aoa: any[][] = [["组号", "号数", "编号", "名称"]];
+        // 2026-10-18 老板：组号/号数要带字（1组 / 1号，跟九宫格图上的叫法对上），
+        // 再加「售价 / 库存」两列 —— 取商品档案的 sale_price / stock_manual
+        // （stock_manual 就是界面「库存」列那个数 stockTotal）。库里没有的编号照旧只写编号，
+        // 名称/售价/库存留空。
+        const aoa: any[][] = [["组号", "号数", "编号", "名称", "售价", "库存"]];
         for (const r of plan) {
           const p = db.getProductByCode(r.code);
           aoa.push([
-            r.group_no,
-            (r.group_no - 1) * 9 + r.slot_no,
+            `${r.group_no}组`,
+            `${(r.group_no - 1) * 9 + r.slot_no}号`,
             r.code,
             p ? p.name : "",
+            p ? p.sale_price : "",
+            p ? p.stock_manual : "",
           ]);
         }
         const ws = XLSX.utils.aoa_to_sheet(aoa);

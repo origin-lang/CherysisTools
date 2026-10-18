@@ -5146,6 +5146,8 @@
     log: pushLog,
     show: show,
     imgUrl: imgUrl,
+    /** 页面地址里带的 token（服务端配了 token 时，独立功能文件自己的 fetch/图片 URL 要带上它） */
+    token: token,
     /** 登记一个新屏幕：screenId 显示时，底部 tabId 那一格点亮 */
     registerScreen: function (screenId, tabId) {
       TAB_OF_SCREEN[screenId] = tabId || "tabProducts";
@@ -5166,6 +5168,22 @@
         }
       }
       return null;
+    },
+    /**
+     * 「有改动」小红点点亮。独立功能（直播排品）自己也改数据，改完同样得亮
+     * —— 否则「设置」格上那一点永远只有列表页会点，看着像只有商品会变。
+     */
+    markStale: markStale,
+    /**
+     * 离开输入框后，把被按住的那次「别人改过 → 自动刷新」补上。
+     * 原来这 60ms 的补刷只挂在 app.js 自己的 focusout 上，可是**焦点的转移被
+     * 独立功能拦下来处理**之后（直播屏是捕获阶段收走 focusout）顺序就不一定了，
+     * 干脆让改完数据的那个功能自己叫一次，稳。
+     */
+    refreshIfStale: function () {
+      if (stale) {
+        tryAutoRefresh();
+      }
     },
   };
 

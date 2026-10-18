@@ -8,6 +8,8 @@
     <!-- 进货单的样式单独一份（见最下面 purchase.js 那段说明）：这个功能是独立文件，
          要整体摘掉时连同它的 js/css 一起删，别往 style.css 里塞 -->
     <link rel="stylesheet" href="/purchase.css" />
+    <!-- 直播排品的样式也单独一份（同理：这块功能是独立文件，摘掉就删这三行 + live.js + 那一屏 + 底部那一格） -->
+    <link rel="stylesheet" href="/live.css" />
     <!-- ===== 加到主屏幕（PWA-lite）=====
          手机浏览器「添加到主屏幕」后变成全屏图标，没有地址栏。只有 manifest + 这几个 meta，
          **没有 service worker**（667 是局域网纯 HTTP，浏览器不给注册 SW；也正因如此，
@@ -416,6 +418,86 @@
       </main>
     </section>
 
+    <!-- ⑥ 直播排品（2026-10-17 晚；第一版做成了"成品文件墙"，老板当场否掉——
+         「我以为是类似于现在的九宫格排品那样的呢」）===============================
+         这一格就是**排品表本身**：跟电脑端一样，每组 3×3 格子，格子里是编号（格子上面带封面），
+         序号跨组连续（第 2 组第 1 格 = 10 号）。**手机上能改**（老板挑的档）：
+         改编号、清空本组、删组、加组，改完自动存回库（live_plan，跟电脑端同一张表）。
+         这一屏是**独立的一份**：骨架在这儿、逻辑全在 live.js、样式全在 live.css。
+         想整体摘掉：删这一屏 + 底部 #tabLive 那一格 + head 里 live.css 与末尾 live.js 两行。
+         ⚠️ 组头的「⋯」弹的是本屏自己的底部弹层 #liveSheet（手机上没有右键菜单）。 -->
+    <section id="screen-live" class="screen">
+      <header class="bar">
+        <span class="title">🎙 直播排品</span>
+        <!-- ⚠️ 2026-10-18 老板：「刷新是啥意思，感觉没啥用」「已生成这个入口我不需要」
+             → 右上只剩 ⚙ 配置。原来那颗 ↻（重新从库里读排品）撤了：进屏本来就会自动读一遍，
+             存表走广播，平时没有"要手动刷新"的场景。 -->
+        <button id="liveCfgBtn" class="lv-icon" type="button" title="生成设置：编号怎么标" aria-label="生成设置">⚙</button>
+      </header>
+      <main class="content">
+        <!-- 顶上一行提示（生成中 / 生成好了 · 长按图能存进相册）。
+             ⚠️ 2026-10-18 原来这行最右还有颗「已生成」入口，老板说不需要 → 撤了，提示占满整行。 -->
+        <div class="lv-sub">
+          <p id="liveHint" class="muted small"></p>
+        </div>
+        <!-- ⚠️ 2026-10-17 晚：这里原来有一排「星标备选」（电脑版画册点过 ⭐ 的商品，点一下填到下一个空格）。
+             老板说「手机浏览器那边 画册星标选品那个不需要显示」→ 整块撤了，连着 live.js 里的 fillNext()。
+             手机屏就这么宽，排品时它只占掉一行；电脑端的 ⭐ 和星标总览出图都没动。 -->
+        <div id="liveGroups" class="lv-groups"></div>
+      </main>
+      <!-- 加组 / 生成长图：固定在底栏上方的一条（跟进货单「＋ 加一行」同一套路，
+           挂在列表里面的话，排到第三组时它早被滚出去了）。
+           ⚠️ 2026-10-18 凌晨按老板的话收窄（原话：「手机上不需要支持生成全部九宫格（就多张的），
+             就是感觉电脑更快，但是可以暴露生成长图的功能」）→ 底栏只剩「生成长图」，
+             原来那个三出口下拉（全部九宫格 / HTML 样品 / 一张长图）整块撤了。
+             每组自己的「生成这组」还留着（单张，够快）。 -->
+      <div class="lv-addbar">
+        <button id="liveAddGroup" class="primary" type="button">＋ 加一组</button>
+        <button id="liveGenLong" class="lv-genlong" type="button">生成长图</button>
+      </div>
+      <!-- 设置：编号怎么标 + 清空格子。
+           ⚠️ 清空放在这里而不是底栏：底栏是"干活"的地方，清空是破坏性操作，两者不能挨着。
+           口径跟电脑端 clearLivePlan 一致：**组留着**、9 格全清（不是删组）。 -->
+      <div id="liveCfg" class="lv-sheetbg" hidden>
+        <div class="lv-sheet">
+          <p class="lv-sheet-title">设置</p>
+          <p class="lv-cfg-label">编号怎么标</p>
+          <div class="lv-seg" id="liveLabelSeg">
+            <button type="button" data-mode="num">1号</button>
+            <button type="button" data-mode="code">A001</button>
+            <button type="button" data-mode="both">1号 A001</button>
+            <button type="button" data-mode="none">不标</button>
+          </div>
+          <p id="liveCfgHint" class="lv-cfg-hint"></p>
+          <button id="liveCfgClear" class="lv-opt lv-danger" type="button">清空所有格子<em>组留着，9 格全空；商品本身不动</em></button>
+          <button id="liveCfgClose" class="primary" type="button">好了</button>
+        </div>
+      </div>
+      <!-- 大图弹层：**必须是屏幕的直接子级**。
+           ⚠️⚠️ 2026-10-18 血教训：原来它嵌在「已生成」面板（#liveArts）里面，而手机上生成时
+           那个面板是 hidden 的 —— 父层 display:none 时，里面的 fixed 子元素**照样不渲染**，
+           结果就是"生成完该弹的图弹了个寂寞"，老板只能去点「已生成」找图。
+           现在手机上生成完直接推到这里：长按图片＝存相册 / 转发（微信拦 a[download]，长按是主路径），
+           底下「存这张」是兜底。 -->
+      <div id="liveArtView" class="lv-artview" hidden>
+        <img id="liveArtImg" alt="" />
+        <p class="lv-arttip">长按图片：存进相册 / 转发</p>
+        <div class="lv-artbar">
+          <a id="liveArtDl" class="lv-mini" href="#" download>存这张</a>
+          <button id="liveArtClose" class="lv-mini" type="button">关闭</button>
+        </div>
+      </div>
+      <!-- 组头的「⋯」弹这个：清空本组 / 删组（两个都不能太容易点到，所以不放在组头） -->
+      <div id="liveSheet" class="lv-sheetbg" hidden>
+        <div class="lv-sheet">
+          <p id="liveSheetTitle" class="lv-sheet-title"></p>
+          <button id="liveSheetClear" class="lv-opt" type="button">清空这一组<em>组留着，9 格全空</em></button>
+          <button id="liveSheetDel" class="lv-opt lv-danger" type="button">删掉这一组<em>组号会跳，后面的组不变</em></button>
+          <button id="liveSheetCancel" type="button">取消</button>
+        </div>
+      </div>
+    </section>
+
     <!-- ⑤ 进货单 / 补货单（2026-10-15）=========================================
          要解决的事：早上去给别人发货时发现缺货，得让去档口拿货的人知道"哪个编号、补多少"。
          以前靠截图 + 一个个说数量，现在攒成一张单、点「复制清单」粘进微信发出去。
@@ -661,6 +743,13 @@
       <button id="tabProducts" class="tb on" type="button">
         <span class="ic">🏪</span>商品
       </button>
+      <!-- 「直播」这一格（2026-10-17 加的第四格，老板定的位置＝**第 2 位**）：
+           也是**独立功能**（live.js），onclick 在 live.js 里接。
+           功能是**排品表本身**（每组 3×3 填编号，能改能存）—— 第一版做成了"成品图墙"被否掉。
+           ⚠️ 图标换过：📺 被老板嫌丑（「那个直播的图标好丑啊」）→ 🎙。 -->
+      <button id="tabLive" class="tb" type="button">
+        <span class="ic">🎙</span>直播
+      </button>
       <!-- 「进货」这一格是**独立功能**（purchase.js）自己要的：它的 onclick 不在 app.js 里，
            在 purchase.js 里接（app.js 只提供一个「注册屏幕 → 哪一格亮」的接口）。 -->
       <button id="tabPurchase" class="tb" type="button">
@@ -691,5 +780,8 @@
          它通过 app.js 结尾那个 window.Cherysis 接缝取元素 / 发消息 / 收回包 / 切屏。
          ⚠️ 必须排在 app.js **之后**：那样接缝才已经建好 -->
     <script src="/purchase.js"></script>
+    <!-- 直播排品：同样独立，同样必须排在 app.js 之后（接缝先建好）。
+         注意：这里做的是**排品表本身**（3×3 填编号、能改能存），不是"生成好的成品图"。 -->
+    <script src="/live.js"></script>
   </body>
 </html>

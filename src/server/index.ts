@@ -7,6 +7,7 @@ import { EventHub, shouldAnnounceChange, type SseSink } from "./events.js";
 import { SerialQueue } from "./serialQueue.js";
 import { TaskQueue } from "./taskQueue.js";
 import { startTunnel, type TunnelHandle } from "./tunnel.js";
+import { ensureThumb, isArtifactName, listArtifacts, mimeOf, resolveArtifact } from "./liveArtifacts.js";
 import {
   GATE_COOKIE,
   checkTicket,
@@ -234,6 +235,23 @@ async function main(): Promise<void> {
 
   const resolveImgDir = (): string =>
     effectiveImageDir(resolveImageDir(String(getDB().getSetting("image_dir") || "")));
+
+  /**
+   * 直播成品目录：跟电脑端同一个本机偏好 `live_out_dir`（启动时已种上默认值 cfg.liveOutDir）。
+   * 和图片目录一样要"验活"：盘没挂上 / 目录被删时返回空串，三个 /api/live/* 接口拿到空目录
+   * 就当"还没生成过成品"，别各自去 resolve 一条不存在的路径。
+   */
+  const liveOutDir = (): string => {
+    const d = String(prefs.get("live_out_dir", "") || "").trim();
+    if (!d) {
+      return "";
+    }
+    try {
+      return fs.statSync(d).isDirectory() ? d : "";
+    } catch {
+      return "";
+    }
+  };
 
   /**
    * 一次 /api/invoke：新建一个 host（posts/logs 按请求隔离），跑完把那两条数组回给浏览器。
@@ -627,6 +645,135 @@ async function main(): Promise<void> {
         return;
       }
 
+      // 直播排品成品（2026-10-17 晚，手机版只看）：列目录 / 缩略图 / 取原文件。
+      // ⚠️ 三个入口都吃 `name` 参数，而这里的目录能放任意文件 —— 名字一律过
+      //    resolveArtifact（纯文件名 + resolve 前缀双校验），一个 `../` 就是把整台机器开放下载。
+      if (p === "/api/live/list") {
+        const dir = liveOutDir();
+        sendJson(res, 200, { ok: true, dir, items: listArtifacts(dir) });
+        return;
+      }
+      if (p === "/api/live/thumb") {
+        const name = url.searchParams.get("name") || "";
+        const src = resolveArtifact(liveOutDir(), name);
+        if (!src) {
+          sendJson(res, 400, { ok: false, error: "文件名不合法" });
+          return;
+        }
+        let mtime = 0;
+        try {
+          mtime = Math.round(fs.statSync(src).mtimeMs);
+        } catch {
+          sendJson(res, 404, { ok: false, error: "这个文件不在了" });
+          return;
+        }
+        const cached = await ensureThumb(src, cfg.cacheDir, name, mtime);
+        if (cached) {
+          res.writeHead(200, {
+            "Content-Type": "image/webp",
+            // 文件名带 mtime，重新生成就是另一个 URL → 可以放心让浏览器缓存
+            "Cache-Control": "private, max-age=604800",
+          });
+          pipeFile(cached, res);
+          return;
+        }
+        // 缩不出来（不是图片 / sharp 失败）：原样流回去。慢，但比给他一片空白强
+        res.writeHead(200, { "Content-Type": mimeOf(name), "Cache-Control": "no-store" });
+        pipeFile(src, res);
+        return;
+      }
+      if (p === "/api/live/file") {
+        const name = url.searchParams.get("name") || "";
+        const src = resolveArtifact(liveOutDir(), name);
+        if (!src) {
+          sendJson(res, 400, { ok: false, error: "文件名不合法" });
+          return;
+        }
+        let size = 0;
+        try {
+          size = fs.statSync(src).size;
+        } catch {
+          sendJson(res, 404, { ok: false, error: "这个文件不在了" });
+          return;
+        }
+        const dl = url.searchParams.get("dl") === "1";
+        const head: http.OutgoingHttpHeaders = {
+          "Content-Type": mimeOf(name),
+          "Content-Length": String(size),
+          "Cache-Control": "no-store",
+        };
+        if (dl) {
+          // 存到手机上再转发（HTML 样品多半就是干这个用的）
+          head["Content-Disposition"] =
+            "attachment; filename*=UTF-8''" + encodeURIComponent(name);
+        } else if (/^text\/html/.test(String(head["Content-Type"]))) {
+          // 内联预览也要收住：成品 HTML 是自包含的（只有 data: 图 + 内联样式），
+          // 不需要脚本。万一目录里混进别的 html，这条能把脚本按住。
+          head["Content-Security-Policy"] =
+            "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'";
+        }
+        res.writeHead(200, head);
+        pipeFile(src, res);
+        return;
+      }
+
+      // 删成品（2026-10-18，老板：「感觉还要清空呢」—— 那个目录会越堆越多）。
+      // ⚠️⚠️ 这是整个服务里**唯一一个删文件**的接口，门槛只有两条，缺一条就会误删他的东西：
+      //   ① 名字必须过 resolveArtifact（纯文件名 + resolve 前缀双校验）；
+      //   ② 扩展名必须是 jpg/jpeg/png/html（`isArtifactName`）—— 那个目录里还放着
+      //      进货单导出的 xlsx，一旦按"删目录里所有文件"实现，他的进货单就没了。
+      // 所以 `all` 的含义是「删这个目录里**本功能的产物**」，绝不是「清空目录」。
+      if (p === "/api/live/delete") {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { ok: false, error: "只收 POST" });
+          return;
+        }
+        let body: any = null;
+        try {
+          body = JSON.parse(await readBody(req));
+        } catch {
+          sendJson(res, 400, { ok: false, error: "请求体不是合法 JSON" });
+          return;
+        }
+        const dir = liveOutDir();
+        if (!dir) {
+          sendJson(res, 400, { ok: false, error: "还没配成品目录（服务端 liveOutDir）" });
+          return;
+        }
+        let names: string[] = [];
+        if (body && body.all === true) {
+          // 只挑白名单里的（listArtifacts 同一口径），xlsx 之类连候选都不是
+          names = listArtifacts(dir, 2000).map((a) => a.name);
+        } else if (body && Array.isArray(body.names)) {
+          names = body.names.map((n: any) => String(n));
+        }
+        if (!names.length) {
+          sendJson(res, 200, { ok: true, deleted: 0, skipped: 0 });
+          return;
+        }
+        let deleted = 0;
+        let skipped = 0;
+        for (const n of names) {
+          if (!isArtifactName(n)) {
+            skipped++;
+            continue;
+          }
+          const fp = resolveArtifact(dir, n);
+          if (!fp) {
+            skipped++;
+            continue;
+          }
+          try {
+            fs.unlinkSync(fp);
+            deleted++;
+          } catch {
+            skipped++;
+          }
+        }
+        sendJson(res, 200, { ok: true, deleted, skipped });
+        return;
+      }
+
       // 其余当静态文件；/ 给 index.html
       sendStatic(res, p === "/" ? "index.html" : p.replace(/^\/+/, ""));
     })().catch((err: any) => {
@@ -636,6 +783,24 @@ async function main(): Promise<void> {
         /* 响应已经发出去了 */
       }
     });
+  });
+
+  // ⚠️⚠️ 2026-10-18：老板报「怎么现在不弹外网的访问地址和密码了」——
+  //   查出来最常见的原因是**端口已经被上一次那个实例占着**：这时 listen 抛 EADDRINUSE，
+  //   node 只打一串英文堆栈就退出，于是"启动窗口里什么都没有"（外网地址在**正在跑的那个**实例里）。
+  //   所以这里必须自己接住，用中文说清楚该干什么；否则每次都要重新猜一遍。
+  server.on("error", (err: any) => {
+    if (err && err.code === "EADDRINUSE") {
+      console.error("");
+      console.error(`[端口被占用] ${cfg.port} 上已经有一个服务在跑了。`);
+      console.error(`   · 如果就是它：浏览器直接开 http://localhost:${cfg.port} 就能用；`);
+      console.error("   · 如果想重启：先双击仓库根的「停止服务.cmd」，再双击「启动网页版.cmd」。");
+      console.error("   （端口被占时这里**不会**打印外网地址 —— 那条隧道属于正在跑的那个实例）");
+      console.error("");
+      process.exit(1);
+    }
+    console.error(`[服务出错] ${err?.message ?? err}`);
+    process.exit(1);
   });
 
   server.listen(cfg.port, cfg.host, () => {
@@ -680,7 +845,7 @@ async function main(): Promise<void> {
       },
     });
     if (tunnel.status().state === "starting") {
-      console.log("   外网访问：正在连 Cloudflare…（连上会把地址打在这里）");
+      console.log("   外网访问：正在连 Cloudflare…（约 5~15 秒，连上会把地址和密码打在这里）");
     }
   });
 

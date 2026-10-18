@@ -147,6 +147,13 @@
       input[type="checkbox"] {
         accent-color: #23a884;
       }
+      /* 2026-10-18 老板嫌勾选框太小（30px 列里一个原生小方框，一个个点很累）：
+         勾选那一**整格**都当点击区用（cursor 一致、不许选中文字），
+         框本身的视觉没动 —— 点格子任何位置＝选中/取消，逻辑在 client-product.js。 */
+      td.cell-check {
+        cursor: pointer;
+        user-select: none;
+      }
       .table-wrap {
         max-height: 480px;
         overflow: auto;
@@ -252,12 +259,14 @@
         user-select: none;
         font-weight: 500;
       }
-      .data-table th:has(.th-label[data-sort="code"]) {
+      .data-table th[data-sort="code"] {
         width: 1%;
         min-width: var(--code-col-min);
         /* 编号是初始排序列（client-core.js: sortKey = "code"），面板一打开它就带走 .th-arrow
            → 整格泛绿，那是系统默认排序、不是用户选的，吵。这里把颜色收回来，箭头照常显示。
-           特异度 (0,3,1) > th:has(.th-arrow) 的 (0,2,1)，与声明顺序无关。 */
+           特异度 (0,3,1) > th:has(.th-arrow) 的 (0,2,1)，与声明顺序无关。
+           ⚠️ 选择器 2026-10-18 跟着改：data-sort 从里面那个 span 挪到了 th 本身
+           （点列头空白处也能排序），这里必须同步，否则编号列宽度规则失效。 */
         color: inherit;
       }
       /* 表头跟第一行数据之间拉一条 2px 粗线 —— 原来只有 1px、跟行内分隔线同款，

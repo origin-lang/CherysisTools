@@ -204,13 +204,27 @@ export async function renderLiveGrid(
   groupNo: number,
   labelMode: "num" | "code" | "both" | "none" = "num",
 ): Promise<string> {
-  const { w: tileW, h: tileH } = await probeTileSize(cells, 1024, 256);
-  const buf = await buildLiveGroupJpeg(cells, groupNo, tileW, tileH, labelMode, 95);
+  const buf = await renderLiveGridBuffer(cells, groupNo, labelMode);
   const startNum = (groupNo - 1) * 9 + 1;
   const endNum = startNum + 8;
   const outFile = path.join(outDir, `${startNum}号-${endNum}号_${localStamp()}.jpg`);
   fs.writeFileSync(outFile, buf);
   return outFile;
+}
+
+/**
+ * 只在内存里出这一组的九宫格 jpg，**不落盘**（2026-10-18）。
+ * 手机版「生成这组」走这条：出完把字节 base64 直接推给点按钮的那台手机，
+ * 电脑上不留文件 —— 老板原话「和进货单那样子，就是生成直接出来显示嘛」。
+ * 尺寸/标注口径与落盘版**一字不差**（同一个 buildLiveGroupJpeg），只是不写文件。
+ */
+export async function renderLiveGridBuffer(
+  cells: Array<{ code: string; img: string | null }>,
+  groupNo: number,
+  labelMode: "num" | "code" | "both" | "none" = "num",
+): Promise<Buffer> {
+  const { w: tileW, h: tileH } = await probeTileSize(cells, 1024, 256);
+  return buildLiveGroupJpeg(cells, groupNo, tileW, tileH, labelMode, 95);
 }
 
 /**
@@ -229,11 +243,28 @@ export type LiveLongGroup = {
   cells: Array<{ code: string; img: string | null }>;
 };
 
+/** 落盘版：出图写进 outDir，返回文件全路径（电脑端 / 网页版旧行为） */
 export async function renderLiveLongImage(
   groups: LiveLongGroup[],
   outDir: string,
   opts: { labelMode: "num" | "code" | "both" | "none"; quality?: number },
 ): Promise<string> {
+  const buf = await renderLiveLongBuffer(groups, opts);
+  const outFile = path.join(outDir, `直播排品长图_${localStamp()}.jpg`);
+  fs.writeFileSync(outFile, buf);
+  return outFile;
+}
+
+/**
+ * 只在内存里出长图，**不落盘**（2026-10-18）。
+ * 手机版「生成长图」走这条：字节 base64 直接推给那台手机，电脑目录里不留文件。
+ * ⚠️ 长图是真的会很大（实测 10 组 90 格约 6.7MB → base64 约 9MB），这条消息只发给
+ *    点按钮的那一端（post 的 toRequester），绝不广播 —— 否则每台设备都白收 9MB。
+ */
+export async function renderLiveLongBuffer(
+  groups: LiveLongGroup[],
+  opts: { labelMode: "num" | "code" | "both" | "none"; quality?: number },
+): Promise<Buffer> {
   const labelMode = opts.labelMode;
   const quality = opts.quality && opts.quality > 0 ? opts.quality : 82;
   const { w, h } = await probeTileSize(groups.flatMap((g) => g.cells), 640, 256);
@@ -287,8 +318,7 @@ export async function renderLiveLongImage(
   }
 
   const canvasH = Math.max(1, y - gap + PAD);
-  const outFile = path.join(outDir, `直播排品长图_${localStamp()}.jpg`);
-  await sharp({
+  return sharp({
     create: {
       width: W,
       height: canvasH,
@@ -298,8 +328,7 @@ export async function renderLiveLongImage(
   })
     .composite(layers)
     .jpeg({ quality })
-    .toFile(outFile);
-  return outFile;
+    .toBuffer();
 }
 
 /**
