@@ -835,7 +835,8 @@ async function main(): Promise<void> {
           console.log(
             cfg.password
               ? `    🔒 密码：${cfg.password}（外面的人输一次，记 30 天；别把这个窗口截图发出去）`
-              : "    ⚠️ 没设密码：谁拿到这个链接谁就能改库（配置里加 password 即可上锁）",
+              : "    ⚠️ 没设密码：谁拿到这个链接谁就能改库 —— 在 cherysis-server.config.json 里加一行 " +
+                  '"password": "你的密码"，再重启服务（这个窗口）即可上锁',
           );
           console.log("    ⚠️地址只在重启电脑或隧道崩了时才换；平常重启服务不变");
           console.log("");

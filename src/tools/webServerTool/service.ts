@@ -80,6 +80,17 @@ export function buildDefaultConfig(storageDir: string, imageDir = ""): ServerCon
     storageDir: String(storageDir || "").trim(),
     imageDir: String(imageDir || "").trim(),
     port: DEFAULT_PORT,
+    // 2026-10-18：`password` 和 `tunnel` 这两项**必须显式写出来给空/默认值**，
+    // 不是为了功能（loadConfig 本来就有默认），是为了**让人看得见它存在**。
+    // 老板把服务交给别人用时发现"别人那边没有密码"：他手里那份是自己手写的配置，
+    // 有 password 那一行；同事那边是自动生成的 —— 只有三项，压根不知道还有密码这回事，
+    // 于是开了外网隧道、门禁是空的。JSON 里加注释不合法，所以注释只能靠 `//xxx` 这种键
+    // （服务端 readConfigFile 会把它当普通键读进去、没人用，无害；示例文件里一直是这么写的）。
+    password: "",
+    tunnel: true,
+    "//password":
+      "外网密码。留空 = 不开门禁（谁拿到隧道链接谁就能改库）；填了只拦从 Cloudflare 隧道进来的请求，" +
+      "同一局域网扫码/输 IP 进来的不弹密码。改完要重启服务才生效；启动窗口会打成「🔒 密码：xxx」",
   };
   return cfg;
 }

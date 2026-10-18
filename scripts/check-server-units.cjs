@@ -668,6 +668,28 @@ let wiringCases = 0;
     /🔒 密码：\$\{cfg\.password\}/.test(serverIndexSrc),
     "启动横幅要把密码直接打出来（窗口是本机的，他自己人要能一眼看到；藏起来只会让他回头翻配置文件）",
   );
+  // 2026-10-18：老板把服务交给别人用，发现「别人那边没有密码」——那台机器上配置是自动生成的，
+  // 只有 storageDir/imageDir/port 三项，压根看不见还有 password 这回事，于是隧道开着、门禁空着。
+  // 所以自动生成的配置里**必须显式写出 password**（哪怕是空串），让人知道有这么个开关。
+  wiringCases++;
+  const webSvcSrc = fs.readFileSync(
+    path.join(root, "src", "tools", "webServerTool", "service.ts"),
+    "utf8",
+  );
+  ok(
+    /password:\s*""/.test(webSvcSrc),
+    "自动生成的配置里必须带 password 字段（哪怕是空串）：少了它，别人的机器上根本不知道还有密码这回事，" +
+      "开着外网隧道也以为有密码，实际谁拿到链接谁能改库",
+  );
+  wiringCases++;
+  const exampleCfg = fs.readFileSync(
+    path.join(root, "cherysis-server.config.example.json"),
+    "utf8",
+  );
+  ok(
+    /"password"\s*:/.test(exampleCfg),
+    "示例配置里必须有 password 一栏：大家照着抄的那份少了它，抄完就是没门禁",
+  );
   wiringCases++;
   ok(
     /if \(pid && isAlive\(pid\)\) \{[\s\S]{0,140}?st\.restarts = 0/.test(tunnelSrc),
