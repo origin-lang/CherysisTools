@@ -36,6 +36,21 @@
   var num = API.num;
 
   /**
+   * 扫码按钮图标（2026-10-19 老板四选一拍的「B 取景框」：四角 + 一条横线）。
+   * ⌗ 井字被否（"你的图标好丑，怎么就有个井字啊"）。SVG 内联 + currentColor，
+   * 颜色跟 .rs-scan 的 color（--brand）走；两处按钮（搜索行 / 弹层单号格）共用。
+   */
+  var SCAN_ICON =
+    '<svg viewBox="0 0 48 40" width="20" height="17" aria-hidden="true" style="display:block;margin:auto">' +
+    '<g fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">' +
+    '<path d="M4 13 V7 a3 3 0 0 1 3-3 h6"/>' +
+    '<path d="M35 4 h6 a3 3 0 0 1 3 3 v6"/>' +
+    '<path d="M44 27 v6 a3 3 0 0 1-3 3 h-6"/>' +
+    '<path d="M13 36 H7 a3 3 0 0 1-3-3 v-6"/>' +
+    '<line x1="12" y1="20" x2="36" y2="20"/>' +
+    "</g></svg>";
+
+  /**
    * 编号归一：纯数字 → 默认前缀 A + 补零到 3 位（`058`/`58`/`A58` → `A058`）。
    * ⚠️ 口径出处＝`src/tools/shopTool/pricing.ts` 的 `canonicalCode()`，抄一份是为了守
    *    「独立功能文件」约定（功能自己的逻辑不进 app.js）。
@@ -309,7 +324,12 @@
         esc(state.q) +
         '" />' +
         (q ? '<button id="rsSearchClear" class="rs-clear" type="button" aria-label="清空搜索">✕</button>' : "") +
-        "</div></div>",
+        "</div>" +
+        // 扫码搜单号（2026-10-18 晚老板要的「两处都要」）：扫完直接把这个单号当搜索词。
+        // 图标 2026-10-19：老板嫌 ⌗ 丑（"怎么就有个井字"）→ 四选一拍的「B 取景框」
+        // （四角 + 一条横线，微信/支付宝扫码按钮同款造型）。SVG 内联，颜色跟 --brand。
+        '<button id="rsSearchScan" class="rs-scan" type="button" aria-label="扫单号">' + SCAN_ICON + "</button>" +
+        "</div>",
     );
     h.push('<div class="rs-note-host">' + (q ? searchNote(q) : "") + "</div>");
     h.push(
@@ -657,7 +677,9 @@
       ["今天", 0],
       ["明天", 1],
       ["2天后", 2],
-      ["3天后", 3],
+      // 「3天后」撤了（2026-10-19 老板："全都要自己写写出来干嘛，又大又长"）——
+      // 三天往后的自己点「N天后」填，快捷排只留最常用的。
+      // ⚠️ 底层仍存**真实日期**（钉死的口径），N 只是另一种填法，不替代日历。
     ];
     var today = todayStr();
     host.innerHTML =
@@ -666,9 +688,13 @@
       (d.id ? "编辑" : "记一条补货") +
       '<button class="rs-sheet-x" type="button" data-draft="cancel">✕</button></div>' +
       '<label class="rs-f"><span>快递单号</span>' +
+      // 单号 + 扫码（2026-10-18 晚老板要的）：扫完自动填进来，光标落到「缺的编号」那格
+      '<div class="rs-wbrow">' +
       '<input id="rsDWb" type="text" inputmode="text" autocomplete="off" placeholder="快递单号（一行一个）" value="' +
       esc(d.waybill) +
-      '" /></label>' +
+      '" />' +
+      '<button id="rsDWbScan" class="rs-scan" type="button" aria-label="扫单号">' + SCAN_ICON + "</button>" +
+      "</div></label>" +
       '<label class="rs-f"><span>缺的编号</span>' +
       '<input id="rsDItems" type="text" inputmode="text" autocomplete="off" placeholder="如 058、四叶草（可填多个）" value="' +
       esc(d.items) +
@@ -677,18 +703,21 @@
       '<div class="rs-quick">' +
       quick
         .map(function (q) {
-          var v = plusDays(q[1]);
           return (
             '<button class="rs-q' +
-            (d.due === v ? " on" : "") +
+            (d.due === plusDays(q[1]) ? " on" : "") +
             '" type="button" data-q="' +
-            v +
+            plusDays(q[1]) +
             '">' +
             q[0] +
             "</button>"
           );
         })
         .join("") +
+      // 「N天后」：数字直接填在**胶囊自己里面**（2026-10-19 老板否定"点一下弹圆圈"版：
+      // "填出来也不变绿，旁边一个圆圈也很难看"）—— 格子常驻、单位印在格子里。
+      '<span class="rs-qnwrap" data-q="n"><input id="rsQn" type="number" inputmode="numeric" ' +
+      'min="1" placeholder="N" autocomplete="off" />天后</span>' +
       "</div>" +
       '<input id="rsDDue" class="rs-dateinput" type="date" value="' +
       esc(d.due) +
@@ -709,6 +738,32 @@
     if (wb) {
       wb.oninput = function () {
         d.waybill = this.value;
+      };
+    }
+    // 扫码填单号（2026-10-18 晚）。⚠️ 三个坑：
+    //   ① 扫完**不能 renderDraft() 重画**：重画会把用户已经敲进去的编号/备注全冲掉，
+    //      而且键盘会重新弹一次。只把值写回草稿 + 写进那一格。
+    //   ② 解出来的内容可能带空格/换行（条码里偶尔带），压成一行。
+    //   ③ 填完把光标送到「缺的编号」——单号已经有了，下一步必然是填编号。
+    var wbScan = $("rsDWbScan");
+    if (wbScan) {
+      wbScan.onclick = function () {
+        openScanner(function (code) {
+          var one = String(code || "").replace(/\s+/g, " ").trim();
+          if (!one) {
+            return;
+          }
+          d.waybill = one;
+          var box = $("rsDWb");
+          if (box) {
+            box.value = one;
+          }
+          var to = $("rsDItems");
+          if (to) {
+            to.focus();
+          }
+          API.toast("单号已填入");
+        }, "扫快递单号");
       };
     }
     var it = $("rsDItems");
@@ -732,11 +787,8 @@
     if (due) {
       due.onchange = function () {
         d.due = this.value;
-        // 日期改了 → 快捷键高亮要跟着变（只动那几颗按钮的 class，不重画整张卡）
-        var qs = host.querySelectorAll(".rs-q");
-        for (var i = 0; i < qs.length; i++) {
-          qs[i].classList.toggle("on", qs[i].dataset.q === d.due);
-        }
+        // 日期改了 → 高亮跟着变（N 天后胶囊也在 paintQuick 里一并算）
+        paintQuick();
       };
     }
     var nt = $("rsDNote");
@@ -745,19 +797,54 @@
         d.note = this.value;
       };
     }
-    // 快捷键：点一下写进日期框（**换算成真实日期**再存）
+    // 快捷键：点一下写进日期框（**换算成真实日期**再存）。「N天后」那格不是按钮，
+    // 单独在下面绑（它是常驻的输入胶囊，数字填在里面）。
     host.querySelectorAll(".rs-q").forEach(function (b) {
       b.onclick = function () {
         d.due = this.dataset.q;
-        var inp = $("rsDDue");
-        if (inp) {
-          inp.value = d.due;
-        }
-        host.querySelectorAll(".rs-q").forEach(function (x) {
-          x.classList.toggle("on", x.dataset.q === d.due);
-        });
+        paintQuick();
       };
     });
+
+    /**
+     * 高亮 + 日期框回填的唯一出口：日期框被改（onchange）、点快捷键、填 N 落位，
+     * 三条路都走这里，免得哪条忘了同步谁。
+     * 「N天后」胶囊的亮法：它填的数字换算出的日期**正好等于**当前约定日期才亮。
+     */
+    function paintQuick() {
+      var inp = $("rsDDue");
+      if (inp) {
+        inp.value = d.due;
+      }
+      host.querySelectorAll(".rs-q").forEach(function (x) {
+        x.classList.toggle("on", x.dataset.q === d.due);
+      });
+      var wrap = host.querySelector(".rs-qnwrap");
+      if (wrap) {
+        var n = Math.floor(Number($("rsQn") && $("rsQn").value));
+        wrap.classList.toggle("on", n > 0 && plusDays(n) === d.due);
+      }
+    }
+
+    /** 「N天后」胶囊：数字填在格子里，回车落位；填 0/空 = 还没填，什么都不动 */
+    var qn = $("rsQn");
+    if (qn) {
+      qn.onkeydown = function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          this.blur(); // 落位统一走 blur（和编号格"打字不落位"同一条规矩）
+        }
+      };
+      qn.onblur = function () {
+        var n = Math.floor(Number(this.value));
+        if (!n || n <= 0) {
+          paintQuick(); // 没填也把高亮刷一遍（可能日期是日历改的）
+          return;
+        }
+        d.due = plusDays(n);
+        paintQuick();
+      };
+    }
     // 新建时把光标落在单号上（他要打/贴单号）；改一条时**不动键盘** —— 可能只是想改个备注
     if (!d.id) {
       var wbEl = $("rsDWb");
@@ -894,6 +981,24 @@
     }
   }
 
+  /**
+   * 打开扫码（2026-10-18 晚）。**这一块只有这一个入口**，别在别处再直连 CherysisScan。
+   * 三档降级都在这儿处理，调用方只管拿到 code：
+   *   ① scan.js / zxing 没加载上 → 明说，不装死；
+   *   ② 摄像头不可用（局域网 http）→ 由 scan.js 自己引导到「拍张照识别」；
+   *   ③ 用户中途关掉 → 什么都不发生（不能弹"失败"，他只是反悔了）。
+   */
+  function openScanner(onCode, title) {
+    if (!window.CherysisScan || typeof window.CherysisScan.open !== "function") {
+      API.toast("扫码组件没加载上，刷新一下页面再试", true);
+      return;
+    }
+    window.CherysisScan.open({
+      title: title || "扫条码",
+      onCode: onCode,
+    });
+  }
+
   /** 复制单号：https 上用 clipboard，局域网 http 只有 execCommand 这条路 */
   function copyText(txt) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -949,6 +1054,24 @@
           box.focus();
         }
         renderResultsOnly();
+        return;
+      }
+      // 扫码搜单号（2026-10-18 晚）：扫完把这个单号当搜索词，直接筛出来
+      if (t.id === "rsSearchScan") {
+        openScanner(function (code) {
+          var one = String(code || "").replace(/\s+/g, " ").trim();
+          if (!one) {
+            return;
+          }
+          state.q = one;
+          var sb = $("rsSearch");
+          if (sb) {
+            sb.value = one;
+          }
+          // 只换结果区（不整屏重画）——搜索框本身不能重建，否则键盘/光标全丢
+          renderResultsOnly();
+          API.toast("搜：" + one);
+        }, "扫单号搜索");
         return;
       }
       // 折叠 / 清空：这两种会改结构，走整体重画（它们不在"正在打字"的路径上）

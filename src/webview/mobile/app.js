@@ -2291,6 +2291,14 @@
     var lan = j && j.lanUrls && j.lanUrls.length ? j.lanUrls[0] : "";
     if (lan) {
       out += urlRow("内网", lan);
+      // 内网 https（2026-10-19 方案 B）：摄像头扫码只有 https 才开，单独给一行可复制的。
+      // 地址不另问接口 —— ping 里已经带了 httpsPort，照内网那行的主机名拼就行。
+      // 拼不出来（httpsPort=0 / 内网行缺席）就不显示，别放一个死地址在上面。
+      var hp = Number(j && j.httpsPort) || 0;
+      var m = /^http:\/\/([^:/]+):\d+/.exec(lan);
+      if (hp > 0 && m) {
+        out += urlRow("扫码用", "https://" + m[1] + ":" + hp);
+      }
     }
     var t = j && j.tunnel;
     if (t && t.state === "up" && t.url) {

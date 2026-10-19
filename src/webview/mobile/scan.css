@@ -1,0 +1,184 @@
+/* 手机版「扫条码」样式 —— 独立一份（2026-10-18 晚）。
+   跟着 scan.js 一起摘：删本文件 + scan.js + index.html 里那两行即可。
+   ⚠️ 颜色只用 :root 里那几个（--brand/--line/--card/--fg/--muted），别在这里另开一套。 */
+
+.scan-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: #000;
+}
+/* ⚠️ 自带 display:block 的元素，[hidden] 必须显式写 display:none（否则 hidden 不生效） */
+.scan-mask[hidden] {
+  display: none;
+}
+/* 全屏取景（2026-10-19 老板：「WPS 是整个全屏都可以扫码，那扫码的更快呀」）：
+   之前是一个小卡片 + 中间一个引导框，看着像"只有框里才认"，实际整帧都在解 ——
+   视觉误导让人去对准小框，白白放慢。现在整屏都是取景区：视频铺满全屏，
+   只留顶部一行标题/关闭、底部一条操作栏，中间一条细横线提示"条码放这儿"。 */
+.scan-panel {
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+.scan-h {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  padding: calc(env(safe-area-inset-top) + 8px) 8px 8px 14px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+  /* 顶部一条渐变黑，字压在视频上也看得清 */
+  background: linear-gradient(rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0));
+}
+.scan-x {
+  flex: none;
+  margin-left: auto;
+  width: 44px;
+  height: 44px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+}
+.scan-x:active {
+  opacity: 0.7;
+}
+/* 取景区：铺满整个屏幕（视频 object-fit:cover 自动画满，不留黑边也不缩小视野） */
+.scan-stage {
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+.scan-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* 中间一条细横线：提示"把条码对到这一带"，但**不限制识别范围**（整帧都解）。
+   2026-10-19：原来的"小方框 + 四周压暗"撤了 —— 它让人以为框外不认。 */
+.scan-frame {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  top: 50%;
+  height: 2px;
+  background: rgba(35, 168, 132, 0.95);
+  box-shadow: 0 0 8px rgba(35, 168, 132, 0.8);
+  pointer-events: none;
+}
+.scan-tip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom) + 86px);
+  padding: 0 16px;
+  color: #fff;
+  font-size: 13.5px;
+  text-align: center;
+  line-height: 1.5;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+.scan-tip.bad {
+  color: #ffd7a1;
+}
+.scan-acts {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px calc(env(safe-area-inset-bottom) + 10px);
+  /* 底部一条渐变黑，跟顶部对称 */
+  background: linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.72));
+}
+.scan-btn {
+  flex: 1 1 auto;
+  height: var(--tap);
+  min-height: 0;
+  border: 0;
+  border-radius: 10px;
+  background: var(--brand);
+  /* 实心绿上写字必须写死白（--brand 深色模式不换色） */
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+}
+.scan-btn:active {
+  opacity: 0.88;
+}
+.scan-btn.ghost {
+  flex: 0 0 auto;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: transparent;
+  color: #fff;
+  font-weight: 500;
+}
+
+/* ---------- 输入框右边那颗扫码小按钮（记一条弹层 / 搜索行共用） ----------
+   2026-10-18 晚老板要的：单号那边要能扫码。两处都用这同一颗，别各写一套。 */
+.rs-scan {
+  flex: none;
+  min-height: 0;
+  height: 34px;
+  width: 38px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--brand);
+  font-size: 16px;
+  line-height: 1;
+}
+.rs-scan:active {
+  background: var(--soft);
+}
+/* 单号那一格：输入框 + 扫码按钮并排（输入框吃满剩下的） */
+.rs-wbrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rs-wbrow input[type="text"] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* 搜索行里的扫码按钮：跟输入框同高（38px），贴在搜索框右边外侧 */
+.rs-searchrow .rs-scan {
+  height: 38px;
+  width: 42px;
+}
+
+/* 2026-10-19：局域网 http 下点扫码 → 提示切 668 的 https 并一键复制。
+   放在提示行正下方，绿字（与引导线同色），不抢"拍张照识别"的戏。 */
+.scan-copy {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 18%;
+  max-width: 86%;
+  padding: 8px 14px;
+  font-size: 14px;
+  line-height: 1.4;
+  color: #7ee2c0;
+  background: rgba(35, 168, 132, 0.12);
+  border: 1px solid rgba(35, 168, 132, 0.45);
+  border-radius: 10px;
+  word-break: break-all;
+  min-height: 0;
+}
+.scan-copy:active {
+  background: rgba(35, 168, 132, 0.25);
+}

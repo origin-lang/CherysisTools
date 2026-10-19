@@ -49,6 +49,18 @@ const DYNAMIC_IDS = new Set([
   "rsDNote",
   "rsSearch",
   "rsNewBtn",
+  "rsQn",
+  // 扫条码（scan.js，2026-10-18 晚）：整块遮罩由 ensureDom() 现建，html 里没有骨架。
+  // ⚠️ 豁免只给 scan.js **自己**建的这些；rsDWbScan / rsSearchScan 是挂在
+  //    restock.js 渲染出的内容里的，同样由 JS 现画 —— 一并放这儿。
+  "scanMask",
+  "scanTitle",
+  "scanVideo",
+  "scanTip",
+  "scanCopy",
+  "scanFile",
+  "rsDWbScan",
+  "rsSearchScan",
 ]);
 
 /**
@@ -1575,7 +1587,9 @@ const rsFn = (name) => {
       fails.push(".rs-mask[hidden]{display:none} 不见了：记一条的弹层会一直糊在屏幕上，关不掉");
     }
     // 输入框字号 ≥16px：iOS 上聚焦小于 16px 会整页放大
-    const rsInputs = rcss.match(/\.(rs-search|rs-dateinput)\s*\{[\s\S]{0,300}?\}/g) || [];
+    // ⚠️ 窗口 500：规则里加过 max-width/appearance/box-sizing（2026-10-19 日期框戳出屏幕）
+    //    之后这条规则超过 300 字符，300 的窗口会整条匹配不上 → 假红。
+    const rsInputs = rcss.match(/\.(rs-search|rs-dateinput)\s*\{[\s\S]{0,500}?\}/g) || [];
     const sizeOk = rsInputs.filter((r) => /font-size:\s*1[6-9]px/.test(r) || /font-size:\s*2\dpx/.test(r));
     if (sizeOk.length < 2) {
       fails.push("补货跟踪的输入框（.rs-search / .rs-dateinput）字号不是 ≥16px：iOS 聚焦时会整页放大");
@@ -1845,6 +1859,88 @@ const rsFn = (name) => {
     }
     if (!/font-size:\s*15px/.test(tabCss[0])) {
       fails.push(".p-tab 的字号不是 15px：13.5px 在 40px 高的胶囊里显得空");
+    }
+  }
+}
+
+// ===== 扫条码（scan.js + zxing.min.js，2026-10-18 晚）=====
+// 老板：「单号那边你需要弄那个扫码了…条纹码识别了」。入口两处：记一条弹层的单号格、搜索行。
+{
+  const scanPath = path.join(mobileDir, "scan.js");
+  const zxPath = path.join(mobileDir, "zxing.min.js");
+  const scanCssPath = path.join(mobileDir, "scan.css");
+  if (!fs.existsSync(scanPath)) {
+    fails.push("src/webview/mobile/scan.js 不见了：扫码整块功能没了");
+  }
+  if (!fs.existsSync(zxPath)) {
+    fails.push("src/webview/mobile/zxing.min.js 不见了：没有解码库，扫码必然解不出东西");
+  }
+  if (!fs.existsSync(scanCssPath)) {
+    fails.push("src/webview/mobile/scan.css 不见了：扫码遮罩会变成一堆裸元素");
+  }
+  if (!html.includes('src="/zxing.min.js"')) {
+    fails.push('index.html 没有引入 /zxing.min.js：scan.js 里取 window.ZXing 会拿到 undefined');
+  }
+  if (!html.includes('src="/scan.js"')) {
+    fails.push('index.html 没有引入 /scan.js：扫码点了没反应');
+  }
+  if (!html.includes('href="/scan.css"')) {
+    fails.push('index.html 没有引入 /scan.css');
+  }
+  // ⚠️ 顺序：zxing 必须在 scan.js 之前（scan.js 一执行完就记 window.CherysisScan，
+  //    里面直接引用 window.ZXing，加载顺序反了就是运行时 undefined）
+  {
+    const iZx = html.indexOf('src="/zxing.min.js"');
+    const iScan = html.indexOf('src="/scan.js"');
+    if (iZx > 0 && iScan > 0 && iZx > iScan) {
+      fails.push("index.html 里 scan.js 排在 zxing.min.js 前面：必须先加载解码库");
+    }
+  }
+
+  if (fs.existsSync(scanPath)) {
+    const sjs = fs.readFileSync(scanPath, "utf8");
+    const sjsNoCmt = sjs.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+
+    // ⭐⭐ 这条是 2026-10-18 **实测挖出来的**：canvas.getImageData() 给的是 RGBA，
+    //    直接喂 RGBLuminanceSource 解不出来（同一张 Code128 图：4 通道 ❌ / 单通道 ✅）。
+    //    浏览器里只有 RGBA 这一种来源 —— 少了这段灰度转换，扫码 100% 失败。
+    if (!/gray\[i\]\s*=/.test(sjsNoCmt) || !/RGBLuminanceSource\(gray/.test(sjsNoCmt)) {
+      fails.push("scan.js 没有把 canvas 的 RGBA 先转成单通道灰度再喂 zxing：这一版库里传 4 通道解不出来（实测），扫码会 100% 失败");
+    }
+    // 摄像头不可用时要给出可读的理由 + 引导到拍照，不能只弹个英文错误
+    if (!/isSecureContext/.test(sjsNoCmt)) {
+      fails.push("scan.js 没有判断 isSecureContext：局域网 http 下会直接抛 NotAllowedError，用户看到的是英文报错");
+    }
+    if (!/拍张照识别/.test(sjs)) {
+      fails.push("scan.js 里没有「拍张照识别」这条路：局域网 http 下摄像头用不了，扫码就彻底没法用了");
+    }
+    // 关掉时必须停流（否则摄像头灯一直亮着、电一直耗）
+    if (!/getTracks\(\)[\s\S]{0,120}\.stop\(\)/.test(sjsNoCmt)) {
+      fails.push("scan.js 的 close() 没有停掉摄像头轨道（getTracks().stop()）：关掉遮罩后摄像头会一直亮着");
+    }
+  }
+
+  if (fs.existsSync(path.join(mobileDir, "restock.js"))) {
+    const rj = fs.readFileSync(path.join(mobileDir, "restock.js"), "utf8");
+    const rjNoCmt = rj.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    // 两个入口都在（老板明确说「两处都要」）
+    if (!/id="rsDWbScan"/.test(rjNoCmt)) {
+      fails.push("restock.js 的记一条弹层里没有扫码按钮 #rsDWbScan：单号录不进去");
+    }
+    if (!/id="rsSearchScan"/.test(rjNoCmt)) {
+      fails.push("restock.js 的搜索行里没有扫码按钮 #rsSearchScan：不能扫码搜单号");
+    }
+    // 扫码只许走 openScanner() 这一个入口（别在别处直连 window.CherysisScan）
+    if (!/function openScanner\(/.test(rjNoCmt)) {
+      fails.push("restock.js 没有 openScanner()：扫码的降级处理（组件没加载/摄像头不可用）会散落在各处");
+    }
+    // 填单号**不许**重画弹层：重画会把已敲进去的编号/备注冲掉，键盘还会重弹
+    {
+      const seg = rsFn("renderDraft");
+      const scanSeg = seg ? /id="rsDwWbScan"|rsDWbScan[\s\S]{0,600}?onclick/.exec(seg) : null;
+      if (seg && /rsDWbScan[\s\S]{0,500}?onCode[\s\S]{0,500}?renderDraft\(\)/.test(seg)) {
+        fails.push("记一条弹层里扫码回调调了 renderDraft()：会把已填的编号/备注冲掉、键盘重弹（只许改 d.waybill + 输入框的值）");
+      }
     }
   }
 }

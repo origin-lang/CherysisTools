@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as http from "http";
+import * as https from "https";
 import * as path from "path";
 import { loadConfig, lanUrls, type ServerConfig } from "./config.js";
 import { createHttpHost, makeRequestSink, PrefsStore } from "./httpHost.js";
@@ -7,6 +8,7 @@ import { EventHub, shouldAnnounceChange, type SseSink } from "./events.js";
 import { SerialQueue } from "./serialQueue.js";
 import { TaskQueue } from "./taskQueue.js";
 import { startTunnel, type TunnelHandle } from "./tunnel.js";
+import { ensureTlsCert, localHosts } from "./tlsCert.js";
 import { ensureThumb, isArtifactName, listArtifacts, mimeOf, resolveArtifact } from "./liveArtifacts.js";
 import {
   GATE_COOKIE,
@@ -479,7 +481,11 @@ async function main(): Promise<void> {
   // 但 /api/ping 的闭包要用到它，所以先占个位。
   let tunnel: TunnelHandle | null = null;
 
-  const server = http.createServer((req, res) => {
+  /**
+   * 全部请求的入口。http(667) 与 https(668，方案 B 内网扫码用) **共用同一个函数**：
+   * 业务、门禁、鉴权、路由只有一份，两个端口只是"信封"不同（明文/加密）。
+   */
+  const onRequest = (req: http.IncomingMessage, res: http.ServerResponse): void => {
     void (async () => {
       const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
       const p = url.pathname;
@@ -599,6 +605,9 @@ async function main(): Promise<void> {
           tunnel: tunnel ? tunnel.status() : null,
           // 内网地址也一起给：手机从外面（4G）打开设置页时，也要能看到"在家该用哪个地址"
           lanUrls: lanUrls(cfg.port),
+          // 内网 https 端口（扫码用）：0 = 没开。前端在 http 页面上点扫码时拿它拼出
+          // "该切的那个 https 地址"，别人就不用记两个网址了
+          httpsPort: cfg.httpsPort,
           // 被封的 IP 只给局域网看：外网来的人不该知道自己有没有在名单上，更不该能点解除
           gateLocks: isFromTunnel(req) ? [] : listLocks(),
         });
@@ -783,7 +792,8 @@ async function main(): Promise<void> {
         /* 响应已经发出去了 */
       }
     });
-  });
+  };
+  const server = http.createServer(onRequest);
 
   // ⚠️⚠️ 2026-10-18：老板报「怎么现在不弹外网的访问地址和密码了」——
   //   查出来最常见的原因是**端口已经被上一次那个实例占着**：这时 listen 抛 EADDRINUSE，
@@ -847,6 +857,33 @@ async function main(): Promise<void> {
     });
     if (tunnel.status().state === "starting") {
       console.log("   外网访问：正在连 Cloudflare…（约 5~15 秒，连上会把地址和密码打在这里）");
+    }
+
+    // 内网 https（方案 B，2026-10-19）：自签证书 + 另开端口。
+    // 只有「调摄像头扫码」需要它 —— 浏览器硬性规定摄像头只在 https 下可用；
+    // 667 的 http 原样保留，其他功能一个字节都不变。
+    if (cfg.httpsPort > 0) {
+      const tls = ensureTlsCert(cfg.cacheDir);
+      if (!tls) {
+        console.log("⚠️ 内网 https 没起来：证书生成/读写失败（cacheDir 里要有写权限）。扫码请继续用外网地址");
+      } else {
+        const tlsServer = https.createServer({ key: tls.key, cert: tls.cert }, onRequest);
+        // 端口被占**不退出**（http 那边才是主服务）：打印原因继续跑，扫码那条路用不了而已
+        tlsServer.on("error", (err: any) => {
+          if (err && err.code === "EADDRINUSE") {
+            console.log(`⚠️ 内网 https 没起来：${cfg.httpsPort} 端口被别的程序占了。667 的 http 不受影响`);
+            return;
+          }
+          console.log(`⚠️ 内网 https 出错：${err?.message ?? err}`);
+        });
+        tlsServer.listen(cfg.httpsPort, cfg.host, () => {
+          console.log("   📷 手机扫码用（https 才能开摄像头，首次打开点「继续访问」）：");
+          for (const u of lanUrls(cfg.httpsPort)) {
+            console.log(`      ${u.replace(/^http:/, "https:")}${cfg.token ? `/?token=${cfg.token}` : ""}`);
+          }
+          console.log(`      （667 的 http 照旧能用，其他功能不用换地址；不想开这个端口就在配置里写 "httpsPort": 0）`);
+        });
+      }
     }
   });
 

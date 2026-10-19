@@ -41,6 +41,12 @@ export type ServerConfig = {
    * ⚠️ 开了等于把库暴露到公网（现在没有门禁），只在需要时开。
    */
   tunnel: boolean;
+  /**
+   * 内网 https 端口（方案 B，2026-10-19）：自签证书 + 另开一个端口，手机在这个端口上
+   * 浏览器才肯给摄像头（扫码）。667 的 http **原样保留**，其他功能不受影响。
+   * 0 = 关掉。默认 668。
+   */
+  httpsPort: number;
 };
 
 type RawArgs = Record<string, string>;
@@ -125,6 +131,13 @@ export function loadConfig(argv: string[]): ServerConfig {
   const tunnelRaw = pick(args["tunnel"], env("CHERYSIS_TUNNEL"), file["tunnel"], "1").toLowerCase();
   const tunnelOn = !["0", "false", "off", "no"].includes(tunnelRaw);
 
+  // 内网 https 端口：默认 668（方案 B）；写 0 / --https-port=0 关掉
+  const httpsPortRaw = pick(args["https-port"], env("CHERYSIS_HTTPS_PORT"), file["httpsPort"], "668");
+  const httpsPort = Number(httpsPortRaw);
+  if (!Number.isInteger(httpsPort) || httpsPort < 0 || httpsPort > 65535) {
+    throw new Error(`https 端口不合法：${httpsPortRaw}`);
+  }
+
   return {
     storageDir,
     imageDir,
@@ -136,6 +149,7 @@ export function loadConfig(argv: string[]): ServerConfig {
     token: pick(args["token"], env("CHERYSIS_TOKEN"), file["token"]),
     password: pick(args["password"], env("CHERYSIS_PASSWORD"), file["password"]),
     tunnel: tunnelOn,
+    httpsPort,
     publicDir: path.join(__dirname, "..", "..", "src", "webview", "mobile"),
   };
 }

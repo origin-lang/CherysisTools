@@ -622,10 +622,16 @@
 .rs-f input[type="text"],
 .rs-dateinput {
   width: 100%;
+  max-width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
   height: 42px;
-  padding: 0 12px;
   /* ⚠️ ≥16px：iOS 聚焦时整页放大的坑 */
   font-size: 16px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  /* max-width+appearance:none 必须一起上 —— iOS 给日期框内置最小宽度，
+     光 width:100% 拦不住，右缘就戳出屏幕（2026-10-19 老板："就它最长"） */
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--bg);
@@ -679,3 +685,39 @@
    ⚠️ 52×52 的圆钮在屏幕上其实不算小，问题是它**贴在右下角**：那里既是系统手势区（底部上滑、
       右上角下拉），又是手指最难够到的地方；通栏按钮 300+ × 44，随便点哪儿都中。
    断言钉着 `.rs-fab` 不许回来 —— 想换回去先想清楚这一点。 */
+
+/* 2026-10-19：「N天后」常驻胶囊（老板否掉"点一下弹圆圈"版：不改绿、圆圈难看）。
+   数字填在胶囊自己里面，单位「天后」印在格子里；填的日期正好等于约定日期才亮绿。
+   ⚠️ 不是 button（里面嵌 input），class 用 rs-qnwrap 避开 .rs-q 的点击绑定。 */
+.rs-qnwrap {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 0;
+  height: 34px;
+  padding: 0 10px 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 13px;
+}
+.rs-qnwrap.on {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: rgba(35, 168, 132, 0.08);
+}
+.rs-qnwrap input {
+  width: 30px;
+  border: none;
+  background: transparent;
+  text-align: center;
+  font-size: 16px;
+  color: var(--ink);
+  padding: 0;
+  min-height: 0;
+}
+.rs-qnwrap input:focus {
+  outline: none;
+}

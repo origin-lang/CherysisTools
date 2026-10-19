@@ -12,6 +12,9 @@
     <link rel="stylesheet" href="/live.css" />
     <!-- 补货跟踪（客户订单欠货）的样式也单独一份（同理：摘掉就删这三行 + restock.js + 那一屏 + 一个页签） -->
     <link rel="stylesheet" href="/restock.css" />
+    <!-- 扫条码（2026-10-18 晚）：样式一份，摘掉就删这行 + scan.js + 末尾那两行 script，
+         再把 restock.js 里调 CherysisScan.open() 的两处去掉。 -->
+    <link rel="stylesheet" href="/scan.css" />
     <!-- ===== 加到主屏幕（PWA-lite）=====
          手机浏览器「添加到主屏幕」后变成全屏图标，没有地址栏。只有 manifest + 这几个 meta，
          **没有 service worker**（667 是局域网纯 HTTP，浏览器不给注册 SW；也正因如此，
@@ -816,5 +819,10 @@
     <!-- 补货跟踪（客户订单欠货）：同样独立、同样必须排在 app.js 之后。
          它接的是「进货」屏里的第二个页签，进货单那边一行都不用改。 -->
     <script src="/restock.js"></script>
+    <!-- 扫条码（2026-10-18 晚）：zxing 单文件先加载（挂到 window.ZXing），scan.js 再读它。
+         ⚠️ 顺序不能反 —— scan.js 里 `window.ZXing.BrowserMultiFormatReader` 是直接取的。
+         336KB，只在第一次用扫码时才会真正被解析到解码那一步（浏览器缓存住就好）。 -->
+    <script src="/zxing.min.js"></script>
+    <script src="/scan.js"></script>
   </body>
 </html>
