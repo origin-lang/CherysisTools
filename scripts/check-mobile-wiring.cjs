@@ -1887,6 +1887,29 @@ const rsFn = (name) => {
   if (!html.includes('href="/scan.css"')) {
     fails.push('index.html 没有引入 /scan.css');
   }
+  // ⚠️ 扫码按钮的"手指够不着"修复（2026-10-19 老板："搜索行那颗不灵敏、很难点到"）。
+  //    修法有两半，缺一半都不生效：
+  //      ① .rs-scan 加 ::after 透明外扩点击区（手够得着）；
+  //      ② restock.js 判定走 closest("button")（点在图中央也算点中，见下面那条断言）。
+  //    另外 touch-action:manipulation 是去掉 300ms 双触延迟 —— 少了它，手点中了也要等一下才响应，
+  //    体感同样是"不灵敏"。
+  if (fs.existsSync(scanCssPath)) {
+    const scss = fs.readFileSync(scanCssPath, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const scanBtn = /\.rs-scan\s*\{[\s\S]{0,400}?\}/.exec(scss);
+    if (!scanBtn) {
+      fails.push(".rs-scan 的样式不见了：两颗扫码按钮会变成裸文字");
+    } else {
+      if (!/position:\s*relative/.test(scanBtn[0])) {
+        fails.push(".rs-scan 没有 position:relative：::after 点击区会跑到别的定位祖先上去");
+      }
+      if (!/touch-action:\s*manipulation/.test(scanBtn[0])) {
+        fails.push(".rs-scan 没有 touch-action:manipulation：手机上会有 300ms 双触延迟，点了像没反应");
+      }
+    }
+    if (!/\.rs-scan::after\s*\{[\s\S]{0,160}?inset:\s*-4px/.test(scss)) {
+      fails.push(".rs-scan::after 的透明外扩点击区不见了（inset:-4px）：扫码那颗又变成 38px 的窄框，手指扣不准");
+    }
+  }
   // ⚠️ 顺序：zxing 必须在 scan.js 之前（scan.js 一执行完就记 window.CherysisScan，
   //    里面直接引用 window.ZXing，加载顺序反了就是运行时 undefined）
   {
@@ -1933,6 +1956,18 @@ const rsFn = (name) => {
     // 扫码只许走 openScanner() 这一个入口（别在别处直连 window.CherysisScan）
     if (!/function openScanner\(/.test(rjNoCmt)) {
       fails.push("restock.js 没有 openScanner()：扫码的降级处理（组件没加载/摄像头不可用）会散落在各处");
+    }
+    // ⚠️⚠️ 2026-10-19 真机踩到：扫码图标换成内联 SVG 之后，点在图中央时 e.target 是
+    //    <path> 而不是 <button>，`t.id === "rsSearchScan"` 永远不成立 —— 只有点按钮那圈
+    //    1px 边框附近才生效，体感就是"点了没反应"（老板原话："很难点到"）。
+    //    判定一律走 closest("button")，这条断言就是防它退回去。
+    if (/t\.id === "rsSearchScan"|t\.id === "rsSearchClear"/.test(rjNoCmt)) {
+      fails.push(
+        'restock.js 的点击判定在拿 t.id 比按钮：按钮里嵌了 SVG，点在图中央永远匹配不上（要 closest("button")）',
+      );
+    }
+    if (!/t\.closest[\s\S]{0,60}?closest\("button"\)/.test(rjNoCmt)) {
+      fails.push('restock.js 的 root.onclick 没有走 closest("button")：嵌 SVG 的按钮点图标会没反应');
     }
     // 填单号**不许**重画弹层：重画会把已敲进去的编号/备注冲掉，键盘还会重弹
     {

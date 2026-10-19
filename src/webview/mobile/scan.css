@@ -128,19 +128,34 @@
 }
 
 /* ---------- 输入框右边那颗扫码小按钮（记一条弹层 / 搜索行共用） ----------
-   2026-10-18 晚老板要的：单号那边要能扫码。两处都用这同一颗，别各写一套。 */
+   2026-10-18 晚老板要的：单号那边要能扫码。两处都用这同一颗，别各写一套。
+   ⚠️ 2026-10-19 老板报"搜索行那颗不灵敏、很难点到"：按钮本体只有 38×34，
+   又贴着屏幕右缘，手指从右边扣下去有一半落在按钮外面。所以：
+   ① touch-action:manipulation —— 去掉 300ms 双触延迟，也禁掉双击缩放；
+   ② ::after 四周各外扩 4px 做**透明点击区** —— 视觉一点没变，手却够得着了。
+   ⚠️ 光靠这里还不够：**判定也必须走 closest("button")**（见 restock.js）。
+      点击区让手指够到按钮，但如果判定还在拿 t.id 比，点在图中央照样没反应 —— 两者是配套的。 */
 .rs-scan {
   flex: none;
   min-height: 0;
   height: 34px;
   width: 38px;
   padding: 0;
+  position: relative;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--card);
   color: var(--brand);
   font-size: 16px;
   line-height: 1;
+}
+/* 透明的外扩点击区：只扩大可点范围，不画任何东西（背景透明、无边框） */
+.rs-scan::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
 }
 .rs-scan:active {
   background: var(--soft);
@@ -155,10 +170,11 @@
   flex: 1 1 auto;
   min-width: 0;
 }
-/* 搜索行里的扫码按钮：跟输入框同高（38px），贴在搜索框右边外侧 */
+/* 搜索行里的扫码按钮：跟输入框同高（38px），贴在搜索框右边外侧。
+   2026-10-19：42×38 → 46×38（只占搜索框 4px），手指更容易扣住。 */
 .rs-searchrow .rs-scan {
   height: 38px;
-  width: 42px;
+  width: 46px;
 }
 
 /* 2026-10-19：局域网 http 下点扫码 → 提示切 668 的 https 并一键复制。

@@ -1046,7 +1046,12 @@
       var t = e.target;
       // ⚠️ 「记一条」（#rsNewBtn）不在这里：它在底栏 #rsBottombar（root 的兄弟节点），
       //    冒泡到不了 root —— 它的点击挂在 paintBottomBar() 里的按钮自己身上。
-      if (t.id === "rsSearchClear") {
+      // ⚠️⚠️ 判定一律 closest("button")（2026-10-19 老板报"这颗很难点到、不灵敏"）：
+      //   扫码图标换成内联 SVG 之后，点在图中央时 `t` 是里面的 <path>/<g>，
+      //   **t.id 是空串** → 拿 t.id 比永远不成立，只有点在按钮那圈 1px 边框附近才生效，
+      //   体感就是"点了没反应"。别再拿子元素的 id 当按钮 id。
+      var btn = t.closest ? t.closest("button") : null;
+      if (btn && btn.id === "rsSearchClear") {
         state.q = "";
         var box = $("rsSearch");
         if (box) {
@@ -1056,8 +1061,9 @@
         renderResultsOnly();
         return;
       }
-      // 扫码搜单号（2026-10-18 晚）：扫完把这个单号当搜索词，直接筛出来
-      if (t.id === "rsSearchScan") {
+      // 扫码搜单号（2026-10-18 晚）：扫完把这个单号当搜索词，直接筛出来。
+      // ⚠️ 同样走 closest("button")，理由见上面那段（按钮里嵌了 SVG）。
+      if (btn && btn.id === "rsSearchScan") {
         openScanner(function (code) {
           var one = String(code || "").replace(/\s+/g, " ").trim();
           if (!one) {
