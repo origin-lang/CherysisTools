@@ -61,6 +61,23 @@ const DYNAMIC_IDS = new Set([
   "scanFile",
   "rsDWbScan",
   "rsSearchScan",
+  // 退货核对（retcheck.js，2026-10-20）：#retBody / #retRedSheet / #retRedCode / #retRedOk
+  // 的骨架在 index.html 里（受闸门保护），**导入框 / 统计 / 色带 / 绿色反馈条**
+  // 是 render()/flash() 现画的，全在这份豁免里。
+  "retPaste",
+  "retPasteBtn",
+  "retStart",
+  "retClear",
+  "retListBtn",
+  "retListCard",
+  "retEditBtn",
+  "retEditSave",
+  "retEditCancel",
+  "retN",
+  "retRed",
+  "retBand",
+  // ⚠️ rtFlash 的豁免撤了（2026-10-20 二轮）：顶部绿条方案被否（"点绿太少、感觉没反应"），
+  //    绿色改全屏层 #retGreenSheet（骨架在 html 里，受闸门保护）。
 ]);
 
 /**
@@ -1940,6 +1957,88 @@ const rsFn = (name) => {
     // 关掉时必须停流（否则摄像头灯一直亮着、电一直耗）
     if (!/getTracks\(\)[\s\S]{0,120}\.stop\(\)/.test(sjsNoCmt)) {
       fails.push("scan.js 的 close() 没有停掉摄像头轨道（getTracks().stop()）：关掉遮罩后摄像头会一直亮着");
+    }
+  }
+
+  // ===== 工具箱 + 退货核对（2026-10-20，老板定的模块化 + 第一个工具）=====
+  {
+    // 模块化规矩：新功能必须新文件，不许往 app.js / style.css 里塞
+    for (const f of ["toolkit.js", "toolkit.css", "retcheck.js", "retcheck.css"]) {
+      if (!fs.existsSync(path.join(mobileDir, f))) {
+        fails.push(`src/webview/mobile/${f} 不见了：工具箱/退货核对没有按「一个功能一套文件」落地`);
+      }
+    }
+    for (const line of ['href="/toolkit.css"', 'href="/retcheck.css"', 'src="/toolkit.js"', 'src="/retcheck.js"']) {
+      if (!html.includes(line)) {
+        fails.push(`index.html 没有引入 ${line}：工具箱整个是死的`);
+      }
+    }
+    // 底部第五格 + 两屏骨架必须在 html 里（骨架受闸门保护，内容才在 js 里现画）
+    for (const id of ["tabTools", "screen-tools", "toolList", "screen-retcheck", "retBody", "retRedSheet", "retRedCode", "retRedOk", "retGreenSheet", "retGreenCode"]) {
+      if (!html.includes(`id="${id}"`)) {
+        fails.push(`index.html 里没有 id="${id}"：工具箱/退货核对的骨架缺了一块`);
+      }
+    }
+    // 两屏都要登记到「工具」那格亮
+    const tks = fs.existsSync(path.join(mobileDir, "toolkit.js"))
+      ? fs.readFileSync(path.join(mobileDir, "toolkit.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "")
+      : "";
+    const rcs = fs.existsSync(path.join(mobileDir, "retcheck.js"))
+      ? fs.readFileSync(path.join(mobileDir, "retcheck.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "")
+      : "";
+    if (!/registerScreen\("screen-tools",\s*"tabTools"\)/.test(tks)) {
+      fails.push("toolkit.js 没把 screen-tools 登记到 tabTools：进工具箱底部亮的是别的格");
+    }
+    if (!/registerScreen\("screen-retcheck",\s*"tabTools"\)/.test(rcs)) {
+      fails.push("retcheck.js 没把 screen-retcheck 登记到 tabTools：从工具箱点进去底部亮的是别的格");
+    }
+    if (!/retcheck/.test(tks)) {
+      fails.push("toolkit.js 的 TOOLS 表里没有退货核对：工具箱是空的");
+    }
+    // scan.js 必须支持连续模式（连续扫是这功能的根；别让人把 scan.js 退化回"解一个就关"）
+    if (fs.existsSync(path.join(mobileDir, "scan.js"))) {
+      const sj = fs.readFileSync(path.join(mobileDir, "scan.js"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+      if (!/continuous/.test(sj) || !/function pause\(\)/.test(sj) || !/function resume\(\)/.test(sj)) {
+        fails.push("scan.js 的连续模式（continuous + pause/resume）不见了：退货核对扫一个就关");
+      }
+      if (!/(^|[^\w])pause:\s*pause,/.test(sj) || !/(^|[^\w])resume:\s*resume,/.test(sj)) {
+        fails.push("CherysisScan 没把 pause/resume 挂出去：红层「知道了」之后扫不回取景");
+      }
+    }
+    // 红层要盖过扫码遮罩（.scan-mask z-index 80）
+    if (fs.existsSync(path.join(mobileDir, "retcheck.css"))) {
+      const rcc = fs.readFileSync(path.join(mobileDir, "retcheck.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+      const red = /\.rt-redsheet\s*\{[\s\S]{0,300}?\}/.exec(rcc);
+      if (!red || !/z-index:\s*90/.test(red[0])) {
+        fails.push(".rt-redsheet 的 z-index 不是 90：盖不过扫码遮罩(80)，红色尬住会被取景框顶穿");
+      }
+      if (!/\.rt-redsheet\[hidden\]\s*\{[\s\S]{0,80}?display:\s*none/.test(rcc)) {
+        fails.push(".rt-redsheet 缺 [hidden]{display:none}：自带 display 的元素 hidden 不生效，红层永远盖着");
+      }
+    }
+    // 「知道了」按钮必须在用户点之后 resume 扫码（红不放行 = 功能卡死）
+    if (!/retRedOk/.test(rcs) || !/SCAN\.resume\(\)/.test(rcs)) {
+      fails.push("retcheck.js 里「知道了」没有 SCAN.resume()：红色尬住之后扫码永远停着");
+    }
+    // 绿色也是全屏层（2026-10-20 二轮，老板否掉顶部绿条："点绿太少、感觉没反应"）：
+    // 要 pause → 定时 resume 的闭环，缺 resume 绿罩底下永远停着。
+    if (!/retGreenSheet/.test(rcs) || !/greenTimer\s*=\s*setTimeout/.test(rcs) || !/SCAN\.resume\(\)/.test(rcs)) {
+      fails.push("retcheck.js 的绿色全屏层缺 pause→定时 resume 闭环：绿罩之后扫码停死");
+    }
+    // 顶部绿条的旧方案（.rt-flash / rtFlash）不许回来
+    const rcc2 = fs.existsSync(path.join(mobileDir, "retcheck.css"))
+      ? fs.readFileSync(path.join(mobileDir, "retcheck.css"), "utf8")
+      : "";
+    if (/rtFlash/.test(rcs) || /rt-flash/.test(rcc2)) {
+      fails.push("顶部绿条（rt-flash/rtFlash）又回来了：老板否过（点绿太少），绿=全屏层 retGreenSheet");
+    }
+    // 编辑清单（2026-10-20 老板："只有入口时候才能输入清单，后面就不能编辑了"）：
+    // 按钮必须挂 renderEdit，保存后按新清单 ∩ 已扫重算红色数
+    if (!/id="retEditBtn"/.test(rcs) || !/function renderEdit\(/.test(rcs)) {
+      fails.push("retcheck.js 缺「编辑清单」（retEditBtn/renderEdit）：导入之后就没法改清单了");
+    }
+    if (!/eb\.onclick\s*=\s*renderEdit/.test(rcs)) {
+      fails.push("retcheck.js 的 #retEditBtn 没挂 renderEdit：点了编辑按钮没反应");
     }
   }
 

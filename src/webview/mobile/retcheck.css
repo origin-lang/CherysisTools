@@ -1,0 +1,187 @@
+/* 手机版「退货核对」的样式 —— **独立功能文件**，2026-10-20（工具箱第一个工具）。
+   跟着 retcheck.js 走：骨架在 index.html 的 #screen-retcheck。
+   ⚠️ 红层/绿带的 z-index 都要 **> 80**（scan.css 里 .scan-mask 是 80）——
+      扫码遮罩开着的时候它们才盖得上去。 */
+
+/* ---------- 粘贴导入态 ---------- */
+.rt-paste textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 180px;
+  padding: 10px;
+  font-size: 16px; /* ≥16px：iOS 聚焦整页放大的坑 */
+  line-height: 1.5;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.rt-hint {
+  margin-top: 8px;
+  line-height: 1.5;
+}
+.rt-act {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+.rt-act .primary {
+  flex: 1 1 auto;
+}
+
+/* ---------- 扫描态 ---------- */
+/* 顶上常驻统计条：已扫 N 件 / 红 M 件（扫一件涨一次，重复不涨） */
+.rt-stats {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.rt-stat {
+  flex: 1 1 0;
+  padding: 10px 6px;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+}
+.rt-stat b {
+  display: block;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.rt-stat span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.rt-stat.rt-g-red b {
+  color: var(--danger);
+}
+
+/* 最近一次结果的色带：常驻（绿=上一个没过 / 红会直接进尬住层），下一次扫才被顶掉 */
+.rt-band {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  word-break: break-all;
+  text-align: center;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  min-height: 20px;
+}
+.rt-band.g {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff; /* ⚠️ 实心绿上写死白：--brand 深色模式不换色，var(--fg) 会糊 */
+}
+.rt-band.r {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+/* ---------- 绿色放行层：跟红层同级的全屏罩（2026-10-20 老板二轮）----------
+   一轮做的"顶部绿条"被否：「感觉没反应…那上面点绿太少了」——
+   扫货时眼睛在货上不在屏幕上，绿也必须全屏才看得见。
+   绿层**自动消失**（约 1 秒，老板嫌 1.6 秒长改的）回到取景，不用点；红层才要按「知道了」。 */
+.rt-greensheet {
+  position: fixed;
+  inset: 0;
+  z-index: 90; /* > .scan-mask 的 80，跟红层同级 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(35, 168, 132, 0.94); /* 绿雾罩全屏 */
+}
+.rt-greensheet[hidden] {
+  display: none; /* 自带 display 的元素加 [hidden] 要显式写（老规矩） */
+}
+.rt-greencard {
+  width: 100%;
+  max-width: 340px;
+  padding: 18px;
+  border-radius: 14px;
+  background: var(--card);
+  text-align: center;
+}
+.rt-greentag {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--brand);
+  letter-spacing: 1px;
+}
+.rt-greencode {
+  margin-top: 8px;
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+.rt-greenhint {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* ---------- 红色尬住层（#retRedSheet，骨架在 index.html 里） ---------- */
+.rt-redsheet {
+  position: fixed;
+  inset: 0;
+  z-index: 90; /* > .scan-mask 的 80：盖住取景框，不按不放 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(214, 69, 69, 0.94); /* 红雾罩全屏，跟绿反馈拉开 */
+}
+.rt-redsheet[hidden] {
+  display: none; /* 自带 display 的元素加 [hidden] 要显式写（老规矩） */
+}
+.rt-redcard {
+  width: 100%;
+  max-width: 340px;
+  padding: 18px;
+  border-radius: 14px;
+  background: var(--card);
+  text-align: center;
+}
+.rt-redtag {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--danger);
+  letter-spacing: 1px;
+}
+.rt-redcode {
+  margin-top: 8px;
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--danger);
+  word-break: break-all;
+}
+.rt-redhint {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.rt-redok {
+  margin-top: 14px;
+  width: 100%;
+  min-height: 44px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--danger);
+  border: 0;
+  border-radius: 10px;
+}
+.rt-redok:active {
+  opacity: 0.85;
+}

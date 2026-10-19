@@ -32,6 +32,16 @@
     running: false,
     got: false,        // 已经解出来了 → 忽略后面的帧
     lastErr: "",
+    /**
+     * 连续模式（2026-10-20 退货核对用）：解出一个**不关**，接着解下一个。
+     * 单扫模式（补货跟踪那两颗）解出一个就 close —— 两种共用同一个遮罩和解码循环。
+     * pause/resume 给"红色尬住"用：命中待退时暂停识别，按了「知道了」再放行。
+     */
+    continuous: false,
+    paused: false,
+    /** 连续模式下 1.2 秒内同码忽略：resume 后取景框里还是同一个码，不能立刻再报一次 */
+    lastCode: "",
+    lastAt: 0,
   };
 
   /** 摄像头到底能不能用：https / localhost 才算安全上下文；有 BarcodeDetector 不是必要条件 */
@@ -95,11 +105,29 @@
 
   /** 解出结果 → 回调 + 关掉（只触发一次） */
   function finish(code) {
-    if (state.got) {
-      return;
-    }
     var s = String(code == null ? "" : code).trim();
     if (!s) {
+      return;
+    }
+    // ---------- 连续模式：不关，接着解 ----------
+    if (state.continuous) {
+      if (state.paused) {
+        return; // 红色尬住中：识别到的先忽略
+      }
+      var now = Date.now();
+      if (s === state.lastCode && now - state.lastAt < 1200) {
+        return; // 同一个码 1.2 秒内的重复帧忽略（resume 后取景框里还是它）
+      }
+      state.lastCode = s;
+      state.lastAt = now;
+      var cbC = state.onCode;
+      if (typeof cbC === "function") {
+        cbC(s);
+      }
+      return;
+    }
+    // ---------- 单扫模式：原逻辑，解出一个就关 ----------
+    if (state.got) {
       return;
     }
     state.got = true;
@@ -111,6 +139,19 @@
         cb(s);
       }, 30);
     }
+  }
+
+  /**
+   * 连续模式的「红色尬住」：暂停识别（摄像头和解码循环都还在跑，只是结果不再上报）。
+   * 按「知道了」之后调 resume() 放行 —— 那 1.2 秒同码保护就是给这一刻准备的。
+   */
+  function pause() {
+    state.paused = true;
+  }
+  function resume() {
+    state.paused = false;
+    state.lastCode = "";
+    state.lastAt = 0;
   }
 
   function close() {
@@ -325,6 +366,11 @@
     bindOnce();
     state.onCode = o.onCode;
     state.got = false;
+    // 连续模式（退货核对）：解出一个不关，由调用方 pause/resume 控制节奏
+    state.continuous = !!o.continuous;
+    state.paused = false;
+    state.lastCode = "";
+    state.lastAt = 0;
     var title = $("scanTitle");
     if (title) {
       title.textContent = o.title || "扫条码";
@@ -419,5 +465,8 @@
     open: open,
     close: close,
     available: available,
+    // 连续模式（退货核对）用：红色尬住时暂停识别，按「知道了」后放行
+    pause: pause,
+    resume: resume,
   };
 })();

@@ -1,0 +1,56 @@
+/* 手机版「工具箱」的样式 —— **独立功能文件**，2026-10-20。
+   跟着 toolkit.js 走：骨架在 index.html 的 #screen-tools，工具卡片列表在 #toolList。
+   想整体摘掉这个功能：删本文件 + toolkit.js + retcheck 的文件们 + index.html 里
+   #screen-tools / #screen-retcheck 两屏 / 底部 #tabTools 那格 / 对应 css 与 script 引入。 */
+
+/* 工具卡片：一张工具一行（图标 + 名字 + 一句话说明 + 右箭头），点整张进 */
+.tool-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  text-align: left;
+  min-height: 0;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.tool-card:active {
+  background: var(--soft);
+}
+.tool-card .tc-ic {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  border-radius: 10px;
+  background: var(--soft);
+}
+.tool-card .tc-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tool-card .tc-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.tool-card .tc-desc {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+.tool-card .tc-go {
+  flex: none;
+  color: var(--muted);
+  font-size: 18px;
+}

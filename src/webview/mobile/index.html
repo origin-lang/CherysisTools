@@ -15,6 +15,10 @@
     <!-- 扫条码（2026-10-18 晚）：样式一份，摘掉就删这行 + scan.js + 末尾那两行 script，
          再把 restock.js 里调 CherysisScan.open() 的两处去掉。 -->
     <link rel="stylesheet" href="/scan.css" />
+    <!-- 工具箱（2026-10-20）：手机版小工具的集合页，退货核对是第一个工具。
+         模块化原则（老板定的）：一个功能 = 自己的 js + 自己的 css，摘掉就删对应几行。 -->
+    <link rel="stylesheet" href="/toolkit.css" />
+    <link rel="stylesheet" href="/retcheck.css" />
     <!-- ===== 加到主屏幕（PWA-lite）=====
          手机浏览器「添加到主屏幕」后变成全屏图标，没有地址栏。只有 manifest + 这几个 meta，
          **没有 service worker**（667 是局域网纯 HTTP，浏览器不给注册 SW；也正因如此，
@@ -762,6 +766,51 @@
       <button id="viewerRetake" class="viewer-retake" style="display: none">🔄 重拍</button>
     </div>
 
+    <!-- ===== 工具箱（2026-10-20，toolkit.js）=====
+         手机版小工具的集合页。以后的小工具都注册到 #toolList 里（toolkit.js 的 TOOLS 表），
+         第一个工具 = 退货核对（retcheck.js）。
+         想整体摘掉整个工具箱：删这两屏 + 底部 #tabTools 那格 + head 里两行 css + 末尾两行 script。 -->
+    <section id="screen-tools" class="screen">
+      <header class="bar">
+        <span class="title">🧰 工具箱</span>
+      </header>
+      <main class="content">
+        <div id="toolList"></div>
+      </main>
+    </section>
+
+    <!-- ===== 退货核对（2026-10-20，retcheck.js）=====
+         粘贴一批条形码做「退货清单」→ 摄像头连续扫：
+         在清单里（要退的）= 红 + 高音 + 尬住等「知道了」；不在 = 绿 + 低音，自动下一个。
+         ⚠️ 摄像头只在 https（668）下能用，http 下 CherysisScan.open() 自己会给「复制扫码地址」的提示。
+         骨架只放壳，内容全在 retcheck.js 里画（红层 #retRedSheet 常驻本屏、hidden 控制）。 -->
+    <section id="screen-retcheck" class="screen">
+      <header class="bar">
+        <span class="title">📦 退货核对</span>
+      </header>
+      <main class="content">
+        <div id="retBody"></div>
+      </main>
+      <!-- 红色尬住层：盖满本屏，按「知道了」才回去继续扫 -->
+      <div id="retRedSheet" class="rt-redsheet" hidden>
+        <div class="rt-redcard">
+          <p class="rt-redtag">待退 · 还没退</p>
+          <p class="rt-redcode" id="retRedCode"></p>
+          <p class="rt-redhint">这件在退货清单里。把它放到「要退」那堆，再按下面继续。</p>
+          <button id="retRedOk" class="rt-redok" type="button">知道了，继续扫</button>
+        </div>
+      </div>
+      <!-- 绿色放行层（2026-10-20 二轮，老板："绿色也全屏绿一下…可以停个几秒钟"）：
+           盖满全屏约 1 秒自动消失回取景，**不用点** —— 点是红层才有的待遇。 -->
+      <div id="retGreenSheet" class="rt-greensheet" hidden>
+        <div class="rt-greencard">
+          <p class="rt-greentag">✓ 放行 · 不在退货清单</p>
+          <p class="rt-greencode" id="retGreenCode"></p>
+          <p class="rt-greenhint">这件不用退。马上回取景，继续扫下一个。</p>
+        </div>
+      </div>
+    </section>
+
     <!-- 底部 tab 栏：三个大模块（商品 / 进货 / 设置）+ 右侧一个连接指示灯。
          原先是 #status 那条 30px 高的细条（左「日志」+「🔄 有改动」+ 右灯），2026-10-12 改：
            · 「日志」     → 并进设置页当第三个页签（#tabLog）
@@ -787,6 +836,11 @@
            在 purchase.js 里接（app.js 只提供一个「注册屏幕 → 哪一格亮」的接口）。 -->
       <button id="tabPurchase" class="tb" type="button">
         <span class="ic">🧾</span>进货
+      </button>
+      <!-- 「工具」这一格（2026-10-20 第五格，老板定的）：小工具集合页（toolkit.js），
+           退货核对是第一个。五格宽度走 purchase.css 那条 flex 平分规则，自动适配。 -->
+      <button id="tabTools" class="tb" type="button">
+        <span class="ic">🧰</span>工具
       </button>
       <button id="tabSettings" class="tb" type="button">
         <span class="ic">⚙</span>设置<i id="staleDot" class="red" style="display: none" title="别人（或电脑版）改过数据了"></i>
@@ -824,5 +878,9 @@
          336KB，只在第一次用扫码时才会真正被解析到解码那一步（浏览器缓存住就好）。 -->
     <script src="/zxing.min.js"></script>
     <script src="/scan.js"></script>
+    <!-- 工具箱（2026-10-20）：小工具集合页 + 底部「工具」格的接线。排在 app.js 之后（接缝先建好） -->
+    <script src="/toolkit.js"></script>
+    <!-- 退货核对：工具箱里的第一个工具。排在 toolkit.js 之后（它从 toolkit 的 TOOLS 表注册进列表） -->
+    <script src="/retcheck.js"></script>
   </body>
 </html>
