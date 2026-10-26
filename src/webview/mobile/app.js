@@ -47,6 +47,8 @@
     page: 0,
     sort: "code",
     panelOpen: false, // 筛选展开区是否展开（在当前屏内展开，不切屏）
+    // 条件条上「+N」是不是展开着（只是这一屏的显示状态，不进任何存储）
+    pillExpand: false,
     // 筛选面板里哪几组是**展开**的（不在这里 = 折起来）。
     // 面板十来组全展开手机上要滚好几屏才到「排序」；默认只展开最常用的品类。
     openGroups: { category: 1 },
@@ -66,6 +68,9 @@
     setSummaries: {},
     setItems: [], // 当前打开的这个套装的子商品清单（setMembers 回包填）
     setOf: [], // 当前这个商品属于哪些套装（子商品详情页显示"属于 T001、T002"）
+    // 子商品清单里"就地展开"的是哪一行（存编号，不存下标 —— 下标会随增删行串位）。
+    // 空的 = 都收着。见 toggleSetInfo。
+    setOpenCode: "",
     newKind: 0, // 新建页当前选的是普通商品(0)还是套装(1)
   };
   var PAGE_SIZE = 50;
@@ -168,6 +173,19 @@
     ["sale_price", "售价"],
     ["stock", "库存"],
   ];
+  /**
+   * 条件条（#activeBar）一行里最多露几颗**真条件**，剩下的收进「+N」。
+   *
+   * 2026-10-26 老板定：条件一多会换行、最多能占掉 3 行近 90px，一屏少看一个半商品；
+   * 改成「永远一行 + 多余的收进 +N」，点开在下面补一块一个个撤。
+   *
+   * ⚠️ 这个数**没法用 getBoundingClientRect 现算**：手机版这套界面是"手机上跑网页"，
+   *    首屏渲染那一刻 #activeBar 往往还没拿到宽度（display:none → show 是同一个 tick），
+   *    量出来是 0，一算就得出"一颗都放不下"。而且同一份代码还要在电脑浏览器上给商家看，
+   *    屏宽从 320 到 1920 都有 —— 按条数留位、文字长了让 pill 自己省略号，比按像素算稳。
+   * ⚠️ 窄机（<360px）在 style.css 里改成 2 颗，见 @media (max-width: 359px)。
+   */
+  var PILL_LEAD_CAP = 3;
   // pill 上怎么称呼每一列（「搜哪一列」的下拉用的是同一批词）
   var SCOPE_LABEL = {
     all: "关键词",
@@ -1848,6 +1866,22 @@
     return out;
   }
 
+  /**
+   * 窄机（<360px）上第 3 颗条件是**用 CSS 藏掉的**（见 style.css 同一条 media query 里的注释）——
+   * 那这里算「+N」的条数时必须把它一起算进"看不见的那堆"。否则窄机上会出现
+   * 「+3」点开只有 1 条、或者干脆没有加号但第 3 条凭空消失。
+   *
+   * ⚠️ 只能靠 matchMedia 现问，**不能**拿 innerWidth 存一份常量：手机旋屏/分屏时会变。
+   * ⚠️ 这个函数只管"窄屏再少露一颗"这一条口径；屏幕宽了不用管（多露的那颗在宽度里放得下）。
+   */
+  function pillNarrowCap() {
+    try {
+      return window.matchMedia("(max-width: 359px)").matches ? 1 : 0;
+    } catch (err) {
+      return 0;
+    }
+  }
+
   function renderActive() {
     var pills = activePills();
     // 面板收起时也要知道「现在筛着几条」，所以计数挂在按钮上。
@@ -1856,24 +1890,86 @@
     $("btnFilterText").textContent = pills.length ? String(pills.length) : "";
     $("btnFilter").classList.toggle("has", pills.length > 0);
     var bar = $("activeBar");
+    var drawer = $("activeDrawer");
+    // 整条都没条件、排序也是默认 → 整块藏掉，一格像素都不占。
+    // 兜底「清除全部」一定把排序也归到 code，所以正常走不到「只剩排序」这一步
     if (!pills.length && state.sort === "code") {
       bar.innerHTML = "";
       bar.classList.remove("show");
+      if (drawer) {
+        drawer.innerHTML = "";
+        drawer.hidden = true;
+      }
+      state.pillExpand = false;
       return;
     }
     bar.classList.add("show");
-    var html = pills
-      .map(function (p) {
-        return '<button type="button" class="pill" data-clr="' + esc(p.c) + '"><span>' + esc(p.t) + "</span><b>✕</b></button>";
-      })
-      .join("");
+    // 排序也挂一条 —— 但它**不算进「+N」**：它不是筛剩下的活，是列表的摆法，
+    // 而且它总是排在最后一颗、条数再多也一定露在明面上（不然就变成"藏起来却关不掉"）
+    var all = pills.slice();
     if (state.sort !== "code") {
-      html += '<button type="button" class="pill soft" data-clr="sort"><span>排序：' + esc(SORT_LABEL[state.sort] || state.sort) + "</span><b>✕</b></button>";
+      all.push({ c: "sort", soft: 1, t: "排序：" + (SORT_LABEL[state.sort] || state.sort) });
     }
-    if (pills.length) {
-      html += '<button type="button" class="pill clear" data-clr="all">清除全部</button>';
+    var sortIsh = all.filter(function (p) {
+      return p.soft;
+    });
+    var head = sortIsh.length ? all.length - 1 : all.length; // 参与「留几颗」计算的只有真条件
+    var hasSort = sortIsh.length > 0;
+    // 上限 3 颗：在 360px 屏上「品类：xxx ✕」「系列：xxx ✕」「等级：xxx ✕ +5 清除」
+    // 正好塞得下，再多一颗就得靠 overflow 硬切（切一半的 pill 比没有还难看）。
+    // 窄机（<360px）CSS 里把第 3 颗藏掉 → 这里把 cap 减 1，让那颗算进「+N」
+    var cap = PILL_LEAD_CAP - pillNarrowCap();
+    if (cap < 1) {
+      cap = 1;
     }
-    bar.innerHTML = html;
+    // ⚠️ 容器的 px-宽度量不出来（手机版没有真正的布局引擎可靠可读），所以按**条数**留位置，
+    // 不按宽度：条件文字太长时 pill 自己会省略号（.pill span 有 text-overflow）
+    if (head + (hasSort ? 1 : 0) <= cap + 1) {
+      // 放得下：全摊开，不出现「+N」
+      state.pillExpand = false;
+      bar.innerHTML = all.map(pillHtml).join("");
+    } else {
+      // 放不下：露前 cap 条真条件 + 排序（一定露，见上）+「+N」+ 清除
+      var hidden = all.slice(cap, head);
+      var lead = all.slice(0, cap).map(pillHtml).join("");
+      lead += pillHtml({
+        c: "more",
+        more: 1,
+        t: state.pillExpand ? "收起" : "+" + hidden.length,
+        // 只有「+N」这一颗不带 ✕（展开后的「收起」带不带都行，这里统一都不带）
+        x: false,
+      });
+      lead += sortIsh.map(pillHtml).join("");
+      lead += '<button type="button" class="pill clear" data-clr="all">清除</button>';
+      bar.innerHTML = lead;
+      if (drawer) {
+        // 收起来的那些放在补块里；只在点开「+N」时存在
+        if (state.pillExpand) {
+          drawer.innerHTML = hidden.map(pillHtml).join("") + sortIsh.map(pillHtml).join("");
+          drawer.hidden = false;
+        } else {
+          drawer.innerHTML = "";
+          drawer.hidden = true;
+        }
+      }
+    }
+  }
+
+  /** 一颗条件胶囊。data-clr 就是「撤销这一条」的指令（more 例外：它是开关，不是条件） */
+  function pillHtml(p) {
+    var cls = "pill" + (p.soft ? " soft" : "") + (p.more ? " more" : "");
+    // 「+N」不带 ✕：它不是一条条件，顶着个叉会让人以为"点它=把这几条全删了"
+    return (
+      '<button type="button" class="' +
+      cls +
+      '" data-clr="' +
+      esc(p.c) +
+      '"><span>' +
+      esc(p.t) +
+      "</span>" +
+      (p.x === false ? "" : "<b>✕</b>") +
+      "</button>"
+    );
   }
 
   /** 撤掉一个条件。改完要把输入框/圆片同步回去，不然界面和 state 会各说各话 */
@@ -1884,6 +1980,10 @@
       // 再点套装圆片就是 undefined["1"] 抛错（圆片不亮、列表不动、"清除全部失效"都是这一处）。
       state.filters = { enum: emptyEnumFilters(), num: {} };
       state.q = "";
+      // 清除全部**连排序一起复位**：条件条只在「有条件或有非默认排序」时出现，
+      // 留个排序在那儿会让一整行留着却只剩一颗「排序 ✕」，白占地方
+      state.sort = "code";
+      state.pillExpand = false;
       $("q").value = "";
       updateQHint("");
       syncScopeControls();
@@ -2765,6 +2865,36 @@
    * 都是 index.html 里静态的。这样重画清单不会把输入框的焦点和「＋ 添加编号」的展开状态
    * 冲掉：原来的写法是整块 innerHTML 重建，用户正在输子商品编号时回包就会打断他。
    */
+  /**
+   * 展开 / 收起某一行子商品的详情块（2026-10-26）。
+   * **只切 class，不重画列表** —— 跟补货跟踪的 toggleOpenRow 一个道理：
+   * 重画 = 列表里所有 <img> 重新请求 + 解码 = 整列闪一下，行越多越明显。
+   * 同时只开一行：展开新的就把旧的那行 class 摘掉（state.setOpenCode 记着是谁开着）。
+   * ⚠️ state.setOpenCode 必须维护：renderSetList 重画时要按它把 .open-info 补回来，
+   *    不然"传了张图 / 改了售价"触发重画之后，展开块就无声无息收起来了。
+   */
+  function toggleSetInfo(code) {
+    var next = state.setOpenCode === code ? "" : code;
+    var prev = state.setOpenCode;
+    state.setOpenCode = next;
+    var list = $("dSetList");
+    if (!list) {
+      return;
+    }
+    if (prev) {
+      var p = list.querySelector('.setrow[data-code="' + prev + '"]');
+      if (p) {
+        p.classList.remove("open-info");
+      }
+    }
+    if (next) {
+      var n = list.querySelector('.setrow[data-code="' + next + '"]');
+      if (n) {
+        n.classList.add("open-info");
+      }
+    }
+  }
+
   function renderSetList() {
     var list = $("dSetList");
     if (!list) {
@@ -2775,20 +2905,37 @@
     if (cnt) {
       cnt.textContent = "子商品 · " + items.length + " 件";
     }
+    var openCode = state.setOpenCode || "";
     list.innerHTML = items.length
       ? items
           .map(function (it) {
+            var code = esc(it.code);
+            // 展开块是不是这一行的：**只体现在 class 上**（跟补货跟踪同一个做法）——
+            // 展开块每行都画出来、CSS 默认收着，点行只切 .open，不重画列表。
+            // 重画列表 = 所有 <img> 重新请求+解码 = 整列闪一下（10-17 在补货跟踪撞过）。
+            var isOpen = openCode === String(it.code);
             return (
-              '<div class="setrow" data-code="' +
-              esc(it.code) +
+              '<div class="setrow' +
+              (isOpen ? " open-info" : "") +
+              '" data-code="' +
+              code +
               '">' +
+              // ⚠️ **.setrow-lane 这一层不能省**（2026-10-26 栽过）：
+              //    「移出」是 position:absolute + height:100%，它的定位父级是 .setrow。
+              //    展开块（.setrow-info）也在 .setrow 里 → .setrow 变高，「移出」就跟着长高、
+              //    把展开块右边那 76px 盖住 —— 看着就是"一点开就冒出个红色移出"，
+              //    更糟的是点在展开块右侧会**误触移出把子商品删掉**。
+              //    所以把「第一行 + 移出」关进 .setrow-lane（position:relative，只占一行高），
+              //    展开块留在 lane 外面、跟在它下面。
+              '<div class="setrow-lane">' +
               // ⚠️ 进详情的入口**只在编号上**（data-open-child 挂在 .sc 上，不在整行）——
-              // 整行可点太容易误触（2026-10-11 三改）。行里其它地方点了不进详情。
+              // 整行可点太容易误触（2026-10-11 三改）。点行的其它地方是**就地展开**（见下面的
+              // .setrow-info），2026-10-26 老板定的：看图看信息不用跳页。
               '<div class="setrow-in">' +
               '<span class="sc" data-open-child="' +
-              esc(it.code) +
+              code +
               '">' +
-              esc(it.code) +
+              code +
               "</span>" +
               '<span class="sn">' +
               esc(it.name || "") +
@@ -2800,13 +2947,72 @@
               "</span>" +
               "</div>" +
               '<button type="button" class="setrow-x" data-remove="' +
-              esc(it.code) +
+              code +
               '">移出</button>' +
+              "</div>" +
+              setInfoHtml(it) +
               "</div>"
             );
           })
           .join("")
       : '<p class="muted small">还没加子商品 —— 点右上「编辑」，把这一套由哪几件组成填进来。</p>';
+  }
+
+  /**
+   * 子商品行**就地展开**的详情块（2026-10-26 老板："点击那一行…就可以看它的详细信息，
+   * 跟补货跟踪一样，看到它里面的图片，省得还要点击跳转"）。
+   *
+   * 数据来源：setItems 只带编号/名称/进价/售价/状态，所以品类、系列、等级、库存这些
+   * 回 state.products 里再查一次（那份是全量在本地，不用发请求）。查不到就整块少显示几行，
+   * 别留一堆「—」占地方。
+   *
+   * 图：直接用 /api/image 的 thumb —— 跟补货跟踪的认货照同一个接口。
+   * 取不到时 onerror 把自己 remove 掉，露出底下的「无图」占位（不留破图）。
+   */
+  function setInfoHtml(it) {
+    var code = String(it.code || "");
+    var p =
+      state.products.find(function (x) {
+        return String(x.code || "").toUpperCase() === code.toUpperCase();
+      }) || {};
+    var rows = [];
+    function row(k, v, cls) {
+      if (v === undefined || v === null || String(v).trim() === "") {
+        return;
+      }
+      rows.push('<span class="sif-k">' + k + '</span><span class="sif-v ' + (cls || "") + '">' + esc(String(v)) + "</span>");
+    }
+    row("品类", p.category);
+    row("系列", p.series);
+    // 等级只对普通商品有意义（套装没有等级）
+    row("等级", num(p.grade) || p.grade === 0 ? p.grade : "");
+    // ⚠️ 字段名是 stock_manual，不是 stock（查过 PRAGMA table_info）。
+    //    status 的语义跟列表/详情一致：**=== 1 是"已下架"**，0 才是在售（别写反）。
+    row("库存", p.stock_manual);
+    row("状态", num(it.status) === 1 || num(p.status) === 1 ? "已下架" : "在售", num(it.status) === 1 || num(p.status) === 1 ? "off" : "");
+    return (
+      '<div class="setrow-info">' +
+      // ⚠️ 图**不带** data-open-child（2026-10-26 老板："点图片还是会跳转，就不需要了，
+      //    还是只需要点那个子编号能跳转就行，其他就不要跳转了，不然太多跳转了"）。
+      //    展开块是"就地看完就走"的地方，里面任何东西都不该再跳走 ——
+      //    跳转的唯一入口只有上面那一行的编号（.setrow .sc）。
+      //    所以这里是个普通 div，不是 button。
+      '<div class="sif-pic">' +
+      '<span class="sif-noph">无图</span>' +
+      '<img src="' +
+      esc(imgUrl(code, "", "thumb")) +
+      '" alt="" loading="lazy" onerror="this.remove()" />' +
+      "</div>" +
+      '<div class="sif-body">' +
+      '<div class="sif-t">' +
+      esc(it.name || "(这个商品没写名称)") +
+      "</div>" +
+      '<div class="sif-grid">' +
+      (rows.length ? rows.join("") : '<span class="sif-k">—</span>') +
+      "</div>" +
+      "</div>" +
+      "</div>"
+    );
   }
 
   /**
@@ -2893,6 +3099,8 @@
     $("screen-detail").classList.toggle("set", isSet);
     state.setItems = [];
     state.setOf = [];
+    // 换了商品（或换了个套装），上一件"展开着的那行"没有意义了 —— 一起复位
+    state.setOpenCode = "";
     var of = $("dSetOf");
     of.style.display = "none";
     of.innerHTML = "";
@@ -4919,7 +5127,21 @@
       state.page = 0;
       renderList();
     };
+    // 条件条：点 ✕ 撤那一条；点「+N」只是把收起来的那些摊开（不是撤条件，别走 clearOne）
     $("activeBar").onclick = function (e) {
+      var pill = e.target.closest(".pill");
+      if (!pill || !pill.dataset.clr) {
+        return;
+      }
+      if (pill.dataset.clr === "more") {
+        state.pillExpand = !state.pillExpand;
+        renderActive();
+        return;
+      }
+      clearOne(pill.dataset.clr);
+    };
+    // 补块里那些条件同样是「点 ✕ 撤这一条」。撤完条数会变，renderActive 会把补块跟着收起来
+    $("activeDrawer").onclick = function (e) {
       var pill = e.target.closest(".pill");
       if (!pill || !pill.dataset.clr) {
         return;
@@ -5180,7 +5402,9 @@
             return;
           }
           var row = e.target.closest(".setrow");
-          if (!row || e.target.closest(".setrow-x")) {
+          // 展开的信息块（.setrow-info）里不许起左滑：那是"看图看信息"的地方，
+          // 在图上横着划一下不该把「移出」拽出来（2026-10-26）。
+          if (!row || e.target.closest(".setrow-x") || e.target.closest(".setrow-info")) {
             drag = null;
             return;
           }
@@ -5271,9 +5495,10 @@
           addSetMember();
           return;
         }
-        // ④ 点**编号** → 跳那个子商品的详情。只有编号带 data-open-child（见 renderSetList），
-        //    所以点行内其它地方不会跳 —— 这正是这次要的"别再一点整行就窜走"。
-        //    编辑态里**整行点击一律无效**（点编号也不进详情）：要进详情先退出编辑。
+        // ④ 点**编号** → 跳那个子商品的详情。**这是本清单里唯一的跳转入口** ——
+        //    展开块（图、名称、字段）一律不跳（老板 2026-10-26："还是只需要那个点那个子编号
+        //    能跳转就行，其他就不要跳转了，不然太多跳转了"）。
+        //    编辑态里**整行点击一律无效**：要进详情先退出编辑。
         var go = e.target.closest("[data-open-child]");
         if (go) {
           if (isEditing() || justSwiped) {
@@ -5285,6 +5510,15 @@
             return;
           }
           openDetailByCode(go.dataset.openChild);
+          return;
+        }
+        // ④′ 点**行的其它地方** → 就地展开/收起这一行的详情（2026-10-26 老板：
+        //     "点击那一行就可以看它的详细信息，跟补货跟踪一样，省得还要点击跳转"）。
+        //     ⚠️ 浏览态才认；编辑态点行什么都不做（那时行是用来左滑/右键移出的）。
+        //     ⚠️ **只切 class，不重画列表** —— 重画会让所有 <img> 重新请求+解码，整列闪一下。
+        var infoRow = e.target.closest(".setrow");
+        if (infoRow && !isEditing() && !justSwiped) {
+          toggleSetInfo(infoRow.dataset.code || "");
           return;
         }
         // ⑤ 点空白处：把推开的行收回去

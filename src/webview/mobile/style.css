@@ -289,17 +289,56 @@ textarea {
   color: #c0392b;
 }
 
-/* 生效中的条件：一条一个 pill，✕ 撤这一条 */
+/* 生效中的条件：一条一个 pill，✕ 撤这一条。
+   ⚠️ 2026-10-26 老板定（方案 B）：**永远只占一行**。原来 flex-wrap: wrap，
+   8 条条件能摞成 3 行近 90px，一屏少看一个半商品。现在不换行、撑不下的收进「+N」，
+   超出部分（窄机上文字长一点的那些）由 overflow:hidden 直接切掉，行高恒定。 */
 .pills {
   display: none;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: 8px;
   padding: 8px var(--pad);
   background: var(--card);
   border-bottom: 1px solid var(--line);
+  overflow: hidden;
 }
 .pills.show {
   display: flex;
+}
+/* 「+N」那颗：深色实心，跟蓝汪汪的条件胶囊分开，一眼看出"这里是还有几条" */
+.pill.more {
+  flex: none;
+  color: #fff;
+  background: var(--accent, #1b64f2);
+  border-color: var(--accent, #1b64f2);
+  font-weight: 600;
+}
+/* 条件胶囊：一律不收缩（缩小会让文字被切得更碎），宽度靠 .pill span 的省略号兜底。
+   「清除」推到最右边：它和「+N」是两种操作，不该挨在一起 */
+.pill {
+  flex: none;
+}
+.pill.clear {
+  margin-left: auto;
+}
+/* 点「+N」之后补出来的一块：收起来的条件全在这儿，一个个 ✕ 撤 */
+.pilldrawer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px var(--pad);
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+/* 补块里的胶囊不收缩、允许自动换行铺满（这里就是"摊开看"的地方，多几行没关系） */
+.pilldrawer .pill {
+  flex: 0 1 auto;
+}
+/* ⚠️ [hidden] 必须显式写 display:none —— 上面给了 display:flex，
+   浏览器自带的 [hidden]{display:none} 权重更低，会被顶掉（老坑，别删这行） */
+.pilldrawer[hidden] {
+  display: none;
 }
 .pill {
   display: inline-flex;
@@ -634,6 +673,13 @@ textarea {
      touchmove 里不 preventDefault 也能横拖，见 app.js 的说明 */
   touch-action: pan-y;
 }
+/* 「第一行 + 移出」这一条 lane（2026-10-26 加）：**只占一行高**，
+   底下的「移出」靠它定位，就不会被下面的展开块撑高、也不会盖住展开块。
+   ⚠️ 别把 height 写成 100% 之外的东西，也别让展开块进来 —— 一进来就回到"点开就露移出"。 */
+.setrow-lane {
+  position: relative;
+  overflow: hidden;
+}
 .setrow-in {
   display: flex;
   align-items: baseline;
@@ -686,6 +732,89 @@ textarea {
   background: var(--danger);
   color: #fff;
   font-size: 13px;
+}
+/* ===== 子商品行「就地展开」的详情块（2026-10-26）=====
+   老板："点击那一行就可以看它的详细信息，跟补货跟踪一样，看到它里面的图片，省得还要点击跳转"。
+   ⚠️ 跟补货跟踪 .pit-x 同一个做法：**每行都画出来、CSS 默认收着**，点行只切 .open-info，
+      不重画列表（重画 = 所有 <img> 重新请求+解码 = 整列闪一下）。
+   ⚠️ 收起用 display:none（不是 max-height 过渡）—— 图是 lazy 的，display:none 下不会解码，
+      底下几十行都不占内存；展开时才拉那张 thumb。 */
+.setrow-info {
+  display: none;
+  gap: 10px;
+  padding: 10px 2px 12px;
+  background: var(--card);
+}
+.setrow.open-info .setrow-info {
+  display: flex;
+}
+/* 图：固定方框，取不到时露出底下的「无图」占位（img 自己 onerror remove）
+   ⚠️ 这里是**纯展示的 div**，不是按钮 —— 展开块里不设任何跳转入口
+      （老板 2026-10-26："点图片还是会跳转，就不需要了…不然太多跳转了"）。
+      所以不要 cursor:pointer、不要 hover 变化，看着能点人就会去点。 */
+.sif-pic {
+  position: relative;
+  flex: none;
+  width: 76px;
+  height: 76px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sif-pic img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.sif-noph {
+  font-size: 11px;
+  color: var(--muted);
+}
+.sif-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.sif-t {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 两列：左列是标签（灰、定宽），右列是值。格子多但都短，竖着排一长条反而难扫。 */
+.sif-grid {
+  display: grid;
+  grid-template-columns: auto 1fr auto 1fr;
+  gap: 3px 6px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.sif-k {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.sif-v {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sif-v.off {
+  color: var(--muted);
+}
+/* 桌面：整行其它地方能展开详情，悬停给个浅底让"这一行能点"看得出来 */
+@media (hover: hover) and (pointer: fine) {
+  .setbox:not(.editing) .setrow-in:hover {
+    background: var(--soft);
+  }
 }
 /* ===== 套装（可整体移除）=====
    ⚠️ 2026-10-11 **三改**：这里原先有一整块 `@media (hover:hover) and (pointer:fine)`，
@@ -2436,6 +2565,16 @@ img.ncp-thumb[hidden] {
   #screen-detail .row2 {
     flex-direction: column;
     gap: 0;
+  }
+}
+/* 窄机上的条件条：一行露 2 颗真条件就够了（见 app.js 的 PILL_LEAD_CAP 说明）。
+   ⚠️ 这两条必须写在这里 —— 用 `+` 选择器无法"改小 js 里的常量"，
+   所以做法是：把第 3 颗真条件藏掉，再由「+N」把它算进隐藏条数里。
+   也就是说 js 那边"3 颗都画出来了"，这里只把第 3 颗的**显示**藏了 ——
+   条数仍由 js 算，两边不会各说各话（藏掉的那颗本来就带 data-clr，不影响 ✕ 计数）。 */
+@media (max-width: 359px) {
+  .pills > .pill:not(.more):not(.soft):not(.clear):nth-of-type(3) {
+    display: none;
   }
 }
 /* 详情页有了浮动底条，提示浮层（.toast）会被压在底条上：窄屏把提示抬到它上面。
