@@ -3806,6 +3806,14 @@
    * 不传就沿用输入框里当前那个前缀 —— 与老行为一致（打了 L007 就顺着 L 段往下找）。
    */
   function nextFreeCode(prefix) {
+    var code = computeFreeCode(prefix);
+    if (code) {
+      $("nCode").value = code;
+    }
+  }
+
+  /** 算一个库里没有的空号（不写进任何输入框），给「🆕 新建子编号」预填用 */
+  function computeFreeCode(prefix) {
     var raw = String($("nCode").value || "").trim().toUpperCase();
     var m = /^([A-Z])(\d{1,4})$/.exec(raw);
     if (!prefix) {
@@ -3818,11 +3826,11 @@
     for (var n = 1; n <= 9999; n++) {
       var code = prefix + String(n).padStart(3, "0");
       if (!used[code]) {
-        $("nCode").value = code;
-        return;
+        return code;
       }
     }
     pushLog("❌这个前缀的编号用满了");
+    return "";
   }
 
   /**
@@ -3923,6 +3931,61 @@
       })
       .join("");
     box.style.display = newSetChildren.length ? "" : "none";
+    // 分组标题上的计数（2026-10-26 UI 重排：「子商品 · 已加 3 件」）
+    var cnt = $("nSetCount");
+    if (cnt) {
+      cnt.textContent = "· 已加 " + newSetChildren.length + " 件";
+    }
+    renderNewSetSum();
+  }
+
+  /**
+   * 新建页套装形态的「合计进价 / 比合计」两行（2026-10-26 UI 重排）。
+   * 清单里每件到 state.products 查现价求和 —— 跟详情页的合计同一口径（**现算不落库**），
+   * 子商品一调价这里立刻跟着变。比合计 = 手填售价 − 合计售价（负=让利绿，正=比拆开买还贵红）。
+   */
+  function renderNewSetSum() {
+    var costEl = $("nSetSumCost");
+    var diffEl = $("nSetSumDiff");
+    if (!costEl || !diffEl) {
+      return;
+    }
+    var sumCost = 0;
+    var sumSale = 0;
+    var known = 0;
+    newSetChildren.forEach(function (c) {
+      var p = state.products.find(function (x) {
+        return String(x.code || "").toUpperCase() === c;
+      });
+      if (!p) {
+        return;
+      }
+      known++;
+      sumCost += num(p.cost_price);
+      sumSale += num(p.sale_price);
+    });
+    sumCost = Math.round(sumCost * 100) / 100;
+    sumSale = Math.round(sumSale * 100) / 100;
+    // ⚠️ money() 自己就带 "¥"（见文件顶部），前面**绝不能再拼 "¥ "** ——
+    // 2026-10-26 晚这里拼重了，页面上显示成「¥ ¥5」，老板一眼看出来。
+    // 口径跟详情页 renderSetSum 一致：符号只由 money() 出，这一层只加正负号和说明。
+    costEl.textContent = known ? money(sumCost) : "—";
+    var mySale = num($("nSale") ? $("nSale").value : 0);
+    diffEl.className = "nval";
+    if (!known || mySale <= 0) {
+      diffEl.textContent = "—";
+      return;
+    }
+    var diff = Math.round((mySale - sumSale) * 100) / 100;
+    if (diff === 0) {
+      diffEl.textContent = "同价";
+    } else if (diff < 0) {
+      diffEl.className = "nval g";
+      diffEl.textContent = "− " + money(-diff) + "（让利）";
+    } else {
+      diffEl.className = "nval r";
+      diffEl.textContent = "+ " + money(diff);
+    }
   }
 
   function resetNewSetChildren() {
@@ -3933,6 +3996,9 @@
     if (inp) {
       inp.value = "";
     }
+    // 「🆕 新建子编号」面板跟清单一起收（切类型/保存成功都会走到这）
+    // ⚠️ 核对卡（ncpBuilt）**不在这清**——老板要新建的常驻展示，套装保存成功才清。
+    closeNcp();
   }
 
   function addNewSetChild() {
@@ -3970,18 +4036,211 @@
     inp.focus();
   }
 
+  // ===== 「🆕 新建子编号」面板（2026-10-26 讨论 5 轮定稿）=====
+  // 独立小面板，跟套装表单互不碰：编号自动预填库里没有的 A 码，只填名称/进价/售价 + 一张图。
+  // 建成 → 图按编号目录上传（复用 sendImages）→ 编号自动进 newSetChildren → 绿条 + 带图核对卡。
+  var ncpFile = null; // 面板里选的那张图（File）
+  var ncpThumbUrl = ""; // 预览 objectURL，收面板/重选时要 revoke
+
+  function setNcpHint(msg) {
+    var el = $("ncpHint");
+    if (!el) {
+      return;
+    }
+    el.textContent = msg || "";
+    el.style.display = msg ? "" : "none";
+  }
+
+  function openNcp() {
+    var panel = $("nChildPanel");
+    if (!panel) {
+      return;
+    }
+    var code = computeFreeCode("A");
+    if (code) {
+      $("ncpCode").value = code;
+    }
+    panel.hidden = false;
+    $("ncpName").focus();
+  }
+
+  function closeNcp() {
+    var panel = $("nChildPanel");
+    if (!panel) {
+      return;
+    }
+    panel.hidden = true;
+    ["ncpCode", "ncpName", "ncpCost", "ncpSale"].forEach(function (id) {
+      $(id).value = "";
+    });
+    setNcpHint("");
+    ncpClearImg();
+  }
+
+  function ncpClearImg() {
+    if (ncpThumbUrl) {
+      URL.revokeObjectURL(ncpThumbUrl);
+      ncpThumbUrl = "";
+    }
+    ncpFile = null;
+    var t = $("ncpThumb");
+    if (t) {
+      t.src = "";
+      t.hidden = true;
+      // 只设 hidden 不够：.ncp-thumb 自己写了 display:block，会把 [hidden] 的 display:none 顶掉
+      // （项目里的老坑）。所以显式把 display 关掉，别指望 hidden 属性。
+      t.style.display = "none";
+    }
+  }
+
+  /** 建好后的回显：**常驻**（2026-10-26 老板：新建的要一直下面展示，方便核对）。
+      每建一件累积一张卡（图用本地 objectURL 秒出），只在套装真正保存成功后才清。 */
+  var ncpBuilt = [];
+
+  function renderNcpDone() {
+    var box = $("ncpDone");
+    if (!box) {
+      return;
+    }
+    box.innerHTML = ncpBuilt
+      .map(function (it, i) {
+        return (
+          '<div class="ncp-card">' +
+          '<img class="ncp-card-img" src="' +
+          (it.thumbUrl || imgUrl(it.code, "", "mid")) +
+          '" alt="" />' +
+          '<div class="ncp-card-info"><div class="ncp-card-t">' +
+          esc(it.code) +
+          " · " +
+          esc(it.name) +
+          "</div>" +
+          '<div class="ncp-card-p">进价 ' +
+          money(it.cost) +
+          " · 售价 " +
+          money(it.sale) +
+          "</div></div>" +
+          '<button class="ncp-card-x" type="button" data-ncp-built="' +
+          i +
+          '" title="从套装清单里摘掉（商品还在库里）">✕</button>' +
+          "</div>"
+        );
+      })
+      .join("");
+    box.hidden = ncpBuilt.length === 0;
+  }
+
+  function clearNcpBuilt() {
+    ncpBuilt.forEach(function (it) {
+      if (it.thumbUrl) {
+        URL.revokeObjectURL(it.thumbUrl);
+      }
+    });
+    ncpBuilt = [];
+    renderNcpDone();
+  }
+
+  function ncpSave() {
+    var code = canonicalCode(String($("ncpCode").value || "").trim());
+    var name = String($("ncpName").value || "").trim();
+    if (!code) {
+      setNcpHint("编号格式不对");
+      return;
+    }
+    if (findCodeOwner(code)) {
+      setNcpHint(code + " 库里已经有了，换个编号");
+      return;
+    }
+    if (!name) {
+      setNcpHint("名称必填");
+      return;
+    }
+    if (newSetChildren.indexOf(code) >= 0) {
+      setNcpHint(code + " 已经在套装清单里了");
+      return;
+    }
+    var payload = {
+      code: code,
+      name: name,
+      category: "",
+      series: "",
+      grade: 0,
+      costPrice: num($("ncpCost").value),
+      salePrice: String($("ncpSale").value || "").trim() === "" ? 0 : num($("ncpSale").value),
+      initialStock: 0,
+      purchaseLink: "",
+      remark: "套装子商品（随 " + String($("nCode").value || "").trim().toUpperCase() + " 建的）",
+      kind: 0, // 从这里建的永远是普通商品（套装不能套套装）
+    };
+    var file = ncpFile;
+    $("ncpSave").disabled = true;
+    invoke("addProduct", payload)
+      .then(function (j) {
+        $("ncpSave").disabled = false;
+        var ok = (j.posts || []).some(function (m) {
+          return m && m.type === "toast" && String(m.text || "").indexOf("已新建") >= 0;
+        });
+        if (!ok) {
+          var why = ((j && j.logs) || []).filter(function (t) {
+            return String(t).indexOf("❌") >= 0;
+          })[0];
+          setNcpHint(why ? String(why).replace(/^❌/, "") : "没建成，看看日志里的原因");
+          return;
+        }
+        state.imgStatsLoaded = false;
+        // 编号自动进清单（跟手输添加一个待遇）
+        newSetChildren.push(code);
+        renderNewSetTags();
+        var thumbUrl = ncpThumbUrl;
+        ncpThumbUrl = ""; // 预览 URL 移交给核对卡（常驻展示用），不 revoke
+        ncpClearImg();
+        ncpFile = null;
+        var inputs = ["ncpCode", "ncpName", "ncpCost", "ncpSale"];
+        var nextCode = computeFreeCode("A");
+        inputs.forEach(function (id) {
+          $(id).value = "";
+        });
+        $("ncpCode").value = nextCode; // 接着建下一件：又自动挑一个空号
+        setNcpHint("");
+        ncpBuilt.push({
+          code: code,
+          name: name,
+          cost: payload.costPrice,
+          sale: payload.salePrice,
+          hasImg: !!file,
+          thumbUrl: thumbUrl,
+        });
+        renderNcpDone();
+        if (file) {
+          // 图随后台走：编号目录已经有了，直接传
+          sendImages(code, [file]);
+        }
+      })
+      .catch(function () {
+        $("ncpSave").disabled = false;
+        setNcpHint("网络不对，没建成，再试一次");
+      });
+  }
+
+  /**
+   * 定类型：这一屏到底是普通商品还是套装。
+   * ⚠️ 2026-10-26 晚老板改口径了（原话："不想做这两个 tab 页了……感觉做不是很好，容易出问题"）：
+   *   类型**不再在新建页里切**，而是点「＋」时先弹 #newKindSheet 选一次，选完进页、进页即锁死。
+   *   所以这里只做"摆一次表单"，不负责"改口径" —— 换类型唯一的路是返回再点「＋」。
+   *   原来那条"切类型要把编号清掉/补 T 码"的逻辑跟着页内开关一起撤了：锁死之后没有"切"这回事。
+   */
   function applyNewKind(k) {
     state.newKind = k === 1 ? 1 : 0;
     var isSet = state.newKind === 1;
-    var seg = $("nKind");
-    if (seg) {
-      var bs = seg.querySelectorAll("button");
-      for (var i = 0; i < bs.length; i++) {
-        bs[i].classList.toggle("on", num(bs[i].dataset.kind) === state.newKind);
-      }
-    }
     if ($("nTitle")) {
-      $("nTitle").textContent = isSet ? "＋ 新建套装" : "＋ 新建商品";
+      $("nTitle").textContent = isSet ? "新建套装" : "新建商品";
+    }
+    // 类型标识条：只报"在建什么"，不给改的入口（要换就返回重选）
+    var note = $("nKindNote");
+    if (note) {
+      note.textContent = isSet
+        ? "在建套餐 / 套装　·　要改成普通商品，返回重新点「＋」"
+        : "在建普通商品　·　要改成套餐 / 套装，返回重新点「＋」";
+      note.style.display = isSet ? "" : "none";
     }
     var sc = $("screen-new");
     if (sc) {
@@ -3993,34 +4252,65 @@
         n.style.display = isSet ? "" : "none";
       });
     }
-    // 切类型只收子编号清单（套装专属）；图片是共用队列跟着走，不清
-    if (!isSet) {
-      resetNewSetChildren();
-    }
     if ($("nSale")) {
       $("nSale").placeholder = isSet ? "手填（打包价）" : "留空按规则";
     }
-    var inp = $("nCode");
-    if (inp) {
-      var cur = String(inp.value || "").trim().toUpperCase();
-      var curIsT = /^T\d{1,4}$/.test(cur);
-      // 对不上就清掉重找：套装必须 T 开头、普通商品不能 T 开头。
-      // 只在"确实对不上"时动它，别把用户刚手打的 A 段号冲掉。
-      if (cur && curIsT !== isSet) {
-        inp.value = "";
+    /**
+     * 兜底：编号框里如果留着**跟本次类型对不上**的号，直接清掉（进页时 enterNewScreen 会重算空号）。
+     * 口径（2026-10-26 晚查过真实库定的）：**普通商品 = A 段、套装 = T 段**。
+     *   真实库里 556 件：A 536 / T 18（全是 kind=1 套装）/ L 1 / B 1。
+     *   所以不再"放行其他字母段"—— 别的前缀（L/B/手滑打成别的）都算对不上，一律重算。
+     * 只清不算：重算交给 enterNewScreen，免得这里和那边各算一次、两处口径将来漂开。
+     */
+    var codeEl = $("nCode");
+    if (codeEl) {
+      var cur = String(codeEl.value || "").trim().toUpperCase();
+      var curIsT = /^T/.test(cur);
+      if (cur && (isSet ? !curIsT : curIsT || !/^A/.test(cur))) {
+        codeEl.value = "";
       }
-      if (isSet && !String(inp.value || "").trim()) {
-        nextFreeCode("T");
-      }
+      // ⚠️ placeholder 必须跟着类型走（2026-10-26 老板："编号的 placeholder 是 A001，
+      // 套装那边不应该显示 T 开头吗，会容易误导"）。写死成 A001 时，人把编号删空
+      // 看到的就是"这里应该填 A 开头"，跟套装页自相矛盾。跟 nSale 的 placeholder 同一套做法。
+      codeEl.placeholder = isSet ? "T001" : "A001";
     }
-    checkNewCode();
     if (isSet) {
-      $("ruleHint").textContent =
-        "套装不记库存、不参与等级算价：售价手填（打包价），进价是子商品进价之和。" +
-        "在「子编号」里把这套的组成填进来（必须是库里已有的编号）；也可以建好后再去详情页加。";
+      $("ruleHint").textContent = "";
     } else {
       updateRuleHint();
     }
+  }
+
+  /** 点「＋」之后要选的东西全在这一格：选完再进新建页（先定后填） */
+  function openKindSheet() {
+    var s = $("newKindSheet");
+    if (s) {
+      s.classList.add("show");
+    }
+  }
+  function closeKindSheet() {
+    var s = $("newKindSheet");
+    if (s) {
+      s.classList.remove("show");
+    }
+  }
+
+  /**
+   * 进新建页：**先摆类型、再算空号**，顺序不能反。
+   * applyNewKind 会把编号框按类型对齐（套装必须 T 开头），所以必须先定类型。
+   *
+   * ⚠️⚠️ 空号这里**必须无条件重算**，不能"只在框是空的时候才填" —— 2026-10-26 晚栽过：
+   *   上一次退出新建页（点返回）编号框里的 A001 没清，下次选「套装」进来，
+   *   因为框"不空"就跳过了填号，于是套装顶着 A001 进了页 —— 老板说的
+   *   「新建套装永远都是 A」。当时还骗过了肉眼看代码，是抽函数跑用例才复现出来的。
+   *   现在没有"需要保留的半成品"这回事（每次都是新开一页），所以一律按本次类型重算。
+   */
+  function enterNewScreen(isSet) {
+    closeKindSheet();
+    applyNewKind(isSet ? 1 : 0);
+    nextFreeCode(isSet ? "T" : "A");
+    checkNewCode();
+    show("screen-new");
   }
 
   // 新建页先选好照片，保存成功后再传（没编号就传不了，图片挂在编号目录下）。
@@ -4158,6 +4448,7 @@
       $("nSale").value = "";
       $("nStock").value = "0";
       resetNewSetChildren(); // ===== 套装（可整体移除）===== 子编号清单随表单一起清
+      clearNcpBuilt(); // 套装保存成功，常驻核对卡的使命结束
       checkNewCode(); // 清掉编号框下面那行红字
       renderNewShots();
       state.imgStatsLoaded = false; // 新商品还没图，之前统计的不算数
@@ -5072,11 +5363,13 @@
         openDetailAt(state.detail.idx + 1);
       }
     };
+    // 点「＋」不再直接进新建页：先弹「新建什么？」（普通商品 / 套餐·套装），选完才进。
+    // 老板的口径（2026-10-26）：类型在**填之前**就定死，页里不给改 —— 填到一半换类型的坑全没了。
     $("btnNew").onclick = function () {
       if (!$("nGrade").options.length) {
         fillGradeSelect();
       }
-      show("screen-new");
+      openKindSheet();
     };
     $("btnNewBack").onclick = function () {
       closePanel();
@@ -5179,6 +5472,11 @@
       if ($("fieldSheet").classList.contains("show")) {
         return;
       }
+      // 新建前那个「新建什么？」选择层同理：Esc 先关它
+      if ($("newKindSheet").classList.contains("show")) {
+        closeKindSheet();
+        return;
+      }
       // 筛选抽屉 → 详情/新建抽屉（一次只关一层）
       if (state.panelOpen) {
         setFilterOpen(false);
@@ -5233,13 +5531,19 @@
 
     wirePicker("btnUploadPick", "filePickGallery", uploadFiles);
     // ---- 新建页 ----
-    // ===== 套装（可整体移除）===== 普通 / 套装开关：切之前先把当前那一格结算掉（编号/名称可能刚打完）
-    $("nKind").onclick = function (e) {
-      var b = e.target.closest("button[data-kind]");
-      if (!b) {
-        return;
+    // 先选类型（普通商品 / 套餐·套装）→ 选定即进页，页里类型锁死
+    $("nkNormal").onclick = function () {
+      enterNewScreen(false);
+    };
+    $("nkSet").onclick = function () {
+      enterNewScreen(true);
+    };
+    $("nkCancel").onclick = closeKindSheet;
+    // 点遮罩空白处 = 取消（下缘那条按点击位置判：点在面板上、而面板本身不是 target 就不算）
+    $("newKindSheet").onclick = function (e) {
+      if (e.target === $("newKindSheet")) {
+        closeKindSheet();
       }
-      applyNewKind(num(b.dataset.kind));
     };
     // ===== 套装（可整体移除）===== 新建套装的子编号块：按钮/回车都加，✕ 删
     $("nSetAddBtn").onclick = addNewSetChild;
@@ -5247,6 +5551,50 @@
       if (e.key === "Enter") {
         e.preventDefault();
         addNewSetChild();
+      }
+    };
+    // 「🆕 新建子编号」面板：开关 + 选图 + 保存
+    $("nSetNewBtn").onclick = openNcp;
+    $("ncpClose").onclick = closeNcp;
+    $("ncpSave").onclick = ncpSave;
+    wirePicker("ncpImgBtn", "ncpImgFile", function (files) {
+      var f = files && files[0];
+      if (!f) {
+        return;
+      }
+      if (ncpThumbUrl) {
+        URL.revokeObjectURL(ncpThumbUrl);
+      }
+      ncpFile = f;
+      ncpThumbUrl = URL.createObjectURL(f);
+      var t = $("ncpThumb");
+      t.src = ncpThumbUrl;
+      t.hidden = false;
+      t.style.display = "block"; // 见 ncpClearImg：display 得显式管
+    });
+    $("ncpCode").onblur = function () {
+      var c = canonicalCode(String($("ncpCode").value || "").trim());
+      if (c && findCodeOwner(c)) {
+        setNcpHint(c + " 库里已经有了，换个编号");
+      }
+    };
+    // 核对卡上的 ✕ = 把这件从套装清单里摘掉（商品本身还在库里）
+    $("ncpDone").onclick = function (e) {
+      var x = e.target.closest("[data-ncp-built]");
+      if (!x) {
+        return;
+      }
+      var i = num(x.dataset.ncpBuilt);
+      if (i < 0 || i >= ncpBuilt.length) {
+        return;
+      }
+      var c = ncpBuilt[i].code;
+      ncpBuilt.splice(i, 1);
+      renderNcpDone();
+      var k = newSetChildren.indexOf(c);
+      if (k >= 0) {
+        newSetChildren.splice(k, 1);
+        renderNewSetTags();
       }
     };
     $("nSetTags").onclick = function (e) {
@@ -5262,6 +5610,8 @@
     };
     $("nCode").oninput = checkNewCode;
     $("nCode").onblur = checkNewCode;
+    // 售价一动，「比合计」跟着重算（套装形态才有那两行，普通商品时无副作用）
+    $("nSale").oninput = renderNewSetSum;
     // 新建页的名称同样不许有空格（导入是按空白分列的）
     wireNoSpaceInput("nName", FIELD_LABEL.name);
     $("btnNextCode").onclick = function () {

@@ -479,30 +479,6 @@ textarea {
 .tbl td.mut {
   color: var(--muted);
 }
-/* 新建页的「普通商品 / 套装」开关：照抄进货单/补货跟踪的胶囊页签样式
-   （老板定的：喜欢进货那边的大胶囊，不要分段滑块） */
-.kindseg {
-  display: flex;
-  gap: 6px;
-  margin-bottom: var(--gap);
-}
-.kindseg button {
-  flex: 1 1 0;
-  min-width: 0;
-  min-height: 0;
-  height: 40px;
-  padding: 0;
-  border: 0;
-  border-radius: 20px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 15px;
-}
-.kindseg button.on {
-  background: var(--brand);
-  color: #fff;
-  font-weight: 600;
-}
 /* ===== 套装（可整体移除）=====
    套装**也走三个页签**（2026-10-11 改定，见 docs/套装-设计方案.md 五·5.1）：
      基本信息 = 名称 / 品类 / 系列 + 子商品清单（#dSetListCard）
@@ -1441,17 +1417,10 @@ input.bad {
   overflow-x: auto;
   padding-bottom: 10px;
 }
-/* ===== 套装（可整体移除）===== 新建套装子编号块（2026-10-26）。
-   方案2定稿：添加=实心绿主钮、空号=绿边次钮；标签胶囊横排可滚。 */
-button.nextbtn {
-  color: var(--brand);
-  border-color: var(--brand);
-  font-size: 12px;
-}
-button.addbtn {
-  background: var(--brand);
-  color: #fff;
-}
+/* ===== 新建页：普通/套装**页内开关已整个撤掉**（2026-10-26 晚）。
+   类型改成点「＋」时先弹一次选择（#newKindSheet，样式复用 .sheetbg/.sheet + .p-opt），
+   进页即锁死，页里只有一条 .nk-note 说明在建什么、要换请返回重选。
+   下面只剩子编号标签的基础外观 —— 具体配色在「新建页表单重排」那一块里覆盖。 */
 .nset-tag {
   display: inline-flex;
   align-items: center;
@@ -1561,6 +1530,270 @@ button.addbtn {
 .row2 > * {
   flex: 1;
   min-width: 0;
+}
+
+/* ===== 新建页表单重排（2026-10-26）=====
+   原来每项都是「标签在上 + 独立大框在下」，每项占两行、整页又大又散。
+   现在：分组标题（小灰字）+ 白底圆角组，组内每行是「左标签列 + 右值」，
+   行间 0.5px 细线分隔。格子高度收到 40px（点按够大但不臃肿）。
+   ⚠️ 输入字号一律 16px —— 低于 16 一点进去 iOS 就整页放大。 */
+.nform {
+  padding: 0 var(--pad) var(--pad);
+}
+.ngroup-t {
+  margin: 14px 2px 6px;
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+}
+.ngroup-t:first-child {
+  margin-top: 6px;
+}
+/* 类型标识条（2026-10-26 晚）：原先这里是一条「普通商品 / 套装」页内开关，老板否掉了
+   （"不想做这两个 tab 页了……容易出问题"）。现在类型在点「＋」时就选定了，进页后锁死，
+   这一行只报"在建什么"，所以按**说明文字**画，不做成按钮/胶囊的样子 ——
+   看着像能点的东西，人就会去点，一点就出问题。 */
+.nk-note {
+  margin: 0 var(--pad) 2px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--brand);
+  border-radius: 0 8px 8px 0;
+  background: rgba(35, 168, 132, 0.07);
+  color: var(--brand);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.ngroup {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 12px;
+  overflow: hidden;
+}
+.nrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  border-bottom: 1px solid var(--line-soft, rgba(128, 128, 128, 0.14));
+}
+.nrow:last-child {
+  border-bottom: none;
+}
+.nrow[data-set-hide],
+.nrow[data-set-show] {
+  /* display 由 JS 的 applyNewKind 管，这里不写死 */
+}
+.nk {
+  width: 56px;
+  flex: none;
+  font-size: 12px;
+  color: var(--muted);
+}
+.nrow .nv,
+.ngroup input.nv,
+.ngroup select.nv {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 16px;
+  color: var(--fg);
+  outline: none;
+}
+.nv-code {
+  flex: 0 0 88px !important;
+  font-weight: 500;
+}
+/* 只读值（合计进价 / 比合计）：跟输入格一样的行高，但不可点 */
+.nval {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  color: var(--muted);
+}
+.nval.g {
+  color: var(--brand);
+}
+.nval.r {
+  color: var(--danger, #d9534f);
+}
+/* 行尾的小号文字按钮（下一个空号）：不要框、只要字 */
+.nside {
+  min-height: 0;
+  flex: none;
+  padding: 2px 0 2px 6px;
+  border: none;
+  background: transparent;
+  color: var(--brand);
+  font-size: 12px;
+}
+/* 子商品那一行的「添加」+「＋」 */
+.nbtn {
+  min-height: 0;
+  flex: none;
+  height: 30px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 13px;
+}
+/* 文字按钮（「新建」）：不再用裸符号 —— 老板说「+」表意不明 */
+.nplus {
+  min-height: 0;
+  flex: none;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--brand);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--brand);
+  font-size: 13px;
+  line-height: 1;
+}
+.nrow-add {
+  border-bottom: none;
+  padding: 6px 0;
+}
+/* 已加的子编号：小标签，不再用一整个框 */
+.ntags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 0 8px;
+}
+.ntags:empty {
+  display: none;
+}
+.ntags .nset-tag {
+  background: var(--soft, #f4f2ec);
+  border: none;
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+/* 子商品面板：扁平，不套卡 —— 只是几行格子插在同一块里 */
+.ncp {
+  border-top: 1px dashed var(--line);
+  padding: 6px 0 4px;
+}
+.ncp[hidden] {
+  display: none;
+}
+.ncp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+}
+.ncp-x {
+  min-height: 0;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+.nthumb-btn {
+  min-height: 0;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+}
+.ncp-thumb {
+  width: 30px;
+  height: 30px;
+  object-fit: cover;
+  border-radius: 6px;
+  display: block;
+  flex: none;
+}
+img.ncp-thumb[hidden] {
+  display: none;
+}
+.nrow-act {
+  border-bottom: none;
+  padding: 6px 0;
+}
+.nsave {
+  flex: 1;
+  min-height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 14px;
+}
+/* 已建常驻核对卡 */
+.ncp-done {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 0 8px;
+}
+.ncp-done[hidden] {
+  display: none;
+}
+.ncp-card {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  background: var(--soft, #f4f2ec);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.ncp-card-img {
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex: none;
+  background: var(--panel, #eee);
+}
+.ncp-card-info {
+  flex: 1;
+  min-width: 0;
+}
+.ncp-card-t {
+  font-size: 13px;
+  font-weight: 500;
+}
+.ncp-card-p {
+  font-size: 11px;
+  color: var(--muted);
+}
+.ncp-card-x {
+  min-height: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  flex: none;
+}
+.npick {
+  flex: 1;
+  min-height: 36px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
 }
 
 /* 改一个值：从底部弹上来的 sheet（不是居中弹窗：手机上底部这一块离拇指最近，

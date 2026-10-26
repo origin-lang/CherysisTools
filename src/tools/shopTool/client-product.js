@@ -2872,6 +2872,17 @@ function renderGallery(list) {
               .join("");
             const coverData = state.coverCache[p.code] || "";
             const starred = state.liveStars && state.liveStars.has(p.code);
+            // 套装的子编号：**画册里永久显示，不受「字段显示/隐藏」控制**（2026-10-26 老板定）。
+            // ⚠️ 它**不放进 PRODUCT_FIELDS** —— 进了就会出现在字段面板里、等于给个"可隐藏"的开关，
+            //    跟要求相反。所以这里直接读 setSummaries 的 members，跟 visGallery 无关。
+            // ⚠️ 必须放在 card-body **外面**：放里面会被字段列表一起管，而且会插进字段行中间。
+            const ss = isSet ? setSummaryOf(p) : null;
+            const setCodes =
+              ss && Array.isArray(ss.members) && ss.members.length
+                ? `<div class="setcodes" title="套装包含：${esc(ss.members.join(" "))}">${ss.members
+                    .map(esc)
+                    .join(" ")}</div>`
+                : "";
             // 点击是**分区**的：图片区（含「暂无图片」占位）→ 大图浮层；卡片其余地方 → 商品详情。
             // 两个 act 各带一份 data-id —— onProductAct 读的是**命中元素**的 dataset.id，
             // 以前整卡就一个 act、id 挂在卡上，现在分家了就得各自带上。
@@ -2885,7 +2896,7 @@ function renderGallery(list) {
                   ${isSet ? '<span class="card-setbadge">套</span>' : ""}
                   ${showImageGallery ? cover : ""}
                   <div class="card-body">${lines}</div>
-                  <button class="edit-btn" data-p-act="edit" data-id="${p.id}" title="打开详情 / 编辑">编辑</button>
+                  ${setCodes}
                 </div>`;
           })
           .join("")}</div>`;

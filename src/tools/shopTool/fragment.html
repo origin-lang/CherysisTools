@@ -758,6 +758,15 @@
       .card-body .code {
         font-weight: 700;
       }
+      /* 套装卡片的子编号行：**永久显示、不受「字段显示/隐藏」控制**（2026-10-26 老板定）。
+         放在 .card-body 外面（同级），所以字段面板管不到它；11px 小字 + 弱化色，长编号断行。 */
+      .card .setcodes {
+        margin: 0 8px 6px;
+        font-size: 11px;
+        line-height: 1.5;
+        opacity: 0.72;
+        word-break: break-all;
+      }
       .card-badge {
         position: absolute;
         top: 6px;
@@ -1212,24 +1221,10 @@
       #productDrawer .d-foot .d-fill {
         flex: 1;
       }
-      .card .edit-btn {
-        position: absolute;
-        bottom: 6px;
-        right: 6px;
-        padding: 2px 8px;
-        border: none;
-        border-radius: var(--ui-r);
-        font-size: 11px;
-        background: rgba(35, 168, 132, 0.85);
-        color: #fff;
-        cursor: pointer;
-        z-index: 2;
-      }
-      .card .edit-btn:hover {
-        background: #23a884;
-      }
+      /* 卡片右下角那颗「编辑」按钮 2026-10-26 撤了（老板：点卡片任意处就开详情，多余的）。
+         原来为了给它腾位置的 26px 底部内边距也一并收掉，卡片底部不留空白。 */
       .card-body {
-        padding-bottom: 26px;
+        padding-bottom: 4px;
       }
       td[data-f="code"] .clip-cell {
         cursor: pointer;

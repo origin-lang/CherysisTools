@@ -978,6 +978,9 @@ function onMessage(msg) {
         count: Number(msg.count || 0),
         sumCost: Number(msg.sumCost || 0),
         sumSale: Number(msg.sumSale || 0),
+        // ⚠️ members 必须带上：画册套装的子编号行直接读这个字段（2026-10-26）。
+        //    漏了它 → 改完子编号回包一覆盖，画册卡上那行编号就没了（手机端同款坑，那边已补）。
+        members: (msg.items || []).map((it) => String(it.code)),
       };
       renderProducts();
       if (typeof renderProductDrawer === "function") {

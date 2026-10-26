@@ -319,60 +319,122 @@
     <section id="screen-new" class="screen">
       <header class="bar">
         <button id="btnNewBack" class="icon">‹ 返回</button>
-        <span id="nTitle" class="title">＋ 新建商品</span>
+        <span id="nTitle" class="title">新建商品</span>
         <button id="btnCreate" class="primary">保存</button>
       </header>
       <main class="content">
-        <div class="card">
-          <!-- ===== 套装（可整体移除）=====
-               建之前先定"这是普通商品还是套装"。它只做两件事：
-                 1) 决定发给后端的 kind（后端只认 kind，不认编号长得像不像 T）；
-                 2) 切换表单 —— 套装自动填 T 开头的编号，并把等级/进价/期初库存三格藏掉。
-               用按钮组而不是下拉：手机上两个选项、又是二选一，按钮一眼看得见当前是哪个。 -->
-          <div class="seg kindseg" id="nKind">
-            <button type="button" class="on" data-kind="0">普通商品</button>
-            <button type="button" data-kind="1">套装</button>
-          </div>
-          <label>编号
-            <div class="row2">
-              <input id="nCode" type="text" placeholder="A001" autocapitalize="characters" />
-              <button id="btnNextCode" class="mini nextbtn" type="button">用下一个空号</button>
+        <!-- 类型标识条（2026-10-26 晚）：老板说"不想做这两个 tab 页了……感觉做不是很好，容易出问题"，
+             所以「普通/套装」不再做页内开关，改成点「＋」时先弹一次选择（#newKindSheet）。
+             进到这一屏以后类型就**锁死**了：这里只报一句当前在建什么，不给改的入口。
+             要换类型 = 按返回，再点一次「＋」重选。 -->
+        <p id="nKindNote" class="nk-note" style="display: none"></p>
+        <div class="nform">
+          <!-- ① 基本信息分组（2026-10-26 UI 重排）：每个分组 = 一块白底圆角组，
+               里面是「左标签列 + 右值」，行与行用 0.5px 细线隔开。
+               不再是一堆「标签在上、大框在下」的散格 —— 那样每项占两行、整页显得又大又散。 -->
+          <p class="ngroup-t">基本信息</p>
+          <div class="ngroup">
+            <div class="nrow">
+              <span class="nk">编号</span>
+              <!-- placeholder 由 applyNewKind 按类型改（普通 A001 / 套装 T001）——
+                   写死成 A001 会让套装页在框被清空时暗示"A 开头"，2026-10-26 老板指出误导。 -->
+              <input id="nCode" class="nv" type="text" placeholder="编号" autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="8" />
+              <button id="btnNextCode" class="nside" type="button" title="用下一个空号">下一个空号</button>
             </div>
-          </label>
+            <div class="nrow">
+              <span class="nk">名称</span>
+              <input id="nName" class="nv" type="text" placeholder="例如 铜合金锆石手链" />
+            </div>
+            <div class="nrow">
+              <span class="nk">品类</span>
+              <input id="nCategory" class="nv" type="text" list="catList" placeholder="可留空" />
+            </div>
+            <div class="nrow">
+              <span class="nk">系列</span>
+              <input id="nSeries" class="nv" type="text" placeholder="A / B / C" />
+            </div>
+          </div>
           <p id="nCodeHint" class="warn" style="display: none"></p>
-          <label>名称<input id="nName" type="text" placeholder="例如 铜合金锆石手链" /></label>
-          <div class="row2">
-            <label>品类<input id="nCategory" type="text" list="catList" /></label>
-            <label>系列<input id="nSeries" type="text" placeholder="A / B / C" /></label>
-          </div>
-          <!-- ===== 套装（可整体移除）===== 新建套装时当场填子编号（2026-10-26 手机端）。
-               只在「套装」形态显示（applyNewKind 管 data-set-show，与 data-set-hide 相反）。
-               校验本地当场做（编号库里没有就不让加），发后端 childCodes，后端再验一遍。 -->
-          <div id="nSetBox" data-set-show style="display: none">
-            <label>子编号
-              <div class="row2">
-                <input id="nSetAdd" type="text" placeholder="A001" autocapitalize="characters" />
-                <button id="nSetAddBtn" class="mini addbtn" type="button">＋ 添加</button>
-              </div>
-            </label>
+
+          <!-- ② 子商品分组（只有套装形态露出，applyNewKind 管 data-set-show） -->
+          <p class="ngroup-t" data-set-show style="display: none">子商品 <span id="nSetCount">· 已加 0 件</span></p>
+          <div class="ngroup" id="nSetBox" data-set-show style="display: none">
+            <div class="nrow nrow-add">
+              <input id="nSetAdd" class="nv" type="text" placeholder="输入编号" autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="8" />
+              <button id="nSetAddBtn" class="nbtn" type="button">添加</button>
+              <button id="nSetNewBtn" class="nplus" type="button" title="新建一件子商品并加入套装">新建</button>
+            </div>
+            <div id="nSetTags" class="ntags" style="display: none"></div>
             <p id="nSetHint" class="warn" style="display: none"></p>
-            <div id="nSetTags" class="strip" style="display: none"></div>
-            <p class="muted small">子编号必须是库里已有的普通商品：不在库里当场拦下。</p>
+            <!-- 「＋」展开的新建面板（2026-10-26 重排）：**扁平**，几行格子直接插在这块里，
+                 不再套一层卡；只填编号（自动预填空号）/ 名称 / 进价 / 售价 + 一张图。 -->
+            <div id="nChildPanel" class="ncp" hidden>
+              <div class="ncp-head">
+                <span>新建一件子商品</span>
+                <button id="ncpClose" class="ncp-x" type="button" aria-label="收起">✕</button>
+              </div>
+              <div class="nrow">
+                <input id="ncpCode" class="nv nv-code" type="text" autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="8" placeholder="自动空号" />
+                <input id="ncpName" class="nv" type="text" placeholder="名称（必填）" maxlength="100" />
+              </div>
+              <div class="nrow">
+                <input id="ncpCost" class="nv" type="number" inputmode="decimal" step="0.01" placeholder="进价" />
+                <input id="ncpSale" class="nv" type="number" inputmode="decimal" step="0.01" placeholder="售价" />
+                <button id="ncpImgBtn" class="nthumb-btn" type="button" aria-label="选一张图">图</button>
+                <input id="ncpImgFile" type="file" accept="image/*" hidden />
+                <img id="ncpThumb" class="ncp-thumb" alt="" hidden />
+              </div>
+              <div class="nrow nrow-act">
+                <button id="ncpSave" class="nsave" type="button">保存并加入</button>
+              </div>
+              <p id="ncpHint" class="warn" style="display: none"></p>
+            </div>
+            <!-- 已建的常驻核对卡（图 + 编号 + 名称 + 价格），套装保存成功才清 -->
+            <div id="ncpDone" class="ncp-done" hidden></div>
           </div>
-          <!-- ===== 套装（可整体移除）===== 三格由 data-set-hide 统一收掉（见 app.js 的 applyNewKind） -->
-          <label data-set-hide>等级<select id="nGrade"></select></label>
-          <div class="row2">
-            <label data-set-hide>进价<input id="nCost" type="number" inputmode="decimal" step="0.01" /></label>
-            <label>售价<input id="nSale" type="number" inputmode="decimal" step="0.01" placeholder="留空按规则" /></label>
+
+          <!-- ③ 价格分组：等级/进价/期初库存对套装收起（data-set-hide） -->
+          <p class="ngroup-t">价格与库存</p>
+          <div class="ngroup">
+            <div class="nrow" data-set-hide>
+              <span class="nk">等级</span>
+              <select id="nGrade" class="nv"></select>
+            </div>
+            <div class="nrow" data-set-hide>
+              <span class="nk">进价</span>
+              <input id="nCost" class="nv" type="number" inputmode="decimal" step="0.01" placeholder="0.00" />
+            </div>
+            <div class="nrow">
+              <span class="nk">售价</span>
+              <input id="nSale" class="nv" type="number" inputmode="decimal" step="0.01" placeholder="留空按规则" />
+            </div>
+            <div class="nrow" data-set-hide>
+              <span class="nk">期初库存</span>
+              <input id="nStock" class="nv" type="number" inputmode="numeric" step="1" value="0" />
+            </div>
+            <!-- 套装形态下才露：子商品进价合计（现算，不落库）—— 放在售价正下方，
+                 「比合计 = 售价 − 合计售价」这两个数天生要并排看。 -->
+            <div class="nrow" data-set-show style="display: none">
+              <span class="nk">合计进价</span>
+              <span id="nSetSumCost" class="nval">—</span>
+            </div>
+            <div class="nrow" data-set-show style="display: none">
+              <span class="nk">比合计</span>
+              <span id="nSetSumDiff" class="nval">—</span>
+            </div>
           </div>
-          <label data-set-hide>期初库存<input id="nStock" type="number" inputmode="numeric" step="1" value="0" /></label>
-          <!-- 刚录入时手边就有实物：点它弹系统的「相机 / 相册」选择器，建完自动挂到这个编号下 -->
-          <button id="btnNewPickGallery" class="wide" type="button" title="加图片（拍照 / 从相册选）">📷 加图片</button>
-          <input id="newFilePickGallery" type="file" accept="image/*" multiple hidden />
-          <!-- 拍完当场就看见：点小图看大效果，✕ 删掉重拍 -->
-          <div id="newShots" class="strip" style="display: none"></div>
-          <p id="newPickInfo" class="muted small"></p>
           <p id="ruleHint" class="muted small"></p>
+
+          <!-- ④ 图片分组：刚录入时手边就有实物，建完自动挂到这个编号下 -->
+          <p class="ngroup-t">图片</p>
+          <div class="ngroup">
+            <div class="nrow nrow-act">
+              <button id="btnNewPickGallery" class="npick" type="button" title="加图片（拍照 / 从相册选）">＋ 加图片</button>
+              <input id="newFilePickGallery" type="file" accept="image/*" multiple hidden />
+            </div>
+            <div id="newShots" class="strip" style="display: none"></div>
+          </div>
+          <p id="newPickInfo" class="muted small"></p>
         </div>
       </main>
     </section>
@@ -715,6 +777,48 @@
         </button>
         <div class="sheetbts">
           <button id="purchaseSheetCancel" type="button">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 新建之前先选类型（2026-10-26 晚，老板："我在主页添加时候，你弹出是添加套装还是添加普通商品"）。
+         原先这是新建页里的一个「普通商品 / 套装」页内开关，他明确否掉了：填到一半还能切类型，
+         编号前缀、子编号清单清不清、图片跟不跟着走，一堆边界情况容易出问题。
+         改成**先定后填**：这里选完就进新建页，进了就锁死（只能返回重选），页里不再有开关。
+         样式复用全局 .sheetbg / .sheet + 进货单那套 .p-opt（左图标 + 标题 + 一句说明，不用猜图标）。 -->
+    <div id="newKindSheet" class="sheetbg" role="dialog" aria-modal="true" aria-label="新建什么">
+      <div class="sheet">
+        <div class="sheetbar">
+          <span class="sheet-title">新建什么？</span>
+        </div>
+        <button id="nkNormal" class="p-opt" type="button">
+          <span class="p-opt-ic on">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 8.5 12 4l8 4.5v7L12 20l-8-4.5z" />
+              <path d="M4 8.5 12 13l8-4.5M12 13v7" />
+            </svg>
+          </span>
+          <span class="p-opt-tx">
+            <span class="p-opt-t">普通商品</span>
+            <span class="p-opt-s">A 开头的编号，进价售价各自算库存</span>
+          </span>
+        </button>
+        <button id="nkSet" class="p-opt" type="button">
+          <span class="p-opt-ic on">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1.5" />
+              <rect x="13" y="3.5" width="7.5" height="7.5" rx="1.5" />
+              <rect x="3.5" y="13" width="7.5" height="7.5" rx="1.5" />
+              <rect x="13" y="13" width="7.5" height="7.5" rx="1.5" />
+            </svg>
+          </span>
+          <span class="p-opt-tx">
+            <span class="p-opt-t">套餐 / 套装</span>
+            <span class="p-opt-s">T 开头的编号，装几件子商品、卖一个打包价</span>
+          </span>
+        </button>
+        <div class="sheetbts">
+          <button id="nkCancel" type="button">取消</button>
         </div>
       </div>
     </div>
