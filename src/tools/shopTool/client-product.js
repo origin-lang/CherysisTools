@@ -3638,6 +3638,13 @@ function openNewProduct() {
           <label>名称</label><input id="npName" maxlength="100" placeholder="如：铜合金锆石手链 四叶花" />
           <label>品类</label><input id="npCategory" list="shopCatList" maxlength="50" placeholder="手链 / 项链 / 耳环 / 戒指 / 手镯…可自定义" />
           <label>系列</label><input id="npSeries" maxlength="50" placeholder="A类 / B类 / C类…（平台链接系列，可空）" />
+          <label class="npSetShow" style="display:none">子编号</label>
+          <div class="npSetShow" style="display:none">
+            <input id="npSetAdd" spellcheck="false" placeholder="子商品编号，回车或点添加（必须是库里已有的普通商品）" />
+            <button id="npSetAddBtn" type="button">＋ 添加</button>
+            <div id="npSetTags" class="np-set-tags"></div>
+            <span id="npSetHint" class="muted" style="display:none;font-size:11px;margin-top:2px"></span>
+          </div>
           <label class="npSetHide">等级</label><select id="npGrade" class="npSetHide"><option value="0">自定义（售价手动定）</option>${gradeOptions}</select>
           <label class="npSetHide">进价 ¥</label><input id="npCost" class="npSetHide" type="number" min="0" step="0.01" value="0" />
           <label>售价 ¥</label><input id="npSale" type="number" min="0" step="0.01" placeholder="可留空，之后再填" />
@@ -3645,6 +3652,13 @@ function openNewProduct() {
           <label class="npSetHide">期初库存</label><input id="npStock" class="npSetHide" type="number" min="0" step="1" value="0" />
           <label>采购链接</label><input id="npLink" maxlength="500" placeholder="下次进货去这里" />
           <label>备注</label><input id="npRemark" maxlength="200" />
+          <label>图片</label>
+          <div class="np-img-zone">
+            <button id="npImgPick" type="button">📷 选图片（可多选）</button>
+            <input id="npImgFile" type="file" accept="image/*" multiple hidden />
+            <div id="npImgStrip" class="np-img-strip"></div>
+            <div class="np-img-hint">也可以把图片直接拖进这个框，或按 Ctrl+V 粘贴</div>
+          </div>
         </div>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
           <button id="npCancel">取消</button>
@@ -3685,11 +3699,107 @@ function openNewProduct() {
   // 那道校验存在的意义就是让这两种身份永远不打架。
   // 套装落库的形态由后端定死：grade=0 / cost_price=0 / price_manual=1 / 不写期初入库。
   let npKind = 0;
+  // ===== 套装（可整体移除）===== 新建套装当场填子编号（2026-10-26 重写版）。
+  // 本地先验一道（编号库里没有/是套装/是自己就不让加），发后端 childCodes 再验一遍。
+  let npSetChildren = [];
+  const setHint = (msg) => {
+    const el = $("npSetHint");
+    if (el) {
+      el.textContent = msg || "";
+      el.style.display = msg ? "inline-block" : "none";
+    }
+  };
+  const renderNpSetTags = () => {
+    const box = $("npSetTags");
+    if (!box) {
+      return;
+    }
+    box.innerHTML = npSetChildren
+      .map(
+        (c, i) =>
+          `<span class="np-set-tag">${esc(c)}<button type="button" class="np-set-tag-x" data-npset-x="${i}" title="移除">✕</button></span>`,
+      )
+      .join("");
+  };
+  const resetNpSetChildren = () => {
+    npSetChildren = [];
+    renderNpSetTags();
+    setHint("");
+    const inp = $("npSetAdd");
+    if (inp) {
+      inp.value = "";
+    }
+  };
+  const addNpSetChild = () => {
+    const inp = $("npSetAdd");
+    const raw = String(inp.value || "").trim();
+    if (!raw) {
+      return;
+    }
+    const c = canonicalCode(raw);
+    if (!c) {
+      setHint(`「${raw}」编号格式不对`);
+      return;
+    }
+    if (c === codeText()) {
+      setHint("不能把套装自己加进来");
+      return;
+    }
+    const p = stateProduct(c);
+    if (!p) {
+      setHint(`${c} 不在库里，先建普通商品再组套装`);
+      return;
+    }
+    if (isSetProduct(p)) {
+      setHint(`${c} 本身是套装，套装不能套套装`);
+      return;
+    }
+    if (npSetChildren.includes(c)) {
+      setHint(`${c} 已经加过了`);
+      return;
+    }
+    npSetChildren.push(c);
+    inp.value = "";
+    setHint("");
+    renderNpSetTags();
+    inp.focus();
+  };
+  // 编号框的当前值（addNpSetChild 判「是不是自己」用）
+  const codeText = () => canonicalCode(String($("npCode").value || "").trim()) || "";
+  // ===== 新建弹窗选图片（2026-10-26）：先排队预览，建成后再传 =====
+  // 图片挂编号目录下，新建时编号还没落库只能先排队；建成 toast 对上号才发 receiveImageData。
+  let npImgFiles = [];
+  const renderNpImgStrip = () => {
+    const box = $("npImgStrip");
+    if (!box) {
+      return;
+    }
+    box.innerHTML = npImgFiles
+      .map(
+        (f, i) =>
+          `<span class="np-img-th"><img src="${esc(f.url)}" alt="" /><button type="button" data-npimg-x="${i}" title="移除">✕</button></span>`,
+      )
+      .join("");
+  };
+  const clearNpImgFiles = () => {
+    npImgFiles.forEach((s) => URL.revokeObjectURL(s.url));
+    npImgFiles = [];
+    renderNpImgStrip();
+  };
   const applyKind = () => {
     const isSet = npKind === 1;
     mask.querySelectorAll(".npSetHide").forEach((el) => {
       el.style.display = isSet ? "none" : "";
     });
+    // 与 .npSetHide 相反的那批（子编号块）：只在套装形态露出来
+    mask.querySelectorAll(".npSetShow").forEach((el) => {
+      el.style.display = isSet ? "" : "none";
+    });
+    // 切回普通商品时收掉没保存的子编号和排队图（残留着会把旧数/旧图发出去）
+    if (!isSet) {
+      resetNpSetChildren();
+      clearNpImgFiles();
+    }
     $("npKindNormal").classList.toggle("on", !isSet);
     $("npKindSet").classList.toggle("on", isSet);
     const title = $("npTitle");
@@ -3704,6 +3814,134 @@ function openNewProduct() {
       codeEl.value = nextAvailableCode("A") || "";
     }
     codeEl.oninput(); // 重算「前缀 X · 当前最小未用」那行提示
+  };
+  // ===== 套装（可整体移除）===== 子编号块接线：按钮/回车都加，✕ 删
+  $("npSetAddBtn").onclick = addNpSetChild;
+  $("npSetAdd").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addNpSetChild();
+    }
+  });
+  $("npSetTags").addEventListener("click", (e) => {
+    const x = e.target.closest("[data-npset-x]");
+    if (!x) {
+      return;
+    }
+    const i = Number(x.dataset.npsetX);
+    if (i >= 0 && i < npSetChildren.length) {
+      npSetChildren.splice(i, 1);
+      renderNpSetTags();
+    }
+  });
+  // ===== 新建弹窗选图片接线 =====
+  $("npImgPick").onclick = () => $("npImgFile").click();
+  $("npImgFile").onchange = (e) => {
+    for (const f of Array.from(e.target.files || [])) {
+      npImgFiles.push({ file: f, url: URL.createObjectURL(f) });
+    }
+    e.target.value = ""; // 同一个文件还能再选一次（value 不清 onchange 不触发）
+    renderNpImgStrip();
+  };
+  $("npImgStrip").addEventListener("click", (e) => {
+    const x = e.target.closest("[data-npimg-x]");
+    if (!x) {
+      return;
+    }
+    const i = Number(x.dataset.npimgX);
+    if (i >= 0 && i < npImgFiles.length) {
+      URL.revokeObjectURL(npImgFiles[i].url);
+      npImgFiles.splice(i, 1);
+      renderNpImgStrip();
+    }
+  });
+  // ===== 拖拽 / 粘贴进弹窗（2026-10-26 老板要求，跟列表同一手感）=====
+  // 拖：挂在弹窗图片区那个容器上，弹窗一关元素就没，不用清理；
+  // 粘贴：document 捕获 + 门禁（#npImgStrip 不在了=弹窗已关，直接放行给别处）。
+  // 只认剪贴板/拖拽里的**图片文件**：往编号框里 Ctrl+V 纯文本照常工作。
+  const npDropZone = $("npImgPick").closest("div");
+  npDropZone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    npDropZone.classList.add("img-drop-hover");
+  });
+  npDropZone.addEventListener("dragleave", () => {
+    npDropZone.classList.remove("img-drop-hover");
+  });
+  npDropZone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    npDropZone.classList.remove("img-drop-hover");
+    const files = collectFiles(e.dataTransfer);
+    for (const f of files) {
+      npImgFiles.push({ file: f, url: URL.createObjectURL(f) });
+    }
+    if (files.length) {
+      renderNpImgStrip();
+    }
+  });
+  // 粘贴监听必须每次先卸旧的再挂新的：openNewProduct 每次开都跑一遍，
+  // 不卸会叠 N 个（旧弹窗的闭包还活着，会重复 toast / 往死数组里塞图）。
+  if (window.__npPasteHandler) {
+    document.removeEventListener("paste", window.__npPasteHandler, true);
+  }
+  const npPasteHandler = (e) => {
+    if (!document.getElementById("npImgStrip")) {
+      return; // 弹窗已关
+    }
+    const files = collectFiles(e.clipboardData);
+    if (!files.length) {
+      return; // 剪贴板里没图片（纯文本照常粘贴进输入框）
+    }
+    e.preventDefault();
+    for (const f of files) {
+      npImgFiles.push({ file: f, url: URL.createObjectURL(f) });
+    }
+    renderNpImgStrip();
+    toast("已加入 " + files.length + " 张，保存后自动上传");
+  };
+  window.__npPasteHandler = npPasteHandler;
+  document.addEventListener("paste", npPasteHandler, true);
+  /**
+   * 建成后把排队的图发出去。为什么挂 window：post addProduct 之后弹窗就关了，
+   * 成功与否要看后端回的 toast —— 监听点在 client-main 的 message 分发里，
+   * 从那边调 window.npFlushImages(✅已新建 xxx) 才对得上号。
+   */
+  let npCreatedCode = ""; // npSave 里真正落库的编号；toast 对上号才传图
+  const flushNpImages = (toastText) => {
+    const m = /^✅已新建\s*(\S+)/.exec(toastText || "");
+    if (!m || !npImgFiles.length || m[1] !== npCreatedCode) {
+      return;
+    }
+    const files = npImgFiles;
+    npImgFiles = [];
+    const items = [];
+    const reads = files.map(
+      (s) =>
+        new Promise((resolve) => {
+          const fr = new FileReader();
+          fr.onload = () => {
+            items.push({ name: s.file.name || "photo.jpg", data: String(fr.result || "") });
+            resolve();
+          };
+          fr.onerror = () => resolve();
+          fr.readAsDataURL(s.file);
+        }),
+    );
+    Promise.all(reads).then(() => {
+      if (!items.length) {
+        return;
+      }
+      post({ type: "receiveImageData", code: m[1], items });
+      toast(`⏳上传 ${items.length} 张图…`);
+    });
+  };
+  window.npFlushImages = flushNpImages;
+  $("npCancel").onclick = () => {
+    // 取消：队列里的预览 objectURL 释放掉、编号清空（防旧队列被别的 toast 误触发）
+    clearNpImgFiles();
+    npCreatedCode = "";
+    closeModal();
   };
   $("npKindNormal").onclick = () => {
     npKind = 0;
@@ -3765,6 +4003,7 @@ function openNewProduct() {
       return;
     }
     const npGrade = Number($("npGrade").value);
+    npCreatedCode = codeRaw; // 给 flushNpImages 对号用：toast 报的是这个编号才传图
     // 售价允许留空：自定义等级下留空就是「还没定价」，落库 sale_price=0、price_manual=1，
     // 之后在列表里补填即可。以前这里硬拦「自定义等级需要填写售价」。
     post({
@@ -3777,6 +4016,8 @@ function openNewProduct() {
       // **必须发**：后端会校验「T 前缀 ↔ kind=1」，漏了这个字段就永远建不出套装
       // （以前漏发是"T 号被当成普通商品建出来"；加了校验之后漏发就变成"建不了"）。
       kind: npKind,
+      // ===== 套装（可整体移除）===== 新建套装时一并带上当场校验过的子编号（后端再验一遍）
+      childCodes: npKind === 1 ? npSetChildren.slice() : undefined,
       grade: npGrade,
       costPrice: cost.value,
       salePrice: sale.value,

@@ -468,19 +468,40 @@ textarea {
 .card .stk.set {
   color: var(--brand);
 }
+/* ===== 套装（可整体移除）===== 画册套装卡的子编号行：小字一行，挤不下的换行（2026-10-26） */
+.card .setcodes {
+  font-size: calc(11px * var(--zoom));
+  color: var(--muted);
+  word-break: break-all;
+  line-height: 1.5;
+}
 /* 列表里套装的派生格（合计进价 / 等级 — / 库存 —）：灰掉，表示"这一格不是能填的数" */
 .tbl td.mut {
   color: var(--muted);
 }
-/* 新建页的「普通商品 / 套装」开关：复用 .seg 的外观，但自己占一整行 */
+/* 新建页的「普通商品 / 套装」开关：照抄进货单/补货跟踪的胶囊页签样式
+   （老板定的：喜欢进货那边的大胶囊，不要分段滑块） */
 .kindseg {
   display: flex;
-  width: 100%;
+  gap: 6px;
   margin-bottom: var(--gap);
 }
 .kindseg button {
   flex: 1 1 0;
   min-width: 0;
+  min-height: 0;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 20px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+}
+.kindseg button.on {
+  background: var(--brand);
+  color: #fff;
+  font-weight: 600;
 }
 /* ===== 套装（可整体移除）=====
    套装**也走三个页签**（2026-10-11 改定，见 docs/套装-设计方案.md 五·5.1）：
@@ -1419,6 +1440,36 @@ input.bad {
   gap: var(--gap);
   overflow-x: auto;
   padding-bottom: 10px;
+}
+/* ===== 套装（可整体移除）===== 新建套装子编号块（2026-10-26）。
+   方案2定稿：添加=实心绿主钮、空号=绿边次钮；标签胶囊横排可滚。 */
+button.nextbtn {
+  color: var(--brand);
+  border-color: var(--brand);
+  font-size: 12px;
+}
+button.addbtn {
+  background: var(--brand);
+  color: #fff;
+}
+.nset-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--panel, #fff);
+  border: 1px solid var(--line);
+}
+.nset-tag-x {
+  min-height: 0;
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
 }
 /* 单图 / 无图时缩略条是空的（`innerHTML = ""`）：它自己带 10px 下内边距，
    不收起来就会在封面和页签之间留一条看不见的空档。 */

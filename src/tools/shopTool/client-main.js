@@ -1269,7 +1269,12 @@ function onMessage(msg) {
       break;
     }
     case "toast": {
-      toast(String(msg.text ?? ""));
+      const toastText = String(msg.text ?? "");
+      // 新建弹窗排队的图片：后端确认「已新建」且编号对上才发（见 client-product.js 的 flushNpImages）
+      if (typeof window.npFlushImages === "function") {
+        window.npFlushImages(toastText);
+      }
+      toast(toastText);
       break;
     }
     case "alert": {

@@ -424,6 +424,32 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
         log(`❌${initialStock.msg}`);
         return;
       }
+      // ===== 套装（可整体移除）===== 新建套装当场带的子编号（2026-10-26）。
+      // 建壳**之前**全验完：存在、不是套装、不是自己、去重 —— 有一个不合法整体拒掉，
+      // 不出现「套装建成了、成员缺一半」。建壳后再逐个挂成员，撤销一次全回。
+      const childCodes: string[] = [];
+      if (isSet) {
+        for (const raw of Array.isArray(msg.childCodes) ? msg.childCodes : []) {
+          const cc = canonicalCode(raw);
+          if (!cc || cc === code) {
+            log(`❌子编号「${raw}」不合法（或与套装自己同号）`);
+            return;
+          }
+          if (!db.getProductByCode(cc)) {
+            log(`❌子编号 ${cc} 不在库里，先建普通商品再组套装`);
+            return;
+          }
+          if (looksLikeSet(cc)) {
+            log(`❌${cc} 本身是套装，套装不能套套装`);
+            return;
+          }
+          if (childCodes.includes(cc)) {
+            log(`⚠️子编号 ${cc} 重复，只保留一个`);
+            continue;
+          }
+          childCodes.push(cc);
+        }
+      }
       const snap = h.snapshot();
       const custom = grade.value === 0;
       // 套装不参与等级算价，别为一个"反正会丢掉"的等级白建一条规则
@@ -459,6 +485,9 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
           remark: "期初入库",
         });
       }
+      for (const cc of childCodes) {
+        db.addSetMember(code, cc);
+      }
       h.pushUndo(
         snap,
         isSet
@@ -467,7 +496,7 @@ export function productHandlers(h: HandlerCtx): Record<string, Handler> {
       );
       log(
         isSet
-          ? `✅已新建套装 ${code} ${nameR.value}（还没加子商品，去详情页点「＋ 添加编号」）`
+          ? `✅已新建套装 ${code} ${nameR.value}${childCodes.length ? `（含 ${childCodes.length} 件子商品）` : "（还没加子商品，去详情页点「＋ 添加编号」）"}`
           : `✅已新建 ${code} ${nameR.value}（库存 +${initialStock.value}）`,
       );
       post({ type: "toast", text: `✅已新建 ${code}` });

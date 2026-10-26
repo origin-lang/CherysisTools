@@ -123,17 +123,16 @@
           <p class="muted small">放大只作用于表格，顶栏、筛选、分页条都不跟着变（也可以直接在表格上双指捏）。画册和商品详情不套这一层：详情页用浏览器自己的双指缩放捏着看。筛选是「勾一批出来」，顶部搜索是「凭印象找一行」，两者叠加（AND）。</p>
         </div>
       </div>
-      <!-- 内容区顶上一排小 tab：换个方式看**同一批**商品（现在只有画册/列表两种）。
-           原先它是顶栏里那个 .seg（占着最金贵的一行），挪下来之后顶栏空出两格。
+      <!-- 内容区顶上一排小 tab：换个方式看**同一批**商品。
+           2026-10-26 老板要求：第三个页签启用成「套装」快捷视图 = 画册 + 自动套上
+           「只看套装」筛选（免点漏斗那两下）。点回画册/列表把 kind 筛选恢复原样。
            右边那个数目字是「筛出来的 / 一共多少条」（renderList 里写的 #count），
-           跟分页条中间那句「第几条–第几条 · 第几页/共几页」说的是两件事，不重复。
-           末尾那个虚线 ＋ 是**留的扩展位**：以后「只看星标 / 只看套装 / 按品类分组」
-           这类"换个看法"的东西加在这里，不用再往顶栏挤。它现在是 disabled 的占位。 -->
+           跟分页条中间那句「第几条–第几条 · 第几页/共几页」说的是两件事，不重复。 -->
       <div class="subtabs">
         <div class="stabs">
           <button id="viewGallery" class="stab on" type="button">画册</button>
           <button id="viewList" class="stab" type="button">列表</button>
-          <button id="viewMore" class="stab ghost" type="button" disabled title="扩展位：以后的「只看星标 / 只看套装 / 按品类分组」加在这里">＋</button>
+          <button id="viewSet" class="stab" type="button">套装</button>
         </div>
         <span id="count" class="cnt muted"></span>
       </div>
@@ -337,7 +336,7 @@
           <label>编号
             <div class="row2">
               <input id="nCode" type="text" placeholder="A001" autocapitalize="characters" />
-              <button id="btnNextCode" class="mini">用下一个空号</button>
+              <button id="btnNextCode" class="mini nextbtn" type="button">用下一个空号</button>
             </div>
           </label>
           <p id="nCodeHint" class="warn" style="display: none"></p>
@@ -345,6 +344,20 @@
           <div class="row2">
             <label>品类<input id="nCategory" type="text" list="catList" /></label>
             <label>系列<input id="nSeries" type="text" placeholder="A / B / C" /></label>
+          </div>
+          <!-- ===== 套装（可整体移除）===== 新建套装时当场填子编号（2026-10-26 手机端）。
+               只在「套装」形态显示（applyNewKind 管 data-set-show，与 data-set-hide 相反）。
+               校验本地当场做（编号库里没有就不让加），发后端 childCodes，后端再验一遍。 -->
+          <div id="nSetBox" data-set-show style="display: none">
+            <label>子编号
+              <div class="row2">
+                <input id="nSetAdd" type="text" placeholder="A001" autocapitalize="characters" />
+                <button id="nSetAddBtn" class="mini addbtn" type="button">＋ 添加</button>
+              </div>
+            </label>
+            <p id="nSetHint" class="warn" style="display: none"></p>
+            <div id="nSetTags" class="strip" style="display: none"></div>
+            <p class="muted small">子编号必须是库里已有的普通商品：不在库里当场拦下。</p>
           </div>
           <!-- ===== 套装（可整体移除）===== 三格由 data-set-hide 统一收掉（见 app.js 的 applyNewKind） -->
           <label data-set-hide>等级<select id="nGrade"></select></label>

@@ -41,6 +41,8 @@ export interface SetSummary {
   count: number;
   sumCost: number;
   sumSale: number;
+  /** 子编号清单（按 sort 排好）：画册套装卡片上直接显示组成 */
+  members: string[];
 }
 
 export interface SaleRule {
@@ -826,6 +828,10 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
   const setItemsIns = c.prepare(
     "INSERT OR REPLACE INTO set_items (set_code, child_code, sort) VALUES (?, ?, ?)",
   );
+  // 全部套装的成员清单：只取两列（随 getSetSummaries 下发，画册卡片显示组成用）
+  const setMembersAll = c.prepare(
+    "SELECT set_code, child_code FROM set_items ORDER BY set_code, sort, child_code",
+  );
   const setItemsDelOne = c.prepare("DELETE FROM set_items WHERE set_code = ? AND child_code = ?");
   const setItemsDelBySet = c.prepare("DELETE FROM set_items WHERE set_code = ?");
   const setItemsDelByChild = c.prepare("DELETE FROM set_items WHERE child_code = ?");
@@ -1412,7 +1418,16 @@ const liveStarsIns = c.prepare("INSERT OR IGNORE INTO live_star (code, created_a
           count: Number(r.cnt ?? 0),
           sumCost: Number(r.sumCost ?? 0),
           sumSale: Number(r.sumSale ?? 0),
+          members: [],
         };
+      }
+      // 子编号清单补进各套装汇总：只取两列的全表查询，随 productsLoaded 一起下发，
+      // 画册套装卡片不用再为每个套装单独发一次 setMembers。
+      for (const r of setMembersAll.all() as any[]) {
+        const s = out[String(r.set_code)];
+        if (s) {
+          s.members.push(String(r.child_code));
+        }
       }
       return out;
     },

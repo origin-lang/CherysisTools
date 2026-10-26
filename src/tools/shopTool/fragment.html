@@ -359,16 +359,101 @@
       /* 新建表单顶部的「普通 / 套装」类型开关 */
       .np-kind {
         display: flex;
-        gap: 6px;
+        gap: 0;
+        background: var(--vscode-input-background, rgba(128,128,128,0.08));
+        border: 0.5px solid var(--vscode-panel-border);
+        border-radius: 8px;
+        padding: 3px;
       }
       .np-kind button {
+        flex: 1;
         padding: var(--ui-py) 12px;
-        border-radius: var(--ui-r);
+        border: 0;
+        background: transparent;
+        color: var(--vscode-foreground);
+        border-radius: 6px;
+        min-height: 0;
       }
       .np-kind button.on {
         background: var(--vscode-button-background, #0e639c);
         color: var(--vscode-button-foreground, #fff);
         border-color: transparent;
+      }
+      /* ===== 套装（可整体移除）===== 新建弹窗的子编号块 + 排队图片条（2026-10-26 重写版）。
+           .npSetShow 的显隐由 applyKind 管，块内两行：输入行（input+按钮）横向排，标签竖排。 */
+      .npSetShow input[id="npSetAdd"] {
+        width: 100%;
+      }
+      .npSetShow > div {
+        display: flex;
+        gap: 6px;
+      }
+      .np-set-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-top: 4px;
+      }
+      .np-set-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 1px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        background: var(--vscode-badge-background, rgba(90, 90, 90, 0.3));
+        color: var(--vscode-badge-foreground, inherit);
+      }
+      .np-set-tag-x {
+        border: none;
+        background: transparent;
+        padding: 0 2px;
+        min-height: 0;
+        cursor: pointer;
+        color: inherit;
+      }
+      .np-img-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-top: 4px;
+      }
+      .np-img-zone {
+        border: 1.5px dashed var(--vscode-panel-border);
+        border-radius: 6px;
+        padding: 8px 10px;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .np-img-zone.img-drop-hover {
+        border-color: var(--vscode-focusBorder, #4ec9b0);
+        background: rgba(78, 201, 176, 0.08);
+      }
+      .np-img-hint {
+        margin-top: 6px;
+        font-size: 11px;
+        opacity: 0.65;
+      }
+      .np-img-th {
+        position: relative;
+      }
+      .np-img-th img {
+        width: 44px;
+        height: 44px;
+        object-fit: cover;
+        border-radius: 3px;
+        display: block;
+      }
+      .np-img-th button {
+        position: absolute;
+        top: -4px;
+        right: -4px;
+        min-height: 0;
+        width: 16px;
+        height: 16px;
+        padding: 0;
+        font-size: 10px;
+        line-height: 1;
+        border-radius: 50%;
       }
       .thumb {
         width: auto;

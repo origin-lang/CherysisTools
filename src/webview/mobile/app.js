@@ -762,10 +762,15 @@
       // ===== 套装（可整体移除）===== 套装详情页的主数据：子商品清单 + 现算出来的三个合计。
       // 顺手把 state.setSummaries 更新掉，画册卡片上的「含 N 件」才跟着变。
       state.setItems = m.items || [];
+      // members 必须带上：这里整条覆盖整表下发的那份汇总，漏了 members 的话
+      // 进一次套装详情再回画册，卡片上的子编号行就消失（2026-10-25 老板踩到）。
       state.setSummaries[m.code] = {
         count: num(m.count),
         sumCost: num(m.sumCost),
         sumSale: num(m.sumSale),
+        members: (m.items || []).map(function (it) {
+          return String(it.code);
+        }),
       };
       renderSet();
       renderList();
@@ -1225,7 +1230,33 @@
     return state.alert > 0 && p.status !== 1 && num(p.stockTotal) <= state.alert;
   }
 
+  // ===== 套装（可整体移除）===== 「套装」快捷视图状态（2026-10-26）：
+  // 点它 = 画册 + 自动套上「只看套装」筛选（kind={"1":true}，跟漏斗是同一份 filters）；
+  // kind 筛选被撤掉时（胶囊✕/清除全部）自动退出，回退到进来之前的视图 —— 三颗页签必须有一颗亮。
+  var setViewChild = false;
+  var setViewPrevKind = null;
+  var setViewPrevView = "gallery";
+  var exitSetView = function () {
+    if (!setViewChild) {
+      return;
+    }
+    setViewChild = false;
+    state.filters.enum.kind = setViewPrevKind ? JSON.parse(JSON.stringify(setViewPrevKind)) : {};
+    setViewPrevKind = null;
+    $("viewSet").classList.remove("on");
+  };
+
   function renderList() {
+    // ===== 套装（可整体移除）===== 套装视图自愈：kind 筛选已经不是「只看套装」了
+    // （胶囊✕ / 清除全部都会走到这）就退回原视图并恢复页签高亮，不许三颗全灰。
+    if (setViewChild && !(state.filters.enum.kind && state.filters.enum.kind["1"])) {
+      setViewChild = false;
+      setViewPrevKind = null;
+      state.view = setViewPrevView || "gallery";
+      $("viewSet").classList.remove("on");
+      $(state.view === "list" ? "viewList" : "viewGallery").classList.add("on");
+      applyZoom();
+    }
     // innerHTML 一换，滚动位置就没了。页面没变时把位置还回去 —— 列表里改一个值就会收到
     // productsDelta → renderList，不还原的话改完一行列表直接跳回顶部（很像是「界面不稳定」）。
     // 表格有两个滚动容器：#content（纵向）和 .tblwrap（纵向+横向，为了表头能吸顶），
@@ -1302,6 +1333,10 @@
               (isSet
                 ? '<div class="stk set">含 ' + (ss ? ss.count : "…") + " 件</div>"
                 : '<div class="stk' + (isLow(p) ? " low" : "") + '">库存 ' + num(p.stockTotal) + "</div>") +
+              // ===== 套装（可整体移除）===== 套装卡上直接亮出子编号（小字一行，不占图片位置）
+              (isSet && ss && ss.members && ss.members.length
+                ? '<div class="setcodes">' + ss.members.map(esc).join(" ") + "</div>"
+                : "") +
               "</div></div>"
             );
           })
@@ -3860,6 +3895,81 @@
    * ② 切换表单 —— 套装自动填 T 段下一个空号，并把等级/进价/期初库存三格收掉。
    * 编号和类型**当场对齐**：错开一格就发出去，后端会拒（这是刻意的，两边都守同一口径）。
    */
+  // ===== 套装（可整体移除）===== 新建套装当场填子编号（2026-10-26 手机端）。
+  // 本地先验一道（库里没有/是套装/是自己/重复就不让加），发后端 childCodes 再验一遍。
+  var newSetChildren = [];
+
+  function setNewHint(msg) {
+    var el = $("nSetHint");
+    if (!el) {
+      return;
+    }
+    el.textContent = msg || "";
+    el.style.display = msg ? "" : "none";
+  }
+
+  function renderNewSetTags() {
+    var box = $("nSetTags");
+    if (!box) {
+      return;
+    }
+    box.innerHTML = newSetChildren
+      .map(function (c, i) {
+        return (
+          '<span class="nset-tag">' +
+          esc(c) +
+          '<button class="nset-tag-x" type="button" data-nset-x="' + i + '" title="移除">✕</button></span>'
+        );
+      })
+      .join("");
+    box.style.display = newSetChildren.length ? "" : "none";
+  }
+
+  function resetNewSetChildren() {
+    newSetChildren = [];
+    renderNewSetTags();
+    setNewHint("");
+    var inp = $("nSetAdd");
+    if (inp) {
+      inp.value = "";
+    }
+  }
+
+  function addNewSetChild() {
+    var inp = $("nSetAdd");
+    var raw = String(inp.value || "").trim();
+    if (!raw) {
+      return;
+    }
+    var c = canonicalCode(raw);
+    if (!c) {
+      setNewHint("「" + raw + "」编号格式不对");
+      return;
+    }
+    if (c === String($("nCode").value || "").trim().toUpperCase()) {
+      setNewHint("不能把套装自己加进来");
+      return;
+    }
+    var owner = findCodeOwner(c);
+    if (!owner) {
+      setNewHint(c + " 不在库里，先建普通商品再组套装");
+      return;
+    }
+    if (num(owner.kind) === 1) {
+      setNewHint(c + " 本身是套装，套装不能套套装");
+      return;
+    }
+    if (newSetChildren.indexOf(c) >= 0) {
+      setNewHint(c + " 已经加过了");
+      return;
+    }
+    newSetChildren.push(c);
+    inp.value = "";
+    setNewHint("");
+    renderNewSetTags();
+    inp.focus();
+  }
+
   function applyNewKind(k) {
     state.newKind = k === 1 ? 1 : 0;
     var isSet = state.newKind === 1;
@@ -3878,6 +3988,14 @@
       sc.querySelectorAll("[data-set-hide]").forEach(function (n) {
         n.style.display = isSet ? "none" : "";
       });
+      // 与 data-set-hide 相反的那批（子编号块）：只在套装形态露出来
+      sc.querySelectorAll("[data-set-show]").forEach(function (n) {
+        n.style.display = isSet ? "" : "none";
+      });
+    }
+    // 切类型只收子编号清单（套装专属）；图片是共用队列跟着走，不清
+    if (!isSet) {
+      resetNewSetChildren();
     }
     if ($("nSale")) {
       $("nSale").placeholder = isSet ? "手填（打包价）" : "留空按规则";
@@ -3899,14 +4017,16 @@
     if (isSet) {
       $("ruleHint").textContent =
         "套装不记库存、不参与等级算价：售价手填（打包价），进价是子商品进价之和。" +
-        "建好后进它的详情页点「＋ 添加编号」，把子商品一个一个加进来。";
+        "在「子编号」里把这套的组成填进来（必须是库里已有的编号）；也可以建好后再去详情页加。";
     } else {
       updateRuleHint();
     }
   }
 
-  // 新建页先选好照片，保存成功后再传（没编号就传不了，图片挂在编号目录下）。  // 每项 { file, url }：url 是本地预览用的 objectURL —— 拍完当场就能看见效果、能删能重拍，
+  // 新建页先选好照片，保存成功后再传（没编号就传不了，图片挂在编号目录下）。
+  // 每项 { file, url }：url 是本地预览用的 objectURL —— 拍完当场就能看见效果、能删能重拍，
   // 不用等上传完才知道拍糊了。移除或上传完必须 revoke，否则那张原图一直占着内存。
+  // 2026-10-26 老板拍板：**一套队列共用**——切类型图片跟着走不清空，普通/套装都能看见。
   var pendingNewShots = [];
 
   function revokeShots(list) {
@@ -4010,6 +4130,10 @@
       remark: "",
       kind: isSet ? 1 : 0,
     };
+    // ===== 套装（可整体移除）===== 新建套装时一并带上当场校验过的子编号（后端再验一遍）
+    if (isSet && newSetChildren.length) {
+      payload.childCodes = newSetChildren.slice();
+    }
     return invoke("addProduct", payload).then(function (j) {
       // 成功的判据：handler 会 post 一条 toast「✅已新建 …」，失败只写日志
       var ok = (j.posts || []).some(function (m) {
@@ -4033,6 +4157,7 @@
       $("nCost").value = "";
       $("nSale").value = "";
       $("nStock").value = "0";
+      resetNewSetChildren(); // ===== 套装（可整体移除）===== 子编号清单随表单一起清
       checkNewCode(); // 清掉编号框下面那行红字
       renderNewShots();
       state.imgStatsLoaded = false; // 新商品还没图，之前统计的不算数
@@ -4215,6 +4340,7 @@
   // ---------- 事件绑定 ----------
   function bind() {
     $("viewGallery").onclick = function () {
+      exitSetView();
       state.view = "gallery";
       $("viewGallery").classList.add("on");
       $("viewList").classList.remove("on");
@@ -4222,10 +4348,29 @@
       renderList();
     };
     $("viewList").onclick = function () {
+      exitSetView();
       state.view = "list";
       $("viewList").classList.add("on");
       $("viewGallery").classList.remove("on");
       applyZoom(); // 回到表格恢复上次的档位
+      renderList();
+    };
+    // ===== 套装（可整体移除）===== 「套装」快捷页签：画册 + 只看套装
+    $("viewSet").onclick = function () {
+      if (setViewChild) {
+        return; // 已在套装视图
+      }
+      setViewChild = true;
+      setViewPrevView = state.view;
+      // 记住进来之前的 kind 筛选（手机端枚举存的是键 "1"，跟电脑端的中文名不是一套，别照抄）
+      var cur = state.filters.enum.kind;
+      setViewPrevKind = cur ? JSON.parse(JSON.stringify(cur)) : null;
+      state.filters.enum.kind = { "1": true };
+      state.view = "gallery";
+      $("viewSet").classList.add("on");
+      $("viewGallery").classList.remove("on");
+      $("viewList").classList.remove("on");
+      applyZoom();
       renderList();
     };
     var reload = function () {
@@ -5095,6 +5240,25 @@
         return;
       }
       applyNewKind(num(b.dataset.kind));
+    };
+    // ===== 套装（可整体移除）===== 新建套装的子编号块：按钮/回车都加，✕ 删
+    $("nSetAddBtn").onclick = addNewSetChild;
+    $("nSetAdd").onkeydown = function (e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addNewSetChild();
+      }
+    };
+    $("nSetTags").onclick = function (e) {
+      var x = e.target.closest("[data-nset-x]");
+      if (!x) {
+        return;
+      }
+      var i = num(x.dataset.nsetX);
+      if (i >= 0 && i < newSetChildren.length) {
+        newSetChildren.splice(i, 1);
+        renderNewSetTags();
+      }
     };
     $("nCode").oninput = checkNewCode;
     $("nCode").onblur = checkNewCode;

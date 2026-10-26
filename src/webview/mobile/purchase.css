@@ -51,10 +51,9 @@
 .p-seg {
   flex: 1;
   display: flex;
-  gap: 4px;
-  padding: 3px;
-  background: var(--soft);
-  border-radius: 10px;
+  gap: 6px;
+  /* 2026-10-26 老板：不喜欢胶囊外面那层长方形轨道框 → 摘掉，和顶部
+     进货单/补货跟踪那排一样，就是两颗裸胶囊，选中实心绿。 */
 }
 .p-segbtn {
   flex: 1;
@@ -62,14 +61,14 @@
   height: 34px;
   padding: 0 6px;
   border: 0;
-  background: none;
-  border-radius: 8px;
+  background: transparent;
+  border-radius: 17px;
   font-size: 13px;
   color: var(--muted);
 }
 .p-segbtn.on {
-  background: var(--card);
-  color: var(--ink);
+  background: var(--brand);
+  color: #fff;
   font-weight: 700;
 }
 .p-segbtn span {
