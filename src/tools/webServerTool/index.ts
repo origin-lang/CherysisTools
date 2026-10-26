@@ -29,6 +29,7 @@ import {
   serverUrl,
   stopPort,
   writeServerConfig,
+  normPathKey,
 } from "./service.js";
 
 /** 传给前端的字段白名单：token 是口令，一个字节都不进 webview */
@@ -160,6 +161,67 @@ export function ensureServerConfigAt(
   say(`ℹ️ 端口：${DEFAULT_PORT}｜这份配置和「启动网页版.cmd」是同一个文件，以后双击 cmd 也用它。`);
   say("ℹ️ 这份配置里只写了数据目录 / 图片目录 / 端口；host、本机缓存、九宫格输出目录都留空，由服务端按本机兜底 —— 拷到别的机器上不用改就能用。");
   return { ok: true, logs };
+}
+
+/**
+ * 把 VS Code 那边的两个路径**一键写进**网页版配置（老板 2026-10-26 要的按钮）。
+ *
+ * 为什么是"给颗按钮、他自己点"，而不是"启动时自动跟"：
+ *   他原话「你不用帮我写，你就给我一个按钮，我自己选择写不写」。自动跟会有反效果 ——
+ *   网页版偶尔需要单独指一个目录（比如这台机器上图片放另一块盘），自动跟会把它覆盖回去。
+ *
+ * 只同步**两个路径**，其它一概不动：
+ *   · port / password / tunnel / httpsPort 这些 VS Code 那边根本没有对应设置，无从同步
+ *   · cacheDir 只属于跑服务这台机器，绝不从别处抄（抄过来就是"指向另一台机器的目录"）
+ * 空值不覆盖：VS Code 那边没填的项保持网页版原样 —— 拿空值盖掉已有的路径是纯损失。
+ */
+export function syncPathsFromVscode(
+  extDir: string,
+  vs: { storageDir?: string; imageDir?: string },
+): { ok: boolean; logs: string[]; changed: string[] } {
+  const logs: string[] = [];
+  const changed: string[] = [];
+  const cfgPath = serverConfigPath(extDir);
+  const cur = readServerConfig(cfgPath);
+  if (!cur) {
+    logs.push(`❌ 网页版的配置文件${fs.existsSync(cfgPath) ? "不是合法 JSON" : "还不存在"}：${cfgPath}`);
+    logs.push("ℹ️ 先用上面那个「按 VS Code 设置生成」建一份，再来点「同步」。");
+    return { ok: false, logs, changed };
+  }
+  const next: Record<string, unknown> = { ...cur };
+  const pairs: Array<[string, string, string]> = [
+    ["storageDir", "数据目录", String(vs.storageDir || "").trim()],
+    ["imageDir", "图片目录", String(vs.imageDir || "").trim()],
+  ];
+  for (const [key, label, v] of pairs) {
+    if (!v) {
+      logs.push(`ℹ️ VS Code 那边没填${label}，这一项保持网页版原样（不拿空值覆盖）。`);
+      continue;
+    }
+    if (normPathKey(next[key]) === normPathKey(v)) {
+      logs.push(`ℹ️${label}本来就一致，没动。`);
+      continue;
+    }
+    const old = String(next[key] ?? "").trim();
+    next[key] = v;
+    changed.push(key);
+    logs.push(`✅${label}：${old || "（空）"} → ${v}`);
+  }
+  if (changed.length === 0) {
+    logs.push("ℹ️ 两边已经一致，配置文件没改。");
+    return { ok: true, logs, changed };
+  }
+  try {
+    writeServerConfig(cfgPath, next as never);
+  } catch (err: any) {
+    logs.push(`❌ 写不进去：${err?.message ?? err}`);
+    logs.push("ℹ️ 扩展目录只读时会这样（比如装在 Program Files）。换个地方解压一份再用。");
+    return { ok: false, logs, changed: [] };
+  }
+  logs.push(`✅ 已写入：${cfgPath}`);
+  logs.push("ℹ️ 端口 / 密码 / 外网开关 / 本机缓存都没动（这些 VS Code 那边没有对应设置）。");
+  logs.push("ℹ️ 路径改了要重启服务才生效：点上面的「启动」前先停一下。");
+  return { ok: true, logs, changed };
 }
 
 /** 面板要的那一屏状态；overrideFields 用来覆盖某个字段（比如刚选完目录还没落盘） */
@@ -341,6 +403,19 @@ export const webServerTool: ToolDefinition = {
         }
         await pushStatus(ctx);
         break;
+      // 一键把 VS Code 设置里的两个路径写进网页版配置。
+      // ⚠️ 这个动作**会写盘**，所以前端必须让它是一次明确的点击，绝不能挂在 status 轮询里。
+      case "syncFromVscode": {
+        const r = syncPathsFromVscode(extDirOf(ctx), vscodePaths());
+        r.logs.forEach((t) => ctx.log(t));
+        if (r.changed.length) {
+          // 表单是"只填一次"的（见 client.js 的 fillForm），不主动刷的话输入框还显示旧值，
+          // 让人以为没写进去。这几个字段的当前值在下面 wsSync 里，那里会跟着变。
+          ctx.postToWebview({ type: "wsResync" });
+        }
+        await pushStatus(ctx);
+        break;
+      }
       case "pickFolder": {
         const target = String(msg.target || "");
         const dir = await ctx.selectFolder(

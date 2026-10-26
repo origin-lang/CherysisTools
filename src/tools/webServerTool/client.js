@@ -169,9 +169,54 @@
       sum.textContent =
         diffCount > 0
           ? "有 " + diffCount + " 处两边指向的不是同一个目录：网页版这边改完「保存配置」，" +
-            "面板那侧去 VS Code 设置里也改一下。"
+            "面板那侧去 VS Code 设置里也改一下（或者直接点上面的「一键同步」，让网页版照 VS Code 抄）。"
           : "两边当前指向的是同一份目录。改任意一边都不会同步到另一边，以后换目录记得两边都改。";
     }
+    renderSyncBtn(rows);
+  }
+
+  /**
+   * 「一键同步」那颗按钮什么时候该露出来。
+   *
+   * ⚠️⚠️ 2026-10-26 改：**按钮常显**，不再"只在两边不一致时才出现"。
+   *   原先的写法是"已经一致就藏起来"，理由听着合理（点了也没变化），
+   *   但老板当场找不到按钮 —— 「哪里提供了按钮 我怎么没看见」。
+   *   他这台机子两边恰好一致（所以整行被藏了），而"藏起来的功能等于没有"。
+   *   现在：有可比项 + VS Code 那边至少填了一项 → 一直露着；
+   *       不一致时再加一句「会盖掉」的提醒并把文案换成「以 VS Code 为准」。
+   *   也就是**状态只影响措辞和提醒，不影响存在**。
+   *
+   * ⚠️ 位置也在上面（紧挨「按 VS Code 设置生成」），不放页面底部那节 ——
+   *    第一次找的时候翻了半天没找到。底部那节只放对照表和说明。
+   */
+  function renderSyncBtn(rows) {
+    const row = $("wsSyncRowTop");
+    const btn = $("wsSyncBtnTop");
+    const warn = $("wsSyncWarnTop");
+    if (!row || !btn) {return;}
+    // 本机缓存那一项 vscode === null，永远不参与（它没有"VS Code 侧的值"可比）
+    const comparable = (rows || []).filter(function (r) {return r.vscode !== null;});
+    const hasVs = comparable.some(function (r) {return String(r.vscode || "").trim();});
+    // 没有可比项 / VS Code 那边一项都没填 → 真的没东西可抄，藏（不是"藏起来让人找"）
+    const show = comparable.length > 0 && hasVs;
+    row.style.display = show ? "" : "none";
+    if (!show) {return;}
+    // 已经填着路径、且两边不同的那些项，点了就会被盖掉 —— 提醒必须摆在按钮旁边
+    const overwrite = comparable.some(function (r) {
+      return r.status === "diff" && !!String(r.vscode || "").trim() && !!String(r.server || "").trim();
+    });
+    const same = comparable.every(function (r) {
+      return r.status === "same" || !String(r.vscode || "").trim();
+    });
+    if (warn) {
+      warn.style.display = overwrite ? "" : "none";
+      warn.textContent = "会盖掉网页版现在的路径";
+    }
+    btn.textContent = overwrite
+      ? "以 VS Code 为准，覆盖网页版"
+      : same
+        ? "和 VS Code 已经一致（点一下再确认一次）"
+        : "把 VS Code 的两个路径写进网页版";
   }
 
   // 表单只填一次（轮询回来的每次都一样，反复写会打断用户正在输入的光标）
@@ -246,6 +291,11 @@
       $("wsGenBtn").onclick = function () {
         post({ type: "genConfig" });
       };
+      // 一键同步：**只在明确点下这一下时才写盘**（不做任何自动跟随）。
+      // 会盖掉网页版现有的路径，所以先把代价写在旁边，不再弹 confirm（同一个意思问两遍）
+      $("wsSyncBtnTop").onclick = function () {
+        post({ type: "syncFromVscode" });
+      };
       document.querySelectorAll("[data-ws-pick]").forEach(function (btn) {
         btn.onclick = function () {
           post({ type: "pickFolder", target: btn.dataset.wsPick });
@@ -257,6 +307,11 @@
     onMessage(msg) {
       if (msg.type === "wsStatus") {
         renderStatus(msg);
+      } else if (msg.type === "wsResync") {
+        // 一键同步写完盘之后：表单只填一次（fillForm 有 formFilled 闸），不放开这个闸
+        // 输入框就一直显示旧路径，看着像"没写进去"。这里只放开闸再要一次状态
+        formFilled = false;
+        askStatus();
       } else if (msg.type === "wsFill") {
         const map = {
           storageDir: "ws_storage",

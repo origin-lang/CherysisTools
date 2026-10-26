@@ -211,6 +211,16 @@
         <span class="ws-warn" id="wsNoCfgText">网页版的配置文件还不存在</span>
         <button class="ws-mini" id="wsGenBtn">按 VS Code 设置生成</button>
       </div>
+      <!-- 「一键同步」**放在上面这一行**（不是只放在页面底部「和 VS Code 对一对」那一节里）：
+           老板第一次找它的时候翻了半天没找到 —— 「哪里提供了按钮 我怎么没看见」。
+           放在最显眼、紧挨着「按 VS Code 设置生成」的位置：这两个本来就是同一类动作
+           （都是"照 VS Code 那边抄"），摆在一起才顺手。
+           页面底部那一节里还有一份，那里是"发现两边不一致"时最顺手的位置。 -->
+      <div class="ws-row" id="wsSyncRowTop" style="display: none">
+        <span class="ws-label">一键同步</span>
+        <button class="ws-mini" id="wsSyncBtnTop">把 VS Code 的两个路径写进网页版</button>
+        <span class="ws-hint" id="wsSyncWarnTop" style="display: none">会盖掉网页版现在的路径</span>
+      </div>
       <div class="ws-row">
         <span class="ws-label">开机自启</span>
         <span id="wsAutoState">未设置</span>
@@ -255,6 +265,8 @@
     </div>
 
     <div class="ws-sect">和 VS Code 面板对一对</div>
+    <!-- 注：「一键同步」那颗按钮**在上面**，紧挨着「按 VS Code 设置生成」（见 #wsSyncRowTop）。
+         这里不再放第二颗 —— 同一个动作摆两处，一处显示一处不显示，只会让人以为是两个功能。 -->
     <div class="ws-sync" id="wsSyncList"></div>
     <div class="ws-hint" id="wsSyncSummary" style="margin-top: 8px"></div>
     <div class="ws-hint">
@@ -262,6 +274,8 @@
       <code>cherysis-server.config.json</code>），所以改了一边另一边不会跟。上面不一致时两边都要改：
       网页版这边改完「保存配置」，面板那侧去设置里改（数据目录 <code>cherysis.storageDir</code>、图片目录
       <code>cherysis.shopTool.imageDir</code>）。数据目录必须两边都指到同一份库，否则等于对着另一个库录数据。
+      懒得两边各打一遍就点上面的<b>「一键同步」</b>—— 它只抄<b>数据目录 / 图片目录</b>，
+      端口、密码、外网开关、本机缓存一律不动（这些 VS Code 那边根本没有对应设置）。
     </div>
 
     <div class="ws-sect">扩展目录里那几个 cmd（不开 VS Code 也能用）</div>
